@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { careFlowReducer } from "@/lib/careflow/reducer";
 import { createSeedState } from "@/lib/careflow/seed";
+import { selectAnalyticsReport, selectDashboardMetrics } from "@/lib/careflow/selectors";
 
 describe("careFlowReducer", () => {
   it("adds a valid intake to the waiting queue", () => {
@@ -212,6 +213,30 @@ describe("careFlowReducer", () => {
     expect(afterSecond.visits.find((visit) => visit.id === "visit-competing")?.status).toBe("awaiting-dispensing");
     expect(paracetamol).toMatchObject({ stock: 12, dispensedThisMonth: 1880 });
     expect(afterSecond.toasts.at(-1)?.message).toContain("ไม่เพียงพอ");
+  });
+
+  it("does not partially dispense a multi-medication visit when a later medication is insufficient", () => {
+    const state = createSeedState({ demoVisitStatus: "awaiting-dispensing", allPrepared: true });
+    state.inventory = state.inventory.map((item) => item.id === "med-omeprazole" ? { ...item, stock: 13 } : item);
+    const beforeVisit = state.visits.find((visit) => visit.id === "demo-visit")!;
+    const beforeInventory = state.inventory.map((item) => ({ ...item }));
+    const next = careFlowReducer(state, { type: "CONFIRM_DISPENSING", payload: { visitId: "demo-visit", dispensedAt: "2026-08-02T10:00:00.000Z" } });
+
+    expect(next.inventory).toEqual(beforeInventory);
+    expect(next.visits.find((visit) => visit.id === "demo-visit")).toEqual(beforeVisit);
+    expect(next.inventory.map((item) => item.dispensedThisMonth)).toEqual(beforeInventory.map((item) => item.dispensedThisMonth));
+    expect(next.transactions).toEqual(state.transactions);
+    expect(next.toasts.at(-1)).toMatchObject({ tone: "error" });
+    expect(next.toasts.at(-1)?.message).toContain("ไม่เพียงพอ");
+  });
+
+  it("keeps seeded low-stock metrics stable after the complete demo dispensing path", () => {
+    const state = createSeedState({ demoVisitStatus: "awaiting-dispensing", allPrepared: true });
+    const next = careFlowReducer(state, { type: "CONFIRM_DISPENSING", payload: { visitId: "demo-visit", dispensedAt: "2026-08-02T10:00:00.000Z" } });
+
+    expect(next.visits.find((visit) => visit.id === "demo-visit")?.status).toBe("awaiting-payment");
+    expect(selectDashboardMetrics(next).lowStock).toBe(3);
+    expect(selectAnalyticsReport(next).lowStock).toBe(3);
   });
 
   it("completes payment and records a transaction", () => {
