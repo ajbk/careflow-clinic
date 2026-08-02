@@ -154,6 +154,7 @@ export interface CareFlowState {
 }
 
 export type CareFlowAction =
+  | { type: "HYDRATE"; payload: { state: CareFlowState } }
   | {
       type: "SUBMIT_INTAKE";
       payload: {

@@ -24,6 +24,9 @@ function updateVisit(
 
 export function careFlowReducer(state: CareFlowState, action: CareFlowAction): CareFlowState {
   switch (action.type) {
+    case "HYDRATE":
+      return action.payload.state;
+
     case "SUBMIT_INTAKE": {
       const { patient, visit } = action.payload;
       const next: CareFlowState = {
