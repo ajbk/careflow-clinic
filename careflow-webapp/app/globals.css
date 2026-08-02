@@ -1,0 +1,138 @@
+@import url("https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&display=swap");
+@import "tailwindcss";
+
+:root {
+  --surface: #f9faf7;
+  --surface-dim: #d9dad8;
+  --surface-container-lowest: #ffffff;
+  --surface-container-low: #f3f4f1;
+  --surface-container: #edeeeb;
+  --surface-container-high: #e7e8e6;
+  --surface-container-highest: #e2e3e0;
+  --on-surface: #191c1b;
+  --on-surface-variant: #404945;
+  --primary: #003629;
+  --on-primary: #ffffff;
+  --primary-container: #1b4d3e;
+  --on-primary-container: #8abda9;
+  --primary-fixed: #baeed9;
+  --primary-fixed-dim: #9ed1bd;
+  --secondary: #526165;
+  --secondary-container: #d5e5ea;
+  --on-secondary-container: #58676b;
+  --tertiary: #4c221c;
+  --tertiary-container: #673831;
+  --error: #ba1a1a;
+  --error-container: #ffdad6;
+  --outline: #707974;
+  --outline-variant: #c0c9c3;
+  --shadow-card: 0 4px 20px rgba(0, 54, 41, 0.05);
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.5rem;
+  --sidebar-width: 264px;
+  --content-max: 1120px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  background: var(--surface);
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--surface);
+  color: var(--on-surface);
+  font-family: "Be Vietnam Pro", "Noto Sans Thai", "Leelawadee UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+
+::selection {
+  background: var(--primary-fixed);
+  color: var(--primary);
+}
+
+.foundation-preview {
+  display: grid;
+  place-content: center;
+  min-height: 100vh;
+  padding: 48px;
+  text-align: center;
+}
+
+.foundation-preview h1 {
+  margin: 10px 0 8px;
+  color: var(--primary);
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  line-height: 1.2;
+}
+
+.foundation-preview p {
+  max-width: 620px;
+  color: var(--on-surface-variant);
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--primary-container) !important;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+
+.prototype-badge {
+  justify-self: center;
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: var(--secondary-container);
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
