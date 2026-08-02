@@ -194,6 +194,26 @@ describe("careFlowReducer", () => {
     );
   });
 
+  it("keeps the second prepared visit untouched when competing stock is no longer sufficient", () => {
+    const state = createSeedState({ demoVisitStatus: "awaiting-dispensing", allPrepared: true });
+    const first = state.visits.find((visit) => visit.id === "demo-visit")!;
+    const firstMedication = { ...first.medications[0], id: "rx-first-paracetamol", quantity: 30, quantityLabel: "30 เม็ด" };
+    const secondMedication = { ...firstMedication, id: "rx-second-paracetamol" };
+    state.visits = [
+      { ...first, medications: [firstMedication] },
+      { ...first, id: "visit-competing", medications: [secondMedication], inventoryDeducted: false },
+    ];
+
+    const afterFirst = careFlowReducer(state, { type: "CONFIRM_DISPENSING", payload: { visitId: "demo-visit", dispensedAt: "2026-08-02T10:00:00.000Z" } });
+    const afterSecond = careFlowReducer(afterFirst, { type: "CONFIRM_DISPENSING", payload: { visitId: "visit-competing", dispensedAt: "2026-08-02T10:01:00.000Z" } });
+    const paracetamol = afterSecond.inventory.find((item) => item.id === "med-paracetamol");
+
+    expect(afterSecond.visits.find((visit) => visit.id === "demo-visit")?.status).toBe("awaiting-payment");
+    expect(afterSecond.visits.find((visit) => visit.id === "visit-competing")?.status).toBe("awaiting-dispensing");
+    expect(paracetamol).toMatchObject({ stock: 12, dispensedThisMonth: 1880 });
+    expect(afterSecond.toasts.at(-1)?.message).toContain("ไม่เพียงพอ");
+  });
+
   it("completes payment and records a transaction", () => {
     const state = createSeedState({ demoVisitStatus: "awaiting-payment" });
     const next = careFlowReducer(state, {

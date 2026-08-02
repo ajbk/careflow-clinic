@@ -144,7 +144,7 @@ const inventory: InventoryItem[] = [
   { id: "med-metformin", code: "DRG-0020", name: "Metformin", nameTh: "เมตฟอร์มิน", strength: "500mg", form: "เม็ด", stock: 210, unit: "กล่อง", threshold: 80, earliestExpiry: "2029-01-31", dispensedThisMonth: 980 },
   { id: "med-ibuprofen", code: "DRG-0031", name: "Ibuprofen Syrup", nameTh: "ไอบูโพรเฟนชนิดน้ำ", strength: "100mg/5ml", form: "น้ำเชื่อม", stock: 0, unit: "ขวด", threshold: 20, dispensedThisMonth: 126 },
   { id: "med-loratadine", code: "DRG-0042", name: "Loratadine", nameTh: "ลอราทาดีน", strength: "10mg", form: "เม็ด", stock: 85, unit: "กล่อง", threshold: 30, earliestExpiry: "2028-11-30", dispensedThisMonth: 310 },
-  { id: "med-omeprazole", code: "DRG-0054", name: "Omeprazole", nameTh: "โอเมพราโซล", strength: "20mg", form: "แคปซูล", stock: 12, unit: "กล่อง", threshold: 20, earliestExpiry: "2027-09-30", dispensedThisMonth: 440 },
+  { id: "med-omeprazole", code: "DRG-0054", name: "Omeprazole", nameTh: "โอเมพราโซล", strength: "20mg", form: "แคปซูล", stock: 14, unit: "กล่อง", threshold: 20, earliestExpiry: "2027-09-30", dispensedThisMonth: 440 },
   { id: "med-amlodipine", code: "DRG-0061", name: "Amlodipine", nameTh: "แอมโลดิพีน", strength: "5mg", form: "เม็ด", stock: 3500, unit: "เม็ด", threshold: 500, earliestExpiry: "2029-04-30", dispensedThisMonth: 1240 },
 ];
 

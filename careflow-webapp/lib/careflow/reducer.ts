@@ -156,13 +156,20 @@ export function careFlowReducer(state: CareFlowState, action: CareFlowAction): C
       for (const medication of visit.medications) {
         quantities.set(medication.inventoryId, (quantities.get(medication.inventoryId) ?? 0) + medication.quantity);
       }
+      const unavailable = [...quantities.entries()].find(([inventoryId, quantity]) => {
+        const inventoryItem = state.inventory.find((item) => item.id === inventoryId);
+        return !inventoryItem || inventoryItem.stock < quantity;
+      });
+      if (unavailable) {
+        return addToast(state, "error", "ยาในคลังไม่เพียงพอสำหรับการจ่าย กรุณาตรวจสอบคงเหลือ");
+      }
       const next: CareFlowState = {
         ...state,
         inventory: state.inventory.map((item) => {
           const quantity = quantities.get(item.id) ?? 0;
           return {
             ...item,
-            stock: Math.max(0, item.stock - quantity),
+            stock: item.stock - quantity,
             dispensedThisMonth: item.dispensedThisMonth + quantity,
           };
         }),
