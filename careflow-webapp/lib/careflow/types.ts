@@ -58,6 +58,7 @@ export interface PrescriptionItem {
   nameTh: string;
   strength: string;
   form: string;
+  unit: InventoryUnit;
   quantity: number;
   quantityLabel: string;
   instructionTh: string;
@@ -142,7 +143,7 @@ export interface ToastMessage {
 }
 
 export interface CareFlowState {
-  version: 1;
+  version: 2;
   role: Role;
   patients: Patient[];
   visits: Visit[];

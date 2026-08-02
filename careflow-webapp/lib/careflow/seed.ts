@@ -27,6 +27,7 @@ const demoMedications: PrescriptionItem[] = [
     nameTh: "พาราเซตามอล",
     strength: "500mg",
     form: "เม็ด",
+    unit: "เม็ด",
     quantity: 20,
     quantityLabel: "20 เม็ด",
     instructionTh: "รับประทานครั้งละ 1–2 เม็ด ทุก 4–6 ชั่วโมงเมื่อมีอาการปวดหรือมีไข้",
@@ -42,6 +43,7 @@ const demoMedications: PrescriptionItem[] = [
     nameTh: "อะม็อกซีซิลลิน",
     strength: "250mg",
     form: "แคปซูล",
+    unit: "แคปซูล",
     quantity: 30,
     quantityLabel: "30 แคปซูล",
     instructionTh: "รับประทานครั้งละ 1 แคปซูล วันละ 3 ครั้ง หลังอาหาร",
@@ -57,6 +59,7 @@ const demoMedications: PrescriptionItem[] = [
     nameTh: "ลอราทาดีน",
     strength: "10mg",
     form: "เม็ด",
+    unit: "เม็ด",
     quantity: 10,
     quantityLabel: "10 เม็ด",
     instructionTh: "รับประทานครั้งละ 1 เม็ด วันละ 1 ครั้ง หลังอาหารเช้า",
@@ -72,6 +75,7 @@ const demoMedications: PrescriptionItem[] = [
     nameTh: "โอเมพราโซล",
     strength: "20mg",
     form: "แคปซูล",
+    unit: "แคปซูล",
     quantity: 14,
     quantityLabel: "14 แคปซูล",
     instructionTh: "รับประทานครั้งละ 1 แคปซูล วันละ 1 ครั้ง ก่อนอาหารเช้า",
@@ -194,7 +198,7 @@ export function createSeedState(options: SeedOptions = {}): CareFlowState {
   ];
 
   return {
-    version: 1,
+    version: 2,
     role: "doctor",
     patients: patients.map((patient) => ({ ...patient, allergies: [...patient.allergies] })),
     visits,

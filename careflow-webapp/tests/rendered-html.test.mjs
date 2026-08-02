@@ -55,6 +55,19 @@ test("uses the incoming request host for absolute social metadata", async () => 
   );
 });
 
+test("prefers a strictly parsed configured canonical origin for social metadata", async () => {
+  const previous = process.env.NEXT_PUBLIC_SITE_URL;
+  process.env.NEXT_PUBLIC_SITE_URL = "https://careflow.canonical.test/path-that-is-not-used";
+  try {
+    const response = await render("/", "https://careflow.request.test");
+    const html = await response.text();
+    assert.match(html, /<meta property="og:image" content="https:\/\/careflow\.canonical\.test\/og\.png"\s*\/?>/i);
+  } finally {
+    if (previous === undefined) delete process.env.NEXT_PUBLIC_SITE_URL;
+    else process.env.NEXT_PUBLIC_SITE_URL = previous;
+  }
+});
+
 test("falls back safely when a malformed forwarded host cannot form an origin", async () => {
   const response = await render("/", "https://careflow.example.test", {
     "x-forwarded-host": "::::",

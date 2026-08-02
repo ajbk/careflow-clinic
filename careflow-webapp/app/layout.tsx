@@ -7,6 +7,20 @@ const title = "CareFlow — ระบบจัดการคลินิกช�
 const description =
   "ต้นแบบระบบคลินิกชนบทที่เรียบง่าย เชื่อถือได้ และออกแบบเพื่อการดูแลที่ต่อเนื่อง";
 
+function canonicalMetadataBase(): URL | null {
+  const configuredUrl = process.env.NEXT_PUBLIC_SITE_URL;
+  if (!configuredUrl) return null;
+  try {
+    const configured = new URL(configuredUrl);
+    if ((configured.protocol !== "http:" && configured.protocol !== "https:") || configured.username || configured.password) {
+      return null;
+    }
+    return new URL(configured.origin);
+  } catch {
+    return null;
+  }
+}
+
 function metadataBaseFromHost(host: string | null | undefined, forwardedProtocol: string | null | undefined): URL | null {
   if (!host) return null;
   const candidateHost = host.split(",")[0]?.trim();
@@ -32,7 +46,8 @@ export async function generateMetadata(): Promise<Metadata> {
     .get("x-forwarded-proto")
     ?.split(",")[0]
     ?.trim();
-  const metadataBase = metadataBaseFromHost(forwardedHost, forwardedProtocol)
+  const metadataBase = canonicalMetadataBase()
+    ?? metadataBaseFromHost(forwardedHost, forwardedProtocol)
     ?? metadataBaseFromHost(directHost, forwardedProtocol)
     ?? new URL("http://localhost:3001");
   const socialImage = new URL("/og.png", metadataBase).toString();

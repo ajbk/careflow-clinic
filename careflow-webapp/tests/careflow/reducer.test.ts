@@ -4,6 +4,27 @@ import { createSeedState } from "@/lib/careflow/seed";
 import { selectAnalyticsReport, selectDashboardMetrics } from "@/lib/careflow/selectors";
 
 describe("careFlowReducer", () => {
+  it("prescribes and deducts liquid medicine in bottles instead of the dosage form label", () => {
+    let state = createSeedState();
+    state = {
+      ...state,
+      inventory: state.inventory.map((item) => item.id === "med-ibuprofen" ? { ...item, stock: 2 } : item),
+    };
+    state = careFlowReducer(state, { type: "START_CONSULTATION", payload: { visitId: "demo-visit", startedAt: "2026-08-02T09:30:00.000Z" } });
+    state = careFlowReducer(state, { type: "ADD_PRESCRIPTION", payload: { visitId: "demo-visit", inventoryId: "med-ibuprofen", quantity: 1 } });
+    const medication = state.visits.find((visit) => visit.id === "demo-visit")!.medications.find((item) => item.inventoryId === "med-ibuprofen")!;
+
+    expect(medication).toMatchObject({ unit: "ขวด", quantityLabel: "1 ขวด" });
+
+    state = careFlowReducer(state, { type: "SIGN_VISIT", payload: { visitId: "demo-visit", signedAt: "2026-08-02T09:45:00.000Z", clinical: { subjective: "ปวด", objective: "ไม่มีไข้", assessment: "อาการปวด", plan: "รับยา", diagnosis: { code: "R52", labelTh: "ปวด", labelEn: "Pain" } } } });
+    state.visits.find((visit) => visit.id === "demo-visit")!.medications.forEach((item) => {
+      state = careFlowReducer(state, { type: "TOGGLE_MEDICATION_PREPARED", payload: { visitId: "demo-visit", medicationId: item.id } });
+    });
+    state = careFlowReducer(state, { type: "CONFIRM_DISPENSING", payload: { visitId: "demo-visit", dispensedAt: "2026-08-02T10:00:00.000Z" } });
+
+    expect(state.inventory.find((item) => item.id === "med-ibuprofen")).toMatchObject({ stock: 1, unit: "ขวด", dispensedThisMonth: 127 });
+  });
+
   it("keeps solid oral stock and dispensing totals in prescription units", () => {
     const state = createSeedState({ demoVisitStatus: "awaiting-dispensing", allPrepared: true });
     const before = state.inventory.find((item) => item.id === "med-paracetamol")!;
