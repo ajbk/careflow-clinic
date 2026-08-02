@@ -41,4 +41,25 @@ describe("CareFlow storage", () => {
 
     expect(loadState(storage)).toMatchObject({ role: "doctor", storageRecovered: true });
   });
+
+  it("recovers from a structurally partial envelope before screens can dereference it", () => {
+    const valid = createSeedState();
+    const partialState = {
+      ...valid,
+      batches: undefined,
+      transactions: undefined,
+      toasts: undefined,
+      visits: [{ id: "not-a-visit" }],
+    };
+    const storage = memoryStorage({
+      [STORAGE_KEY]: JSON.stringify({ version: 1, state: partialState }),
+    });
+
+    const recovered = loadState(storage);
+
+    expect(recovered.storageRecovered).toBe(true);
+    expect(recovered.batches).toEqual([]);
+    expect(recovered.transactions).toEqual([]);
+    expect(recovered.visits.find((visit) => visit.id === "demo-visit")).toBeDefined();
+  });
 });

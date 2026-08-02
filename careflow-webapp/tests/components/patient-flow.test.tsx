@@ -8,6 +8,8 @@ import { DispensingScreen } from "@/components/careflow/screens/DispensingScreen
 import { CheckoutScreen } from "@/components/careflow/screens/CheckoutScreen";
 import { OpdCardScreen } from "@/components/careflow/screens/OpdCardScreen";
 import { PatientHistoryScreen } from "@/components/careflow/screens/PatientHistoryScreen";
+import { LabelsScreen } from "@/components/careflow/screens/LabelsScreen";
+import { QueueScreen } from "@/components/careflow/screens/QueueScreen";
 
 const { pushMock } = vi.hoisted(() => ({ pushMock: vi.fn() }));
 
@@ -97,6 +99,44 @@ describe("connected patient flow", () => {
 
     fireEvent.click(screen.getByRole("radio", { name: /เงินสด/ }));
     expect(confirm).toBeEnabled();
+  });
+
+  it("blocks direct label and checkout actions before their workflow stage", () => {
+    render(
+      <CareFlowProvider initialState={createSeedState()} persist={false}>
+        <LabelsScreen visitId="demo-visit" />
+        <CheckoutScreen visitId="demo-visit" />
+      </CareFlowProvider>,
+    );
+
+    expect(screen.getAllByText("ยังไม่พร้อมใช้งาน")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: /พิมพ์ฉลาก/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /ยืนยันการรับเงิน/ })).not.toBeInTheDocument();
+  });
+
+  it("shows a completed checkout receipt without payment controls", () => {
+    render(
+      <CareFlowProvider initialState={createSeedState({ demoVisitStatus: "complete" })} persist={false}>
+        <CheckoutScreen visitId="demo-visit" />
+      </CareFlowProvider>,
+    );
+
+    expect(screen.getByText("ชำระเงินเรียบร้อยแล้ว")).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /เงินสด/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /ยืนยันการรับเงิน/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps the assistant queue action waiting instead of exposing consultation start", () => {
+    const state = createSeedState();
+    state.role = "assistant";
+    render(
+      <CareFlowProvider initialState={state} persist={false}>
+        <QueueScreen />
+      </CareFlowProvider>,
+    );
+
+    expect(screen.queryByRole("button", { name: "เริ่มการตรวจ" })).not.toBeInTheDocument();
+    expect(screen.getAllByText("รอแพทย์เริ่มการตรวจ").length).toBeGreaterThan(0);
   });
 
   it("makes signed clinical notes read-only", () => {

@@ -4,6 +4,63 @@ import { createSeedState } from "@/lib/careflow/seed";
 import { selectAnalyticsReport, selectDashboardMetrics } from "@/lib/careflow/selectors";
 
 describe("careFlowReducer", () => {
+  it("keeps solid oral stock and dispensing totals in prescription units", () => {
+    const state = createSeedState({ demoVisitStatus: "awaiting-dispensing", allPrepared: true });
+    const before = state.inventory.find((item) => item.id === "med-paracetamol")!;
+
+    const next = careFlowReducer(state, {
+      type: "CONFIRM_DISPENSING",
+      payload: { visitId: "demo-visit", dispensedAt: "2026-08-02T10:00:00.000Z" },
+    });
+
+    expect(before).toMatchObject({ unit: "เม็ด", stock: 42, threshold: 50, dispensedThisMonth: 1850 });
+    expect(next.inventory.find((item) => item.id === "med-paracetamol")).toMatchObject({
+      unit: "เม็ด",
+      stock: 22,
+      dispensedThisMonth: 1870,
+    });
+    expect(next.inventory.find((item) => item.id === "med-amoxicillin")?.unit).toBe("แคปซูล");
+    expect(next.inventory.find((item) => item.id === "med-ibuprofen")?.unit).toBe("ขวด");
+  });
+
+  it("rejects a stock batch whose unit differs from the selected medication", () => {
+    const state = createSeedState();
+    const next = careFlowReducer(state, {
+      type: "RECEIVE_STOCK",
+      payload: {
+        inventoryId: "med-paracetamol",
+        quantity: 10,
+        unit: "ขวด",
+        supplier: "บริษัท ไทยเมด จำกัด",
+        batchNumber: "LOT-WRONG-UNIT",
+        expiry: "2028-12-31",
+        receivedAt: "2026-08-02T10:20:00.000Z",
+      },
+    });
+
+    expect(next.inventory.find((item) => item.id === "med-paracetamol")?.stock).toBe(42);
+    expect(next.batches).toHaveLength(0);
+    expect(next.toasts.at(-1)?.message).toContain("หน่วยนับ");
+  });
+
+  it("refuses prepared toggles outside dispensing or for an unknown medication", () => {
+    const waiting = createSeedState();
+    const attemptedAtWrongStage = careFlowReducer(waiting, {
+      type: "TOGGLE_MEDICATION_PREPARED",
+      payload: { visitId: "demo-visit", medicationId: "rx-paracetamol" },
+    });
+    const ready = createSeedState({ demoVisitStatus: "awaiting-dispensing" });
+    const attemptedUnknownMedication = careFlowReducer(ready, {
+      type: "TOGGLE_MEDICATION_PREPARED",
+      payload: { visitId: "demo-visit", medicationId: "rx-not-real" },
+    });
+
+    expect(attemptedAtWrongStage.visits.find((visit) => visit.id === "demo-visit")?.medications[0]?.prepared).toBe(false);
+    expect(attemptedAtWrongStage.toasts.at(-1)?.tone).toBe("error");
+    expect(attemptedUnknownMedication.visits.find((visit) => visit.id === "demo-visit")?.medications.some((item) => item.prepared)).toBe(false);
+    expect(attemptedUnknownMedication.toasts.at(-1)?.tone).toBe("error");
+  });
+
   it("adds a valid intake to the waiting queue", () => {
     const state = createSeedState();
     const next = careFlowReducer(state, {
@@ -265,7 +322,7 @@ describe("careFlowReducer", () => {
       payload: {
         inventoryId: "med-amoxicillin",
         quantity: 20,
-        unit: "กล่อง",
+        unit: "แคปซูล",
         supplier: "บริษัท ไทยเมด จำกัด",
         batchNumber: "LOT-2026-A",
         expiry: "2028-12-31",
@@ -288,13 +345,13 @@ describe("careFlowReducer", () => {
     ];
 
     for (const attempt of attempts) {
-      const next = careFlowReducer(state, { type: "RECEIVE_STOCK", payload: { inventoryId: "med-paracetamol", unit: "กล่อง", receivedAt: "2026-08-02T10:20:00.000Z", ...attempt } });
+      const next = careFlowReducer(state, { type: "RECEIVE_STOCK", payload: { inventoryId: "med-paracetamol", unit: "เม็ด", receivedAt: "2026-08-02T10:20:00.000Z", ...attempt } });
       expect(next.inventory.find((item) => item.id === "med-paracetamol")?.stock).toBe(42);
     }
   });
 
   it("propagates an earlier valid expiry from a received batch", () => {
-    const next = careFlowReducer(createSeedState(), { type: "RECEIVE_STOCK", payload: { inventoryId: "med-paracetamol", quantity: 10, unit: "กล่อง", supplier: "บริษัท ไทยเมด", batchNumber: "LOT-EARLY", expiry: "2027-01-31", receivedAt: "2026-08-02T10:20:00.000Z" } });
+    const next = careFlowReducer(createSeedState(), { type: "RECEIVE_STOCK", payload: { inventoryId: "med-paracetamol", quantity: 10, unit: "เม็ด", supplier: "บริษัท ไทยเมด", batchNumber: "LOT-EARLY", expiry: "2027-01-31", receivedAt: "2026-08-02T10:20:00.000Z" } });
 
     expect(next.inventory.find((item) => item.id === "med-paracetamol")?.earliestExpiry).toBe("2027-01-31");
   });

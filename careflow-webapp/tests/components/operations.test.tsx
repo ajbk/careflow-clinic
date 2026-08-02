@@ -190,7 +190,7 @@ describe("connected clinic operations", () => {
     const dispensed = careFlowReducer(createSeedState({ demoVisitStatus: "awaiting-dispensing", allPrepared: true }), { type: "CONFIRM_DISPENSING", payload: { visitId: "demo-visit", dispensedAt: "2026-08-02T10:00:00.000Z" } });
     render(<CareFlowProvider initialState={dispensed} persist={false}><AnalyticsScreen /></CareFlowProvider>);
 
-    expect(screen.getByText("1,870 กล่อง")).toBeInTheDocument();
+    expect(screen.getByText("1,870 เม็ด")).toBeInTheDocument();
   });
 
   it("keeps direct analytics access in the prototype doctor workspace", () => {

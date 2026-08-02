@@ -25,7 +25,8 @@ export function QueueScreen() {
     return <article className="queue-card" key={visit.id}>
       <div className="queue-card-top"><span className="queue-time"><Clock3 aria-hidden="true" size={15} /> {new Date(visit.arrivedAt).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}</span><StatusBadge tone={status.tone}>{status.label}</StatusBadge></div>
       <strong>{patient.name}</strong><span>HN {patient.hn} · {patient.age} ปี</span><p>{visit.chiefComplaint}</p>
-      {visit.status === "waiting" ? <ActionButton className="queue-action" variant="secondary" onClick={() => dispatch({ type: "START_CONSULTATION", payload: { visitId: visit.id, startedAt: new Date().toISOString() } })}>เริ่มการตรวจ</ActionButton> : null}
+      {visit.status === "waiting" && state.role === "doctor" ? <ActionButton className="queue-action" variant="secondary" onClick={() => dispatch({ type: "START_CONSULTATION", payload: { visitId: visit.id, startedAt: new Date().toISOString() } })}>เริ่มการตรวจ</ActionButton> : null}
+      {visit.status === "waiting" && state.role === "assistant" ? <span className="queue-waiting-action" aria-label="รอแพทย์เริ่มการตรวจ">รอแพทย์เริ่มการตรวจ</span> : null}
       {visit.status === "consulting" ? <Link className="queue-link" href={`/consultations/${visit.id}`}>เปิดห้องตรวจ</Link> : null}
       {visit.status === "awaiting-dispensing" ? <Link className="queue-link" href={`/dispensing/${visit.id}`}>ไปห้องยา</Link> : null}
       {visit.status === "awaiting-payment" ? <Link className="queue-link" href={`/checkout/${visit.id}`}>รับชำระเงิน</Link> : null}

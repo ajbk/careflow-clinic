@@ -4,9 +4,10 @@ import { ArrowLeft, PackageCheck, PackagePlus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useCareFlow } from "@/lib/careflow/context";
+import type { InventoryUnit } from "@/lib/careflow/types";
 import { ActionButton, Card, Field, PageHeader, SectionHeading, SelectField } from "../ui";
 
-type Draft = { inventoryId: string; quantity: string; unit: string; supplier: string; batchNumber: string; expiry: string };
+type Draft = { inventoryId: string; quantity: string; unit: InventoryUnit | ""; supplier: string; batchNumber: string; expiry: string };
 const blank: Draft = { inventoryId: "", quantity: "", unit: "", supplier: "", batchNumber: "", expiry: "" };
 
 export function StockReceptionScreen() {
@@ -18,7 +19,7 @@ export function StockReceptionScreen() {
   const quantity = Number(draft.quantity);
   const validQuantity = Number.isFinite(quantity) && Number.isInteger(quantity) && quantity > 0;
   const preview = selected && validQuantity ? `${selected.stock.toLocaleString("th-TH")} + ${quantity.toLocaleString("th-TH")} = ${(selected.stock + quantity).toLocaleString("th-TH")}` : "เลือกยาและระบุจำนวนเต็มเพื่อดูยอดหลังรับเข้า";
-  const update = (key: keyof Draft, value: string) => setDraft((current) => ({ ...current, [key]: value, ...(key === "inventoryId" ? { unit: state.inventory.find((item) => item.id === value)?.unit ?? "" } : {}) }));
+  const update = (key: Exclude<keyof Draft, "unit">, value: string) => setDraft((current) => ({ ...current, [key]: value, ...(key === "inventoryId" ? { unit: state.inventory.find((item) => item.id === value)?.unit ?? "" } : {}) }));
 
   function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -26,7 +27,7 @@ export function StockReceptionScreen() {
     if (!validQuantity) { setError("จำนวนรับยาต้องเป็นจำนวนเต็มที่มากกว่าศูนย์"); return; }
     if (!draft.expiry || draft.expiry <= "2026-08-02") { setError("วันหมดอายุต้องเป็นวันในอนาคต"); return; }
     if (!draft.supplier.trim()) { setError("กรุณากรอกข้อมูลรับยาให้ครบถ้วน"); return; }
-    dispatch({ type: "RECEIVE_STOCK", payload: { inventoryId: selected.id, quantity, unit: draft.unit || selected.unit, supplier: draft.supplier.trim(), batchNumber: draft.batchNumber.trim(), expiry: draft.expiry, receivedAt: new Date().toISOString() } });
+    dispatch({ type: "RECEIVE_STOCK", payload: { inventoryId: selected.id, quantity, unit: selected.unit, supplier: draft.supplier.trim(), batchNumber: draft.batchNumber.trim(), expiry: draft.expiry, receivedAt: new Date().toISOString() } });
     router.push("/inventory");
   }
 
@@ -37,7 +38,7 @@ export function StockReceptionScreen() {
         <div className="form-grid two-columns">
           <SelectField label="ค้นหายา (Search Medication) *" aria-label="ค้นหายา" value={draft.inventoryId} onChange={(event) => update("inventoryId", event.target.value)}><option value="">เลือกยาในทะเบียน</option>{state.inventory.map((item) => <option key={item.id} value={item.id}>{item.nameTh} · {item.name} · {item.code}</option>)}</SelectField>
           <Field label="จำนวนที่รับ *" type="number" min="1" step="1" value={draft.quantity} onChange={(event) => update("quantity", event.target.value)} placeholder="เช่น 100" />
-          <Field label="หน่วยนับ" value={draft.unit} onChange={(event) => update("unit", event.target.value)} placeholder="กล่อง / เม็ด / ขวด" />
+          <Field label="หน่วยนับ (ตามทะเบียนยา)" value={draft.unit} readOnly placeholder="เลือกยาเพื่อแสดงหน่วยนับ" />
           <Field label="ผู้ผลิต / ผู้จัดจำหน่าย *" value={draft.supplier} onChange={(event) => update("supplier", event.target.value)} placeholder="เช่น องค์การเภสัชกรรม" />
           <Field label="เลขที่ล็อต (Batch Number) *" value={draft.batchNumber} onChange={(event) => update("batchNumber", event.target.value)} placeholder="เช่น PCM-2608" />
           <Field label="วันหมดอายุ *" type="date" value={draft.expiry} onChange={(event) => update("expiry", event.target.value)} />

@@ -1,5 +1,5 @@
 import { createSeedState } from "./seed";
-import type { CareFlowAction, CareFlowState, ToastTone, Visit } from "./types";
+import type { CareFlowAction, CareFlowState, PrescriptionItem, ToastTone, Visit } from "./types";
 
 function defaultMedicationInstruction(name: string) {
   if (name === "Paracetamol") return "รับประทานครั้งละ 1 เม็ด ทุก 4–6 ชั่วโมงเมื่อมีอาการปวดหรือมีไข้";
@@ -105,7 +105,7 @@ export function careFlowReducer(state: CareFlowState, action: CareFlowAction): C
       if (visit.medications.some((medication) => medication.inventoryId === inventoryItem.id)) {
         return addToast(state, "info", "เพิ่มยารายการนี้ในแผนแล้ว");
       }
-      const medication = {
+      const medication: PrescriptionItem = {
         id: `rx-${visit.id}-${inventoryItem.id}`,
         inventoryId: inventoryItem.id,
         name: inventoryItem.name,
@@ -116,7 +116,7 @@ export function careFlowReducer(state: CareFlowState, action: CareFlowAction): C
         quantityLabel: `${quantity} ${inventoryItem.form}`,
         instructionTh: defaultMedicationInstruction(inventoryItem.name),
         instructionEn: "Take as directed by the clinician.",
-        timing: ["symptom"] as const,
+        timing: ["symptom"],
         warning: "ใช้ตามคำสั่งแพทย์",
         prepared: false,
       };
@@ -131,15 +131,23 @@ export function careFlowReducer(state: CareFlowState, action: CareFlowAction): C
       );
     }
 
-    case "TOGGLE_MEDICATION_PREPARED":
-      return updateVisit(state, action.payload.visitId, (visit) => ({
-        ...visit,
-        medications: visit.medications.map((medication) =>
+    case "TOGGLE_MEDICATION_PREPARED": {
+      const visit = state.visits.find((item) => item.id === action.payload.visitId);
+      if (!visit || visit.status !== "awaiting-dispensing") {
+        return addToast(state, "error", "รายการนี้ยังไม่พร้อมสำหรับการตรวจยา");
+      }
+      if (!visit.medications.some((medication) => medication.id === action.payload.medicationId)) {
+        return addToast(state, "error", "ไม่พบรายการยาที่ต้องการตรวจสอบ");
+      }
+      return updateVisit(state, visit.id, (item) => ({
+        ...item,
+        medications: item.medications.map((medication) =>
           medication.id === action.payload.medicationId
             ? { ...medication, prepared: !medication.prepared }
             : medication,
         ),
       }));
+    }
 
     case "CONFIRM_DISPENSING": {
       const visit = state.visits.find((item) => item.id === action.payload.visitId);
@@ -220,6 +228,9 @@ export function careFlowReducer(state: CareFlowState, action: CareFlowAction): C
       const expiry = new Date(`${action.payload.expiry}T00:00:00`);
       if (!item || !Number.isFinite(action.payload.quantity) || !Number.isInteger(action.payload.quantity) || action.payload.quantity <= 0) {
         return addToast(state, "error", "จำนวนรับยาต้องเป็นจำนวนเต็มที่มากกว่าศูนย์");
+      }
+      if (action.payload.unit !== item.unit) {
+        return addToast(state, "error", `หน่วยนับต้องเป็น ${item.unit} ให้ตรงกับทะเบียนยา`);
       }
       if (!action.payload.batchNumber.trim() || !action.payload.supplier.trim()) {
         return addToast(state, "error", "กรุณากรอกข้อมูลรับยาให้ครบถ้วน");

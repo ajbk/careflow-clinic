@@ -7,26 +7,34 @@ const title = "CareFlow — ระบบจัดการคลินิกช�
 const description =
   "ต้นแบบระบบคลินิกชนบทที่เรียบง่าย เชื่อถือได้ และออกแบบเพื่อการดูแลที่ต่อเนื่อง";
 
+function metadataBaseFromHost(host: string | null | undefined, forwardedProtocol: string | null | undefined): URL | null {
+  if (!host) return null;
+  const candidateHost = host.split(",")[0]?.trim();
+  if (!candidateHost || /[\s/@\\]/.test(candidateHost)) return null;
+  const protocol = forwardedProtocol === "http" || forwardedProtocol === "https"
+    ? forwardedProtocol
+    : candidateHost.startsWith("localhost") || candidateHost.startsWith("127.0.0.1")
+      ? "http"
+      : "https";
+  try {
+    const base = new URL(`${protocol}://${candidateHost}`);
+    return base.hostname ? base : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
-  const forwardedHost = requestHeaders.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const forwardedHost = requestHeaders.get("x-forwarded-host");
   const directHost = requestHeaders.get("host")?.trim();
-  const requestedHost = forwardedHost || directHost || "localhost:3001";
-  const sanitizedHost = requestedHost.replace(
-    /[^a-zA-Z0-9.:[\]-]/g,
-    "",
-  );
-  const host = sanitizedHost || "localhost:3001";
   const forwardedProtocol = requestHeaders
     .get("x-forwarded-proto")
     ?.split(",")[0]
     ?.trim();
-  const protocol = forwardedProtocol === "http" || forwardedProtocol === "https"
-    ? forwardedProtocol
-    : host.startsWith("localhost") || host.startsWith("127.0.0.1")
-      ? "http"
-      : "https";
-  const metadataBase = new URL(`${protocol}://${host}`);
+  const metadataBase = metadataBaseFromHost(forwardedHost, forwardedProtocol)
+    ?? metadataBaseFromHost(directHost, forwardedProtocol)
+    ?? new URL("http://localhost:3001");
   const socialImage = new URL("/og.png", metadataBase).toString();
 
   return {

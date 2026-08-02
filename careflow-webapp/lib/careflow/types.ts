@@ -10,6 +10,7 @@ export type VisitStatus =
 
 export type PaymentMethod = "cash" | "promptpay";
 export type ToastTone = "success" | "error" | "info";
+export type InventoryUnit = "เม็ด" | "แคปซูล" | "ขวด";
 
 export interface Vitals {
   weight: number;
@@ -61,7 +62,7 @@ export interface PrescriptionItem {
   quantityLabel: string;
   instructionTh: string;
   instructionEn: string;
-  timing: Array<"morning" | "noon" | "evening" | "bedtime" | "meal" | "symptom">;
+  timing: ReadonlyArray<"morning" | "noon" | "evening" | "bedtime" | "meal" | "symptom">;
   warning?: string;
   prepared: boolean;
 }
@@ -95,7 +96,7 @@ export interface InventoryItem {
   strength: string;
   form: string;
   stock: number;
-  unit: string;
+  unit: InventoryUnit;
   threshold: number;
   earliestExpiry?: string;
   dispensedThisMonth: number;
@@ -105,7 +106,7 @@ export interface InventoryBatch {
   id: string;
   inventoryId: string;
   quantity: number;
-  unit: string;
+  unit: InventoryUnit;
   supplier: string;
   batchNumber: string;
   expiry: string;

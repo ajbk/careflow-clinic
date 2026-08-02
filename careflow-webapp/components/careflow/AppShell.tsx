@@ -38,6 +38,7 @@ export function AppShell({ children, pathname }: { children: ReactNode; pathname
   const { state, dispatch } = useCareFlow();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [resetArmed, setResetArmed] = useState(false);
   const currentPath = pathname ?? (typeof window !== "undefined" ? window.location.pathname : "/");
   const items = navItemsForRole(state.role);
   const searchResults = useMemo(() => {
@@ -107,9 +108,21 @@ export function AppShell({ children, pathname }: { children: ReactNode; pathname
             <RefreshCcw aria-hidden="true" size={17} />
             {state.role === "doctor" ? "ดูในบทบาทผู้ช่วย" : "ดูในบทบาทแพทย์"}
           </button>
-          <button className="reset-button" aria-label="รีเซ็ตข้อมูลตัวอย่าง" onClick={() => dispatch({ type: "RESET_DEMO" })}>
-            <RefreshCcw aria-hidden="true" size={17} /> รีเซ็ตข้อมูลตัวอย่าง
+          <button
+            className="reset-button"
+            aria-label={resetArmed ? "ยืนยันการรีเซ็ตข้อมูลตัวอย่าง" : "รีเซ็ตข้อมูลตัวอย่าง"}
+            onClick={() => {
+              if (resetArmed) {
+                dispatch({ type: "RESET_DEMO" });
+                setResetArmed(false);
+                return;
+              }
+              setResetArmed(true);
+            }}
+          >
+            <RefreshCcw aria-hidden="true" size={17} /> {resetArmed ? "ยืนยันการรีเซ็ตข้อมูลตัวอย่าง" : "รีเซ็ตข้อมูลตัวอย่าง"}
           </button>
+          {resetArmed ? <p className="reset-confirmation" role="status">กดอีกครั้งเพื่อยืนยันการล้างข้อมูลสาธิต</p> : null}
         </div>
       </aside>
 

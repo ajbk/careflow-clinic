@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-async function render(pathname = "/", origin = "http://localhost") {
+async function render(pathname = "/", origin = "http://localhost", extraHeaders = {}) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
@@ -14,6 +14,7 @@ async function render(pathname = "/", origin = "http://localhost") {
         host: requestUrl.host,
         "x-forwarded-host": requestUrl.host,
         "x-forwarded-proto": requestUrl.protocol.slice(0, -1),
+        ...extraHeaders,
       },
     }),
     {
@@ -52,6 +53,16 @@ test("uses the incoming request host for absolute social metadata", async () => 
     html,
     /<meta name="twitter:image" content="https:\/\/careflow\.example\.test\/og\.png"\s*\/?>/i,
   );
+});
+
+test("falls back safely when a malformed forwarded host cannot form an origin", async () => {
+  const response = await render("/", "https://careflow.example.test", {
+    "x-forwarded-host": "::::",
+  });
+  const html = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(html, /<meta property="og:image" content="https:\/\/careflow\.example\.test\/og\.png"\s*\/?>/i);
 });
 
 test("server-renders every CareFlow route", async () => {

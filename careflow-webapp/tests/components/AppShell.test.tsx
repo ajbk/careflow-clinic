@@ -54,6 +54,24 @@ describe("AppShell", () => {
     expect(screen.getByRole("button", { name: "รีเซ็ตข้อมูลตัวอย่าง" })).toBeInTheDocument();
   });
 
+  it("requires a second explicit confirmation before resetting demo data", () => {
+    const state = createSeedState();
+    state.role = "assistant";
+
+    render(
+      <CareFlowProvider initialState={state} persist={false}>
+        <AppShell pathname="/"><p>หน้าทดสอบ</p></AppShell>
+      </CareFlowProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "รีเซ็ตข้อมูลตัวอย่าง" }));
+    expect(screen.getByRole("button", { name: "ยืนยันการรีเซ็ตข้อมูลตัวอย่าง" })).toBeInTheDocument();
+    expect(screen.getByText("ดูในบทบาทแพทย์")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "ยืนยันการรีเซ็ตข้อมูลตัวอย่าง" }));
+    expect(screen.getByText("ดูในบทบาทผู้ช่วย")).toBeInTheDocument();
+  });
+
   it("searches patients, medication codes, and appointment reasons with safe result links", () => {
     render(
       <CareFlowProvider initialState={createSeedState()} persist={false}>
