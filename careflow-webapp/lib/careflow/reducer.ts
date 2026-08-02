@@ -205,8 +205,12 @@ export function careFlowReducer(state: CareFlowState, action: CareFlowAction): C
 
     case "RECEIVE_STOCK": {
       const item = state.inventory.find((inventoryItem) => inventoryItem.id === action.payload.inventoryId);
-      if (!item || action.payload.quantity <= 0 || !action.payload.batchNumber.trim()) {
+      const expiry = new Date(`${action.payload.expiry}T00:00:00`);
+      if (!item || action.payload.quantity <= 0 || !action.payload.batchNumber.trim() || !action.payload.supplier.trim()) {
         return addToast(state, "error", "กรุณากรอกข้อมูลรับยาให้ครบถ้วน");
+      }
+      if (!action.payload.expiry || Number.isNaN(expiry.getTime()) || expiry.getTime() <= Date.now()) {
+        return addToast(state, "error", "วันหมดอายุต้องเป็นวันในอนาคต");
       }
       const next: CareFlowState = {
         ...state,
