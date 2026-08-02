@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { Clock3, Stethoscope, UsersRound } from "lucide-react";
+import { Clock3, UsersRound } from "lucide-react";
 import { useCareFlow } from "@/lib/careflow/context";
 import { selectPatient, selectQueueColumns } from "@/lib/careflow/selectors";
 import type { Visit } from "@/lib/careflow/types";
-import { ActionButton, Card, EmptyState, PageHeader, StatusBadge } from "../ui";
+import { ActionButton, EmptyState, PageHeader, StatusBadge } from "../ui";
 
 function statusFor(visit: Visit) {
   if (visit.status === "consulting") return { label: "กำลังตรวจ", tone: "active" as const };

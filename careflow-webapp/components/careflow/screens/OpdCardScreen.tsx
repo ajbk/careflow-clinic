@@ -4,9 +4,11 @@ import { Printer, ShieldCheck } from "lucide-react";
 import { useCareFlow } from "@/lib/careflow/context";
 import { selectVisit, selectVisitPatient } from "@/lib/careflow/selectors";
 import { EmptyState, PageHeader, ActionButton } from "../ui";
+import { RoleRestrictedCard } from "../RoleRestrictedCard";
 
 export function OpdCardScreen({ visitId }: { visitId: string }) {
   const { state } = useCareFlow();
+  if (state.role !== "doctor") return <RoleRestrictedCard title="OPD Card" />;
   const visit = selectVisit(state, visitId);
   const patient = selectVisitPatient(state, visitId);
   if (!visit || !patient) return <EmptyState icon={ShieldCheck} title="ไม่พบ OPD Card" detail="กรุณาเลือกการรับบริการที่ต้องการ" />;

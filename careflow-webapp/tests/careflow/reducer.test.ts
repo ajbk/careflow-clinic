@@ -110,6 +110,47 @@ describe("careFlowReducer", () => {
     });
   });
 
+  it("takes a newly intaken patient through a prescribed medication, dispensing, and payment", () => {
+    let state = careFlowReducer(createSeedState(), {
+      type: "SUBMIT_INTAKE",
+      payload: {
+        patient: { id: "patient-new-flow", hn: "HN-66022", name: "ใหม่ ใจดี", age: 40, gender: "หญิง", phone: "081-000-0000", allergies: [] },
+        visit: {
+          id: "visit-new-flow",
+          arrivedAt: "2026-08-02T09:15:00.000Z",
+          vitals: { weight: 55, height: 160, temperature: 37, systolic: 120, diastolic: 80, heartRate: 76, spo2: 98 },
+          chiefComplaint: "ปวดศีรษะ",
+        },
+      },
+    });
+    state = careFlowReducer(state, { type: "START_CONSULTATION", payload: { visitId: "visit-new-flow", startedAt: "2026-08-02T09:20:00.000Z" } });
+    state = careFlowReducer(state, {
+      type: "ADD_PRESCRIPTION",
+      payload: { visitId: "visit-new-flow", inventoryId: "med-paracetamol", quantity: 10 },
+    });
+    state = careFlowReducer(state, {
+      type: "SIGN_VISIT",
+      payload: {
+        visitId: "visit-new-flow", signedAt: "2026-08-02T09:25:00.000Z",
+        clinical: { subjective: "ปวดศีรษะ", objective: "ไม่มีไข้", assessment: "ปวดศีรษะทั่วไป", plan: "พักผ่อนและรับประทานยา", diagnosis: { code: "R51", labelTh: "ปวดศีรษะ", labelEn: "Headache" } },
+      },
+    });
+    const prescribed = state.visits.find((visit) => visit.id === "visit-new-flow");
+    const stockBefore = state.inventory.find((item) => item.id === "med-paracetamol")?.stock;
+    expect(prescribed?.medications).toHaveLength(1);
+    expect(prescribed?.status).toBe("awaiting-dispensing");
+
+    state = careFlowReducer(state, { type: "TOGGLE_MEDICATION_PREPARED", payload: { visitId: "visit-new-flow", medicationId: prescribed!.medications[0].id } });
+    state = careFlowReducer(state, { type: "CONFIRM_DISPENSING", payload: { visitId: "visit-new-flow", dispensedAt: "2026-08-02T09:30:00.000Z" } });
+    const stockAfterDispensing = state.inventory.find((item) => item.id === "med-paracetamol")?.stock;
+    state = careFlowReducer(state, { type: "CONFIRM_DISPENSING", payload: { visitId: "visit-new-flow", dispensedAt: "2026-08-02T09:31:00.000Z" } });
+    state = careFlowReducer(state, { type: "COMPLETE_PAYMENT", payload: { visitId: "visit-new-flow", method: "cash", paidAt: "2026-08-02T09:35:00.000Z" } });
+
+    expect(stockAfterDispensing).toBe(stockBefore! - 10);
+    expect(state.inventory.find((item) => item.id === "med-paracetamol")?.stock).toBe(stockAfterDispensing);
+    expect(state.visits.find((visit) => visit.id === "visit-new-flow")?.status).toBe("complete");
+  });
+
   it("blocks dispensing until every medication is prepared", () => {
     let state = createSeedState({ demoVisitStatus: "awaiting-dispensing" });
     state = careFlowReducer(state, {

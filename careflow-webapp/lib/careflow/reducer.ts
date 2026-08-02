@@ -1,6 +1,13 @@
 import { createSeedState } from "./seed";
 import type { CareFlowAction, CareFlowState, ToastTone, Visit } from "./types";
 
+function defaultMedicationInstruction(name: string) {
+  if (name === "Paracetamol") return "รับประทานครั้งละ 1 เม็ด ทุก 4–6 ชั่วโมงเมื่อมีอาการปวดหรือมีไข้";
+  if (name === "Amoxicillin") return "รับประทานครั้งละ 1 แคปซูล วันละ 3 ครั้ง หลังอาหาร";
+  if (name === "Omeprazole") return "รับประทานครั้งละ 1 แคปซูล ก่อนอาหารเช้า";
+  return "รับประทานตามคำสั่งแพทย์";
+}
+
 function addToast(state: CareFlowState, tone: ToastTone, message: string): CareFlowState {
   return {
     ...state,
@@ -82,6 +89,45 @@ export function careFlowReducer(state: CareFlowState, action: CareFlowAction): C
         })),
         "success",
         "ลงนามเวชระเบียนแล้ว ส่งต่อไปยังห้องยา",
+      );
+    }
+
+    case "ADD_PRESCRIPTION": {
+      const visit = state.visits.find((item) => item.id === action.payload.visitId);
+      const inventoryItem = state.inventory.find((item) => item.id === action.payload.inventoryId);
+      const quantity = Math.floor(action.payload.quantity);
+      if (!visit || visit.status !== "consulting" || !inventoryItem || !Number.isInteger(action.payload.quantity) || quantity <= 0) {
+        return addToast(state, "error", "ไม่สามารถเพิ่มรายการยาได้");
+      }
+      if (inventoryItem.stock < quantity) {
+        return addToast(state, "error", "จำนวนยาในคลังไม่เพียงพอ");
+      }
+      if (visit.medications.some((medication) => medication.inventoryId === inventoryItem.id)) {
+        return addToast(state, "info", "เพิ่มยารายการนี้ในแผนแล้ว");
+      }
+      const medication = {
+        id: `rx-${visit.id}-${inventoryItem.id}`,
+        inventoryId: inventoryItem.id,
+        name: inventoryItem.name,
+        nameTh: inventoryItem.nameTh,
+        strength: inventoryItem.strength,
+        form: inventoryItem.form,
+        quantity,
+        quantityLabel: `${quantity} ${inventoryItem.form}`,
+        instructionTh: defaultMedicationInstruction(inventoryItem.name),
+        instructionEn: "Take as directed by the clinician.",
+        timing: ["symptom"] as const,
+        warning: "ใช้ตามคำสั่งแพทย์",
+        prepared: false,
+      };
+      return addToast(
+        updateVisit(state, visit.id, (item) => ({
+          ...item,
+          medications: [...item.medications, medication],
+          medicationTotal: item.medicationTotal + quantity * 2,
+        })),
+        "success",
+        `เพิ่ม ${inventoryItem.nameTh} ในแผนยาแล้ว`,
       );
     }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { ClipboardPlus, Send, UserPlus } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useCareFlow } from "@/lib/careflow/context";
 import type { Patient, Vitals } from "@/lib/careflow/types";
@@ -28,6 +29,7 @@ const initialDraft: IntakeDraft = {
 
 export function IntakeScreen() {
   const { dispatch } = useCareFlow();
+  const router = useRouter();
   const [draft, setDraft] = useState(initialDraft);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const set = (key: keyof IntakeDraft, value: string) => setDraft((current) => ({ ...current, [key]: value }));
@@ -59,7 +61,7 @@ export function IntakeScreen() {
     };
     dispatch({ type: "SUBMIT_INTAKE", payload: { patient, visit: { id: `visit-${Date.now()}`, arrivedAt: now, vitals, chiefComplaint: draft.chiefComplaint.trim() } } });
     setDraft(initialDraft);
-    if (typeof window !== "undefined") window.history.pushState({}, "", "/queue");
+    router.push("/queue");
   }
 
   return (

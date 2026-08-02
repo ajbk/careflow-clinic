@@ -173,6 +173,10 @@ export type CareFlowAction =
       payload: { visitId: string; signedAt: string; clinical: ClinicalNote };
     }
   | {
+      type: "ADD_PRESCRIPTION";
+      payload: { visitId: string; inventoryId: string; quantity: number };
+    }
+  | {
       type: "TOGGLE_MEDICATION_PREPARED";
       payload: { visitId: string; medicationId: string };
     }
