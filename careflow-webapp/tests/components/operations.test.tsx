@@ -38,6 +38,11 @@ function StartDemoVisit() {
   );
 }
 
+function AdvanceDemoVisit() {
+  const { dispatch } = useCareFlow();
+  return <button type="button" onClick={() => dispatch({ type: "SIGN_VISIT", payload: { visitId: "demo-visit", signedAt: "2026-08-02T09:45:00.000Z", clinical: { subjective: "ไอ", objective: "ปอดใส", assessment: "ติดเชื้อ", plan: "พัก", diagnosis: { code: "J06.9", labelTh: "การติดเชื้อทางเดินหายใจส่วนบน", labelEn: "URI" } } } })}>ลงนามรายการทดสอบ</button>;
+}
+
 describe("connected clinic operations", () => {
   it("updates overview metrics from shared workflow state", () => {
     render(
@@ -50,6 +55,17 @@ describe("connected clinic operations", () => {
     expect(screen.getByLabelText("รอตรวจ")).toHaveTextContent("5");
     fireEvent.click(screen.getByRole("button", { name: "เริ่มรายการทดสอบ" }));
     expect(screen.getByLabelText("รอตรวจ")).toHaveTextContent("4");
+    expect(screen.getByLabelText("ผู้ป่วยในระบบวันนี้")).toHaveTextContent("10");
+  });
+
+  it("keeps overview active count and analytics data live through sign-off", () => {
+    render(<CareFlowProvider initialState={createSeedState()} persist={false}><OverviewScreen /><AnalyticsScreen /><StartDemoVisit /><AdvanceDemoVisit /></CareFlowProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "เริ่มรายการทดสอบ" }));
+    fireEvent.click(screen.getByRole("button", { name: "ลงนามรายการทดสอบ" }));
+
+    expect(screen.getByLabelText("ผู้ป่วยในระบบวันนี้")).toHaveTextContent("10");
+    expect(screen.getByLabelText("จำนวนรายการตรวจ")).toHaveTextContent("313");
+    expect(screen.getByText("การติดเชื้อทางเดินหายใจส่วนบน")).toBeInTheDocument();
   });
 
   it("filters the medication registry by Thai name or drug code", () => {
@@ -151,5 +167,14 @@ describe("connected clinic operations", () => {
     expect(
       screen.getByRole("img", { name: "แนวโน้มจำนวนผู้ป่วยรายเดือน" }),
     ).toBeInTheDocument();
+  });
+
+  it("keeps direct analytics access in the prototype doctor workspace", () => {
+    const state = createSeedState();
+    state.role = "assistant";
+    render(<CareFlowProvider initialState={state} persist={false}><AnalyticsScreen /></CareFlowProvider>);
+
+    expect(screen.getByText("หน้าจอนี้สงวนไว้สำหรับแพทย์")).toBeInTheDocument();
+    expect(screen.queryByText("ตุลาคม 2566")).not.toBeInTheDocument();
   });
 });

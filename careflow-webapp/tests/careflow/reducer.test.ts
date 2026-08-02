@@ -227,6 +227,28 @@ describe("careFlowReducer", () => {
 
     expect(next.inventory.find((item) => item.id === "med-amoxicillin")?.stock).toBe(470);
     expect(next.batches.at(-1)).toMatchObject({ batchNumber: "LOT-2026-A", quantity: 20 });
+    expect(next.inventory.find((item) => item.id === "med-amoxicillin")?.earliestExpiry).toBe("2028-10-31");
+  });
+
+  it("rejects non-integer stock, missing supplier, and expired batches without changing stock", () => {
+    const state = createSeedState();
+    const attempts = [
+      { quantity: Number.NaN, supplier: "บริษัท ไทยเมด", batchNumber: "LOT-NAN", expiry: "2028-12-31" },
+      { quantity: 1.5, supplier: "บริษัท ไทยเมด", batchNumber: "LOT-FRACTION", expiry: "2028-12-31" },
+      { quantity: 10, supplier: "", batchNumber: "LOT-NOSUPPLIER", expiry: "2028-12-31" },
+      { quantity: 10, supplier: "บริษัท ไทยเมด", batchNumber: "LOT-OLD", expiry: "2000-01-01" },
+    ];
+
+    for (const attempt of attempts) {
+      const next = careFlowReducer(state, { type: "RECEIVE_STOCK", payload: { inventoryId: "med-paracetamol", unit: "กล่อง", receivedAt: "2026-08-02T10:20:00.000Z", ...attempt } });
+      expect(next.inventory.find((item) => item.id === "med-paracetamol")?.stock).toBe(42);
+    }
+  });
+
+  it("propagates an earlier valid expiry from a received batch", () => {
+    const next = careFlowReducer(createSeedState(), { type: "RECEIVE_STOCK", payload: { inventoryId: "med-paracetamol", quantity: 10, unit: "กล่อง", supplier: "บริษัท ไทยเมด", batchNumber: "LOT-EARLY", expiry: "2027-01-31", receivedAt: "2026-08-02T10:20:00.000Z" } });
+
+    expect(next.inventory.find((item) => item.id === "med-paracetamol")?.earliestExpiry).toBe("2027-01-31");
   });
 
   it("rejects an appointment that conflicts with an occupied slot", () => {

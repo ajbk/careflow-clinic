@@ -206,7 +206,10 @@ export function careFlowReducer(state: CareFlowState, action: CareFlowAction): C
     case "RECEIVE_STOCK": {
       const item = state.inventory.find((inventoryItem) => inventoryItem.id === action.payload.inventoryId);
       const expiry = new Date(`${action.payload.expiry}T00:00:00`);
-      if (!item || action.payload.quantity <= 0 || !action.payload.batchNumber.trim() || !action.payload.supplier.trim()) {
+      if (!item || !Number.isFinite(action.payload.quantity) || !Number.isInteger(action.payload.quantity) || action.payload.quantity <= 0) {
+        return addToast(state, "error", "จำนวนรับยาต้องเป็นจำนวนเต็มที่มากกว่าศูนย์");
+      }
+      if (!action.payload.batchNumber.trim() || !action.payload.supplier.trim()) {
         return addToast(state, "error", "กรุณากรอกข้อมูลรับยาให้ครบถ้วน");
       }
       if (!action.payload.expiry || Number.isNaN(expiry.getTime()) || expiry.getTime() <= Date.now()) {
@@ -216,7 +219,13 @@ export function careFlowReducer(state: CareFlowState, action: CareFlowAction): C
         ...state,
         inventory: state.inventory.map((inventoryItem) =>
           inventoryItem.id === item.id
-            ? { ...inventoryItem, stock: inventoryItem.stock + action.payload.quantity }
+            ? {
+                ...inventoryItem,
+                stock: inventoryItem.stock + action.payload.quantity,
+                earliestExpiry: !inventoryItem.earliestExpiry || action.payload.expiry < inventoryItem.earliestExpiry
+                  ? action.payload.expiry
+                  : inventoryItem.earliestExpiry,
+              }
             : inventoryItem,
         ),
         batches: [

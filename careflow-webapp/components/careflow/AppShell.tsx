@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import {
   Archive,
   BarChart3,
@@ -18,7 +18,7 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useCareFlow } from "@/lib/careflow/context";
 import { navItemsForRole, type NavIcon } from "@/lib/careflow/route-access";
 import { ToastRegion } from "./ToastRegion";
@@ -37,8 +37,32 @@ const icons: Record<NavIcon, typeof LayoutDashboard> = {
 export function AppShell({ children, pathname }: { children: ReactNode; pathname?: string }) {
   const { state, dispatch } = useCareFlow();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const currentPath = pathname ?? (typeof window !== "undefined" ? window.location.pathname : "/");
   const items = navItemsForRole(state.role);
+  const searchResults = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return [];
+    const appointmentPatientIds = new Set(state.appointments
+      .filter((appointment) => `${appointment.patientName} ${appointment.reason}`.toLowerCase().includes(query))
+      .map((appointment) => appointment.patientId));
+    const patients = state.patients
+      .filter((patient) => `${patient.name} ${patient.hn}`.toLowerCase().includes(query) || appointmentPatientIds.has(patient.id))
+      .slice(0, 3)
+      .map((patient) => ({ id: `patient-${patient.id}`, href: state.role === "doctor" ? `/patients/${patient.id}/history` : "/queue", title: patient.name, detail: `ผู้ป่วย · HN ${patient.hn}` }));
+    const medications = state.inventory
+      .filter((item) => `${item.nameTh} ${item.name} ${item.code}`.toLowerCase().includes(query))
+      .slice(0, 3)
+      .map((item) => ({ id: `medication-${item.id}`, href: "/inventory", title: item.nameTh, detail: `ยา · ${item.code}` }));
+    const appointments = state.appointments
+      .filter((appointment) => `${appointment.patientName} ${appointment.reason}`.toLowerCase().includes(query))
+      .slice(0, 3)
+      .map((appointment) => ({ id: `appointment-${appointment.id}`, href: "/appointments", title: appointment.reason, detail: `นัดหมาย · ${appointment.date} ${appointment.time}` }));
+    return [...patients, ...medications, ...appointments].slice(0, 7);
+  }, [searchQuery, state.appointments, state.inventory, state.patients, state.role]);
+  const clearSearchOnEscape = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") setSearchQuery("");
+  };
 
   const nav = (
     <nav aria-label="เมนูหลัก" className="sidebar-nav">
@@ -100,11 +124,16 @@ export function AppShell({ children, pathname }: { children: ReactNode; pathname
 
       <div className="app-workspace">
         <header className="workspace-topbar">
-          <label className="global-search">
-            <Search aria-hidden="true" size={19} />
-            <span className="sr-only">ค้นหาใน CareFlow</span>
-            <input placeholder="ค้นหาผู้ป่วย HN หรือยา..." />
-          </label>
+          <div className="global-search-wrap">
+            <label className="global-search">
+              <Search aria-hidden="true" size={19} />
+              <span className="sr-only">ค้นหาใน CareFlow</span>
+              <input type="search" role="searchbox" aria-label="ค้นหาใน CareFlow" aria-controls="global-search-results" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={clearSearchOnEscape} placeholder="ค้นหาผู้ป่วย HN ยา หรือนัดหมาย..." />
+            </label>
+            {searchQuery ? <div className="global-search-results" id="global-search-results" role="region" aria-label="ผลการค้นหา" aria-live="polite">
+              {searchResults.length ? searchResults.map((result) => <Link key={result.id} href={result.href} className="search-result" onClick={() => setSearchQuery("")}><strong>{result.title}</strong><small>{result.detail}</small></Link>) : <p>ไม่พบผลลัพธ์สำหรับ “{searchQuery}”</p>}
+            </div> : null}
+          </div>
           <div className="clinic-open"><span /> คลินิกเปิดให้บริการ</div>
           <button
             className="top-role-switch"

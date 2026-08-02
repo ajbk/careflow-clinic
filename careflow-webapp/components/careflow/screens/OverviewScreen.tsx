@@ -33,7 +33,7 @@ export function OverviewScreen() {
       <PageHeader
         eyebrow="CARE FOR THE COMMUNITY"
         title="ภาพรวมคลินิก"
-        description="เช้าวันเสาร์ที่ 2 สิงหาคม 2569 · ทุกอย่างที่ทีมต้องใช้เพื่อดูแลผู้ป่วยอย่างต่อเนื่อง"
+        description="เช้าวันอาทิตย์ที่ 2 สิงหาคม 2569 · ทุกอย่างที่ทีมต้องใช้เพื่อดูแลผู้ป่วยอย่างต่อเนื่อง"
         actions={<><Link className="care-button care-button-secondary" href="/appointments/new"><CalendarDays aria-hidden="true" size={18} />นัดหมายใหม่</Link><Link className="care-button care-button-primary" href="/intake"><ClipboardPlus aria-hidden="true" size={18} />รับผู้ป่วย</Link></>}
       />
 
