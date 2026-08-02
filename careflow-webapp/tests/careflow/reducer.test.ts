@@ -177,6 +177,7 @@ describe("careFlowReducer", () => {
       payload: { visitId: "demo-visit", dispensedAt: "2026-08-02T10:00:00.000Z" },
     });
     const afterFirst = state.inventory.find((item) => item.id === "med-paracetamol")?.stock;
+    const usageAfterFirst = state.inventory.find((item) => item.id === "med-paracetamol")?.dispensedThisMonth;
     state = careFlowReducer(state, {
       type: "CONFIRM_DISPENSING",
       payload: { visitId: "demo-visit", dispensedAt: "2026-08-02T10:01:00.000Z" },
@@ -186,6 +187,8 @@ describe("careFlowReducer", () => {
     expect(before).toBe(42);
     expect(afterFirst).toBe(22);
     expect(afterSecond).toBe(22);
+    expect(usageAfterFirst).toBe(1870);
+    expect(state.inventory.find((item) => item.id === "med-paracetamol")?.dispensedThisMonth).toBe(1870);
     expect(state.visits.find((visit) => visit.id === "demo-visit")?.status).toBe(
       "awaiting-payment",
     );

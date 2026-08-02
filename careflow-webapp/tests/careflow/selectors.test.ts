@@ -44,9 +44,23 @@ describe("CareFlow selectors", () => {
     expect(report.patientVolume).toBe(249);
     expect(report.consultations).toBe(313);
     expect(report.revenue).toBe(45_550);
-    expect(report.monthlySeries.at(-1)?.value).toBeGreaterThan(92);
+    expect(report.monthlySeries.at(-1)?.value).toBe(93);
     expect(report.diagnoses.find((item) => item.code === "J06.9")?.count).toBe(32);
     expect(report.lowStock).toBe(2);
+  });
+
+  it("moves the patient-volume chart only when patient volume changes", () => {
+    const baseline = selectAnalyticsReport(createSeedState()).monthlySeries.at(-1)?.value;
+    const signedAndRestocked = createSeedState();
+    signedAndRestocked.visits[0] = { ...signedAndRestocked.visits[0], signedAt: "2026-08-02T09:45:00.000Z", clinical: { ...signedAndRestocked.visits[0].clinical, diagnosis: { code: "J06.9", labelTh: "การติดเชื้อทางเดินหายใจส่วนบน", labelEn: "URI" } } };
+    signedAndRestocked.inventory[1] = { ...signedAndRestocked.inventory[1], stock: 80 };
+    signedAndRestocked.transactions.push({ id: "txn-chart", visitId: "demo-visit", method: "cash", consultationFee: 100, medicationTotal: 250, total: 350, paidAt: "2026-08-02T10:00:00.000Z" });
+    const afterOperations = selectAnalyticsReport(signedAndRestocked).monthlySeries.at(-1)?.value;
+    const afterIntake = createSeedState();
+    afterIntake.patients.push({ id: "patient-chart", hn: "69-10002", name: "เพิ่มกราฟ", age: 40, gender: "หญิง", phone: "0800000001", allergies: [] });
+
+    expect(afterOperations).toBe(baseline);
+    expect(selectAnalyticsReport(afterIntake).monthlySeries.at(-1)?.value).toBe(baseline! + 1);
   });
 
   it("groups queue cards into three visual columns", () => {

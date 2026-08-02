@@ -152,15 +152,20 @@ export function careFlowReducer(state: CareFlowState, action: CareFlowAction): C
       if (visit.inventoryDeducted) {
         return addToast(state, "info", "รายการยานี้ถูกตัดออกจากคลังแล้ว");
       }
-      const quantities = new Map(
-        visit.medications.map((medication) => [medication.inventoryId, medication.quantity]),
-      );
+      const quantities = new Map<string, number>();
+      for (const medication of visit.medications) {
+        quantities.set(medication.inventoryId, (quantities.get(medication.inventoryId) ?? 0) + medication.quantity);
+      }
       const next: CareFlowState = {
         ...state,
-        inventory: state.inventory.map((item) => ({
-          ...item,
-          stock: Math.max(0, item.stock - (quantities.get(item.id) ?? 0)),
-        })),
+        inventory: state.inventory.map((item) => {
+          const quantity = quantities.get(item.id) ?? 0;
+          return {
+            ...item,
+            stock: Math.max(0, item.stock - quantity),
+            dispensedThisMonth: item.dispensedThisMonth + quantity,
+          };
+        }),
         visits: state.visits.map((item) =>
           item.id === visit.id
             ? {

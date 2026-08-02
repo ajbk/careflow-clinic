@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { CareFlowProvider, useCareFlow } from "@/lib/careflow/context";
 import { createSeedState } from "@/lib/careflow/seed";
+import { careFlowReducer } from "@/lib/careflow/reducer";
 import { OverviewScreen } from "@/components/careflow/screens/OverviewScreen";
 import { InventoryScreen } from "@/components/careflow/screens/InventoryScreen";
 import { StockReceptionScreen } from "@/components/careflow/screens/StockReceptionScreen";
@@ -129,6 +130,22 @@ describe("connected clinic operations", () => {
     expect(screen.getByTestId("stock-med-amoxicillin")).toHaveTextContent("450");
   });
 
+  it("rejects a fractional stock receipt without rounding it down", () => {
+    pushMock.mockClear();
+    render(<CareFlowProvider initialState={createSeedState()} persist={false}><StockReceptionScreen /><StockProbe inventoryId="med-paracetamol" /></CareFlowProvider>);
+
+    fireEvent.change(screen.getByRole("combobox", { name: /ค้นหายา/ }), { target: { value: "med-paracetamol" } });
+    fireEvent.change(screen.getByLabelText(/จำนวนที่รับ/), { target: { value: "1.5" } });
+    fireEvent.change(screen.getByLabelText(/ผู้ผลิต.*ผู้จัดจำหน่าย/), { target: { value: "องค์การเภสัชกรรม" } });
+    fireEvent.change(screen.getByLabelText(/เลขที่ล็อต/), { target: { value: "PCM-FRACTION" } });
+    fireEvent.change(screen.getByLabelText(/วันหมดอายุ/), { target: { value: "2028-08-31" } });
+    fireEvent.click(screen.getByRole("button", { name: /ยืนยันการรับยา/ }));
+
+    expect(screen.getByText("จำนวนรับยาต้องเป็นจำนวนเต็มที่มากกว่าศูนย์")).toBeInTheDocument();
+    expect(screen.getByTestId("stock-med-paracetamol")).toHaveTextContent("42");
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
   it("disables occupied slots and renders a new appointment on the week calendar", () => {
     pushMock.mockClear();
     render(
@@ -167,6 +184,13 @@ describe("connected clinic operations", () => {
     expect(
       screen.getByRole("img", { name: "แนวโน้มจำนวนผู้ป่วยรายเดือน" }),
     ).toBeInTheDocument();
+  });
+
+  it("shows once-dispensed medication usage in analytics", () => {
+    const dispensed = careFlowReducer(createSeedState({ demoVisitStatus: "awaiting-dispensing", allPrepared: true }), { type: "CONFIRM_DISPENSING", payload: { visitId: "demo-visit", dispensedAt: "2026-08-02T10:00:00.000Z" } });
+    render(<CareFlowProvider initialState={dispensed} persist={false}><AnalyticsScreen /></CareFlowProvider>);
+
+    expect(screen.getByText("1,870 กล่อง")).toBeInTheDocument();
   });
 
   it("keeps direct analytics access in the prototype doctor workspace", () => {

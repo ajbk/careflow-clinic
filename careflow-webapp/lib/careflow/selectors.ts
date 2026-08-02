@@ -61,9 +61,6 @@ export function selectAnalyticsReport(state: CareFlowState) {
   const diagnoses = analyticsBaseline.diagnoses
     .map((item) => ({ ...item, count: item.count + (diagnosisDeltas.get(item.code) ?? 0) }))
     .sort((left, right) => right.count - left.count);
-  const activityDelta = patientDelta + signedVisits + state.transactions.length
-    + [...diagnosisDeltas.values()].reduce((total, count) => total + count, 0)
-    + (analyticsBaseline.lowStock - lowStock);
 
   return {
     period: "ตุลาคม 2566",
@@ -74,7 +71,7 @@ export function selectAnalyticsReport(state: CareFlowState) {
     diagnoses,
     monthlySeries: analyticsBaseline.monthlySeries.map((point, index) => ({
       ...point,
-      value: point.value + (index === analyticsBaseline.monthlySeries.length - 1 ? activityDelta : 0),
+      value: point.value + (index === analyticsBaseline.monthlySeries.length - 1 ? patientDelta : 0),
     })),
   };
 }
