@@ -26,6 +26,157 @@
   opacity: 0.68;
 }
 
+.auth-layout {
+  min-height: 100vh;
+  background: var(--surface);
+}
+
+.auth-main {
+  width: min(100% - 32px, 560px);
+  margin: 0 auto;
+  padding: 32px 0 64px;
+}
+
+.auth-card {
+  border: 1px solid rgba(64, 73, 69, 0.1);
+  border-radius: var(--radius-xl);
+  padding: clamp(24px, 5vw, 48px);
+  background: var(--surface-container-lowest);
+  box-shadow: var(--shadow-card);
+}
+
+.auth-card h1 {
+  margin: 8px 0 10px;
+  color: var(--primary);
+  font-size: clamp(1.75rem, 5vw, 2.5rem);
+  line-height: 1.2;
+}
+
+.auth-intro,
+.auth-note {
+  color: var(--on-surface-variant);
+}
+
+.auth-form {
+  display: grid;
+  gap: 9px;
+  margin-top: 24px;
+}
+
+.auth-form label {
+  color: var(--on-surface);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.auth-form input:not([type="checkbox"]) {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-sm);
+  padding: 10px 13px;
+  background: white;
+  color: var(--on-surface);
+}
+
+.auth-form input:not([type="checkbox"]):focus {
+  border-color: var(--primary);
+  outline: 2px solid rgba(0, 54, 41, 0.12);
+}
+
+.primary-button,
+.secondary-button {
+  min-height: 48px;
+  border-radius: 12px;
+  padding: 10px 18px;
+  font-weight: 700;
+}
+
+.primary-button {
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: white;
+}
+
+.primary-button:hover:not(:disabled) {
+  background: var(--primary-container);
+}
+
+.secondary-button {
+  border: 1px solid var(--outline-variant);
+  background: transparent;
+  color: var(--primary);
+}
+
+.primary-button:disabled,
+.secondary-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.auth-submit {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.auth-logout {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.form-error {
+  margin: 8px 0 0;
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--error-container);
+  color: var(--error);
+  font-size: 13px;
+}
+
+.rules-list {
+  display: grid;
+  gap: 10px;
+  margin: 22px 0 0;
+  padding-left: 22px;
+  color: var(--on-surface-variant);
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.checkbox-label input {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  accent-color: var(--primary);
+}
+
+.screen-state {
+  min-height: 100vh;
+  padding: 24px;
+  background: var(--surface);
+  text-align: center;
+}
+
+.screen-state > .pilot-banner {
+  width: min(100%, 760px);
+  margin: 0 auto 48px;
+}
+
+.screen-state h1 {
+  margin: 10px 0 8px;
+  color: var(--primary);
+}
+
+.screen-state > p:not(.eyebrow):not(.pilot-banner) {
+  color: var(--on-surface-variant);
+}
+
 @media (max-width: 620px) {
   .pilot-banner {
     margin-bottom: 16px;
