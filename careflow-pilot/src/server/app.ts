@@ -14,6 +14,7 @@ import {
 } from "./auth/routes.js";
 import { createSessionService } from "./modules/platform/index.js";
 import { createPatientService, registerPatientRoutes } from "./modules/patient/index.js";
+import { createVisitService, registerVisitRoutes } from "./modules/visit/index.js";
 
 export interface BuildAppOptions {
   db: DatabaseHandle;
@@ -84,6 +85,12 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   });
   const patientService = createPatientService({ database: options.db, clock: options.clock });
   registerPatientRoutes({ app, database: options.db, patients: patientService });
+  const visitService = createVisitService({
+    database: options.db,
+    patients: patientService,
+    clock: options.clock,
+  });
+  registerVisitRoutes({ app, database: options.db, visits: visitService });
 
   const requestStartedAt = new WeakMap<object, number>();
   app.addHook("onRequest", async (request) => {
