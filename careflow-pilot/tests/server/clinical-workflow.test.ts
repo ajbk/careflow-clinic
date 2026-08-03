@@ -5,9 +5,10 @@ import {
   medicationDecisions,
   medicationDecisionDrafts,
   medicationOrderDraftItems,
+  medicationOrderItems,
   type MedicationService,
 } from "../../src/server/modules/medication/index.js";
-import { clinicalNoteDrafts, clinicalNotes, createNoteService } from "../../src/server/modules/note/index.js";
+import { clinicalNoteAmendments, clinicalNoteDrafts, clinicalNotes, createNoteService } from "../../src/server/modules/note/index.js";
 import { createPatientService } from "../../src/server/modules/patient/index.js";
 import { auditEvents, executeIdempotent, hashEvidence, idempotencyRecords } from "../../src/server/modules/platform/index.js";
 import { visits } from "../../src/server/modules/visit/index.js";
@@ -557,4 +558,199 @@ describe("consultation finalization", () => {
       ))).toHaveLength(0);
     },
   );
+});
+
+async function finalizeOrder(test: Awaited<ReturnType<typeof fixture>>) {
+  const visitId = await createConsultingVisit(test);
+  await saveCompleteDraft(test, visitId, "ORDER");
+  const finalized = await finalize(test, visitId);
+  expect(finalized.statusCode).toBe(200);
+  return { visitId, finalized: finalized.json().data };
+}
+
+function amend(
+  test: Awaited<ReturnType<typeof fixture>>,
+  noteId: string,
+  input: { version?: number; content?: string; reason?: string; key?: string; cookie?: string } = {},
+) {
+  return test.app.inject({
+    method: "POST",
+    url: `/api/clinical-notes/${noteId}/amendments`,
+    headers: { cookie: input.cookie ?? test.doctorCookie, "idempotency-key": input.key ?? "clinical-amendment-001" },
+    payload: {
+      expectedRevisions: { amendment: input.version ?? 0 },
+      payload: { content: input.content ?? "ข้อมูลเพิ่มเติมทดสอบ", reason: input.reason ?? "เพิ่มรายละเอียด" },
+    },
+  });
+}
+
+function reviseDecision(
+  test: Awaited<ReturnType<typeof fixture>>,
+  visitId: string,
+  input: { visit?: number; patient?: number; decision?: number; reason?: string; kind?: "ORDER" | "NO_MEDICATION"; key?: string; cookie?: string } = {},
+) {
+  const kind = input.kind ?? "NO_MEDICATION";
+  return test.app.inject({
+    method: "POST",
+    url: `/api/visits/${visitId}/medication-decision-revisions`,
+    headers: { cookie: input.cookie ?? test.doctorCookie, "idempotency-key": input.key ?? "clinical-decision-revision-001" },
+    payload: {
+      expectedRevisions: { visit: input.visit ?? 3, patient: input.patient ?? 1, medicationDecision: input.decision ?? 1 },
+      payload: {
+        revisionReason: input.reason ?? "ปรับคำสั่งตามข้อมูลใหม่",
+        decision: kind === "NO_MEDICATION"
+          ? { kind, noMedicationReason: "ไม่มีข้อบ่งชี้หลังทบทวน" }
+          : { kind, items: [{ medicationId: "DEMO-MED-001", medicationRevision: 1, quantity: 5, directionsTh: "หลังอาหาร" }] },
+      },
+    },
+  });
+}
+
+describe("signed evidence amendments and safety revisions", () => {
+  it("appends an amendment without changing the original hash and safely replays", async () => {
+    const test = await fixture();
+    const { finalized } = await finalizeOrder(test);
+    const before = test.database.db.select().from(clinicalNotes).get();
+    const first = await amend(test, finalized.clinicalNote.id);
+    const replay = await amend(test, finalized.clinicalNote.id);
+    const stored = test.database.db.select().from(idempotencyRecords).all()
+      .find((record) => record.key === "clinical-amendment-001");
+
+    expect(first.statusCode).toBe(201);
+    expect(first.json().data).toMatchObject({ clinicalNoteId: finalized.clinicalNote.id, version: 1 });
+    expect(replay.json()).toEqual({ data: first.json().data, replayed: true });
+    expect(test.database.db.select().from(clinicalNotes).get()).toEqual(before);
+    expect(test.database.db.select().from(clinicalNoteAmendments).all()).toHaveLength(1);
+    expect(stored?.responseJson).not.toContain("ข้อมูลเพิ่มเติมทดสอบ");
+    expect(stored?.responseJson).not.toContain("เพิ่มรายละเอียด");
+    expect(() => test.database.sqlite.prepare("UPDATE clinical_note_amendments SET content='x'").run()).toThrow(/append-only/);
+  });
+
+  it("rejects stale, blank, Assistant, and colliding amendment commands without an append", async () => {
+    const test = await fixture();
+    const { finalized } = await finalizeOrder(test);
+    const first = await amend(test, finalized.clinicalNote.id, { key: "clinical-amendment-validation" });
+    const stale = await amend(test, finalized.clinicalNote.id, { version: 0, key: "clinical-amendment-stale" });
+    const blank = await amend(test, finalized.clinicalNote.id, { version: 1, content: " ", key: "clinical-amendment-blank" });
+    const assistant = await amend(test, finalized.clinicalNote.id, { version: 1, cookie: test.assistantCookie, key: "clinical-amendment-assistant" });
+    const collision = await amend(test, finalized.clinicalNote.id, { content: "ข้อความอื่น", key: "clinical-amendment-validation" });
+    const second = await amend(test, finalized.clinicalNote.id, { version: 1, key: "clinical-amendment-second" });
+
+    expect(first.statusCode).toBe(201);
+    expect(stale.json().error).toMatchObject({ code: "REVISION_CONFLICT", currentRevisions: { amendment: 1 } });
+    expect(blank.statusCode).toBe(422);
+    expect(assistant.statusCode).toBe(403);
+    expect(collision.json().error.code).toBe("IDEMPOTENCY_CONFLICT");
+    expect(second.json().data.version).toBe(2);
+    expect(test.database.db.select().from(clinicalNoteAmendments).all()).toHaveLength(2);
+  });
+
+  it("supersedes a decision with immutable catalog evidence and transitions to charge", async () => {
+    const test = await fixture();
+    const { visitId, finalized } = await finalizeOrder(test);
+    const before = test.database.db.select().from(medicationDecisions).get();
+    const response = await reviseDecision(test, visitId);
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().data).toMatchObject({
+      visit: { status: "AWAITING_CHARGE", revision: 4 },
+      medicationDecision: { version: 2, kind: "NO_MEDICATION", supersedesId: finalized.medicationDecision.id },
+    });
+    expect(test.database.db.select().from(medicationDecisions).get()).toEqual(before);
+    expect(test.database.db.select().from(medicationDecisions).all()).toHaveLength(2);
+    expect(test.database.db.select().from(medicationOrderItems).all()).toHaveLength(1);
+    expect(test.database.db.select().from(auditEvents).all().find((event) => event.action === "medication.decision-revised"))
+      .toMatchObject({ reason: "ปรับคำสั่งตามข้อมูลใหม่" });
+  });
+
+  it.each(["AWAITING_ORDER_REVISION", "AWAITING_PREPARATION", "AWAITING_CHARGE"] as const)(
+    "accepts an ORDER decision revision only from %s",
+    async (status) => {
+      const test = await fixture();
+      const { visitId } = await finalizeOrder(test);
+      if (status !== "AWAITING_PREPARATION") {
+        test.database.sqlite.prepare("UPDATE visits SET status=? WHERE id=?").run(status, visitId);
+      }
+      const response = await reviseDecision(test, visitId, { kind: "ORDER", key: `clinical-revision-${status}` });
+      expect(response.statusCode).toBe(201);
+      expect(response.json().data.visit).toMatchObject({ status: "AWAITING_PREPARATION", revision: 4 });
+    },
+  );
+
+  it("rejects stale Visit, safety, decision, and catalog tokens, prohibited states, and Assistant decision revisions", async () => {
+    const test = await fixture();
+    const { visitId } = await finalizeOrder(test);
+    const staleVisit = await reviseDecision(test, visitId, { visit: 99, key: "clinical-revision-stale-visit" });
+    const stalePatient = await reviseDecision(test, visitId, { patient: 99, key: "clinical-revision-stale-patient" });
+    const staleDecision = await reviseDecision(test, visitId, { decision: 99, key: "clinical-revision-stale-decision" });
+    test.database.sqlite.prepare("UPDATE medications SET revision=2 WHERE id='DEMO-MED-001'").run();
+    const staleCatalog = await reviseDecision(test, visitId, { kind: "ORDER", key: "clinical-revision-stale-catalog" });
+    test.database.sqlite.prepare("UPDATE medications SET revision=1 WHERE id='DEMO-MED-001'").run();
+    const assistant = await reviseDecision(test, visitId, { cookie: test.assistantCookie, key: "clinical-revision-assistant" });
+    test.database.sqlite.prepare("UPDATE visits SET status='PREPARING' WHERE id=?").run(visitId);
+    const prohibited = await reviseDecision(test, visitId, { key: "clinical-revision-prohibited" });
+
+    expect(staleVisit.json().error).toMatchObject({ code: "REVISION_CONFLICT", currentRevisions: { visit: 3 } });
+    expect(stalePatient.json().error).toMatchObject({ code: "REVISION_CONFLICT", currentRevisions: { patient: 1 } });
+    expect(staleDecision.json().error).toMatchObject({ code: "REVISION_CONFLICT", currentRevisions: { medicationDecision: 1 } });
+    expect(staleCatalog.json().error).toMatchObject({ code: "REVISION_CONFLICT", currentRevisions: { "medication.DEMO-MED-001": 2 } });
+    expect(assistant.statusCode).toBe(403);
+    expect(prohibited.json().error.code).toBe("INVALID_STATE");
+    expect(test.database.db.select().from(medicationDecisions).all()).toHaveLength(1);
+  });
+
+  it("rolls back a decision revision, its audit, and its idempotency record when the Visit transition fails", async () => {
+    const test = await fixture();
+    const { visitId } = await finalizeOrder(test);
+    const patients = createPatientService({ database: test.database });
+    const workflow = createClinicalWorkflow({
+      patients,
+      visits: createVisitService({ database: test.database, patients }),
+      notes: createNoteService({ database: test.database }),
+      medications: createMedicationService({ database: test.database }),
+      beforeDecisionRevisionTransition: () => { throw new Error("injected decision revision failure"); },
+    });
+    const body = {
+      expectedRevisions: { visit: 3, patient: 1, medicationDecision: 1 },
+      payload: { revisionReason: "ทดสอบ rollback", decision: { kind: "NO_MEDICATION" as const, noMedicationReason: "ไม่มีข้อบ่งชี้" } },
+    };
+
+    expect(() => executeIdempotent({
+      db: test.database.db,
+      actor: test.doctor.actor,
+      key: "clinical-revision-rollback",
+      operation: "medication.revise-decision.v1",
+      scope: visitId,
+      requestBody: body,
+      work: (tx) => ({ statusCode: 201, data: workflow.reviseMedicationDecision(tx, test.doctor.actor, visitId, body) }),
+    })).toThrow("injected decision revision failure");
+    expect(test.database.db.select().from(medicationDecisions).all()).toHaveLength(1);
+    expect(test.database.db.select().from(auditEvents).all().filter((event) => event.action === "medication.decision-revised"))
+      .toEqual([]);
+    expect(test.database.db.select().from(visits).where(eq(visits.id, visitId)).get())
+      .toMatchObject({ status: "AWAITING_PREPARATION", revision: 3 });
+    expect(test.database.db.select().from(idempotencyRecords).all().find((event) => event.key === "clinical-revision-rollback"))
+      .toBeUndefined();
+  });
+
+  it("moves a Doctor allergy update from preparation to order revision atomically", async () => {
+    const test = await fixture();
+    const { visitId } = await finalizeOrder(test);
+    const patientId = test.database.db.select().from(visits).where(eq(visits.id, visitId)).get()?.patientId;
+    if (!patientId) throw new Error("missing patient");
+    const response = await test.app.inject({
+      method: "POST",
+      url: `/api/patients/${patientId}/allergy-revisions`,
+      headers: { cookie: test.doctorCookie, "idempotency-key": "clinical-allergy-safety-001" },
+      payload: {
+        expectedRevisions: { patient: 1, visit: 3 },
+        payload: { visitId, state: "PRESENT", items: [{ substance: "ยาทดสอบ", reaction: "ผื่น", severity: "MILD", note: null }], sourceText: "พบประวัติแพ้", reason: "ป้องกันการจ่ายยา" },
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().data.visit).toMatchObject({ status: "AWAITING_ORDER_REVISION", revision: 4 });
+    expect(test.database.db.select().from(auditEvents).all().find((event) => event.action === "visit.allergy-safety-changed"))
+      .toMatchObject({ reason: "ป้องกันการจ่ายยา" });
+  });
 });

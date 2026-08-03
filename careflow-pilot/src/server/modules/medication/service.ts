@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import type {
   Actor,
   MedicationDecisionDraftDto,
   MedicationDecisionDraftInput,
   MedicationDto,
+  SignedDecisionInput,
   SignedMedicationDecisionDto,
 } from "../../../shared/contracts.js";
 import type { DatabaseHandle } from "../../db/client.js";
@@ -49,6 +50,14 @@ export interface MedicationService {
     actor: Actor,
     visitId: string,
     expectedDraftRevision: number,
+  ): SignedMedicationDecisionDto;
+  signDecisionRevision(
+    tx: AuditedTransaction,
+    actor: Actor,
+    visitId: string,
+    expectedDecisionVersion: number,
+    input: SignedDecisionInput,
+    revisionReason: string,
   ): SignedMedicationDecisionDto;
 }
 
@@ -198,7 +207,8 @@ export function createMedicationService(input: MedicationServiceOptions): Medica
 
     getSignedDecision(visitId) {
       const decision = input.database.db.select().from(medicationDecisions)
-        .where(eq(medicationDecisions.visitId, visitId)).get();
+        .where(eq(medicationDecisions.visitId, visitId))
+        .orderBy(desc(medicationDecisions.version)).get();
       if (!decision) return null;
       const base = {
         id: decision.id, visitId: decision.visitId, version: decision.version,
@@ -364,6 +374,69 @@ export function createMedicationService(input: MedicationServiceOptions): Medica
       appendAuditEvent({
         tx, actor, id: idFactory(), action: "medication.decision-signed", entityType: "medication_decision",
         entityId: signed.id, entityRevision: signed.version, reason: null, occurredAt: signed.signedAt,
+      });
+      return signed;
+    },
+
+    signDecisionRevision(tx, actor, visitId, expectedDecisionVersion, decisionInput, revisionReason) {
+      const prior = tx.select().from(medicationDecisions)
+        .where(eq(medicationDecisions.visitId, visitId))
+        .orderBy(desc(medicationDecisions.version)).get();
+      const currentVersion = prior?.version ?? 0;
+      assertExpectedRevision(currentVersion, expectedDecisionVersion, "medicationDecision");
+      if (!prior) throw new ApiError({ code: "INVALID_STATE", messageTh: "Visit นี้ไม่มีคำสั่งยาที่ลงนามแล้ว" });
+      const signedAt = clock().toISOString();
+      const reason = completeDecisionText(revisionReason, "revisionReason");
+      const id = idFactory();
+      if (decisionInput.kind === "NO_MEDICATION") {
+        const evidence = {
+          id, visitId, version: currentVersion + 1, kind: "NO_MEDICATION" as const,
+          noMedicationReason: completeDecisionText(decisionInput.noMedicationReason, "decision.noMedicationReason"),
+          items: [] as [], revisionReason: reason, supersedesId: prior.id,
+          signedBy: { id: actor.id, displayName: actor.displayName }, signedAt,
+        };
+        const signed: SignedMedicationDecisionDto = { ...evidence, contentHash: hashEvidence(evidence) };
+        tx.insert(medicationDecisions).values({
+          id: signed.id, visitId: signed.visitId, version: signed.version, kind: signed.kind,
+          noMedicationReason: signed.noMedicationReason, revisionReason: signed.revisionReason,
+          supersedesId: signed.supersedesId, signedBy: actor.id, signedByDisplayName: actor.displayName,
+          signedAt: signed.signedAt, contentHash: signed.contentHash,
+        }).run();
+        appendAuditEvent({
+          tx, actor, id: idFactory(), action: "medication.decision-revised", entityType: "medication_decision",
+          entityId: signed.id, entityRevision: signed.version, reason,
+          occurredAt: signed.signedAt, metadata: { visitId, kind: signed.kind, supersedesId: prior.id },
+        });
+        return signed;
+      }
+      const items = decisionInput.items.map((item) => ({
+        ...assertMedicationRevision(tx, item.medicationId, item.medicationRevision),
+        quantity: item.quantity,
+        directionsTh: completeDecisionText(item.directionsTh, "decision.items.directionsTh"),
+      }));
+      const evidence = {
+        id, visitId, version: currentVersion + 1, kind: "ORDER" as const, noMedicationReason: null,
+        items, revisionReason: reason, supersedesId: prior.id,
+        signedBy: { id: actor.id, displayName: actor.displayName }, signedAt,
+      };
+      const signed: SignedMedicationDecisionDto = { ...evidence, contentHash: hashEvidence(evidence) };
+      tx.insert(medicationDecisions).values({
+        id: signed.id, visitId: signed.visitId, version: signed.version, kind: signed.kind,
+        noMedicationReason: null, revisionReason: signed.revisionReason, supersedesId: signed.supersedesId,
+        signedBy: actor.id, signedByDisplayName: actor.displayName, signedAt: signed.signedAt,
+        contentHash: signed.contentHash,
+      }).run();
+      tx.insert(medicationOrderItems).values(signed.items.map((item, position) => ({
+        id: idFactory(), medicationDecisionId: signed.id, position,
+        medicationId: item.id, medicationRevision: item.revision,
+        displayNameSnapshot: item.displayName, strengthSnapshot: item.strengthText,
+        dosageFormSnapshot: item.dosageFormText, unitSnapshot: item.canonicalUnit,
+        quantity: item.quantity, directionsTh: item.directionsTh,
+      }))).run();
+      appendAuditEvent({
+        tx, actor, id: idFactory(), action: "medication.decision-revised", entityType: "medication_decision",
+        entityId: signed.id, entityRevision: signed.version, reason,
+        occurredAt: signed.signedAt, metadata: { visitId, kind: signed.kind, supersedesId: prior.id },
       });
       return signed;
     },

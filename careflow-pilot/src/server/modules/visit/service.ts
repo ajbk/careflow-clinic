@@ -78,6 +78,25 @@ export interface VisitService {
     expectedRevision: number,
     decisionKind: SignedMedicationDecisionDto["kind"],
   ): VisitSummaryDto;
+  assertDecisionRevisionVisit(
+    tx: AuditedTransaction,
+    actor: Actor,
+    visitId: string,
+    expectedVisitRevision: number,
+    expectedPatientRevision: number,
+  ): VisitSummaryDto;
+  transitionDecisionRevision(
+    tx: AuditedTransaction,
+    actor: Actor,
+    visit: VisitSummaryDto,
+    decisionKind: SignedMedicationDecisionDto["kind"],
+  ): VisitSummaryDto;
+  transitionAllergySafety(
+    tx: AuditedTransaction,
+    actor: Actor,
+    visit: VisitSummaryDto,
+    reason: string,
+  ): VisitSummaryDto;
 }
 
 type VisitRow = typeof visits.$inferSelect;
@@ -432,7 +451,9 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
         throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit ของผู้ป่วยรายนี้" });
       }
       assertExpectedRevision(visit.revision, body.expectedRevisions.visit, "visit");
-      const allowed = visit.status === "WAITING" || (visit.status === "CONSULTING" && actor.role === "doctor");
+      const allowed = visit.status === "WAITING" || (
+        actor.role === "doctor" && (visit.status === "CONSULTING" || visit.status === "AWAITING_PREPARATION")
+      );
       if (!allowed) {
         throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่อนุญาตให้ทบทวนข้อมูลแพ้" });
       }
@@ -512,6 +533,93 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
       }
       const updated = tx.select().from(visits).where(eq(visits.id, visitId)).get();
       if (!updated) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "อัปเดต Visit ไม่สำเร็จ" });
+      return {
+        id: updated.id,
+        status: visitStatusSchema.parse(updated.status),
+        revision: updated.revision,
+        arrivedAt: updated.arrivedAt,
+        startedAt: updated.startedAt,
+      };
+    },
+
+    assertDecisionRevisionVisit(tx, actor, visitId, expectedVisitRevision, expectedPatientRevision) {
+      const visit = tx.select().from(visits)
+        .where(and(eq(visits.id, visitId), eq(visits.clinicId, "clinic"))).get();
+      if (!visit) throw notFound("ไม่พบ Visit");
+      assertExpectedRevision(visit.revision, expectedVisitRevision, "visit");
+      if (actor.role !== "doctor") {
+        throw new ApiError({ code: "FORBIDDEN", messageTh: "บัญชีนี้ไม่มีสิทธิ์ดำเนินการ" });
+      }
+      if (
+        visit.status !== "AWAITING_ORDER_REVISION" &&
+        visit.status !== "AWAITING_PREPARATION" &&
+        visit.status !== "AWAITING_CHARGE"
+      ) {
+        throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่อนุญาตให้แก้ไขคำสั่งยา" });
+      }
+      input.patients.assertPatientRevision(tx, visit.patientId, expectedPatientRevision);
+      return {
+        id: visit.id,
+        status: visitStatusSchema.parse(visit.status),
+        revision: visit.revision,
+        arrivedAt: visit.arrivedAt,
+        startedAt: visit.startedAt,
+      };
+    },
+
+    transitionDecisionRevision(tx, actor, visit, decisionKind) {
+      const nextStatus = decisionKind === "ORDER" ? "AWAITING_PREPARATION" : "AWAITING_CHARGE";
+      const changed = tx.update(visits)
+        .set({ status: nextStatus, revision: visit.revision + 1 })
+        .where(and(
+          eq(visits.id, visit.id),
+          eq(visits.clinicId, "clinic"),
+          eq(visits.status, visit.status),
+          eq(visits.revision, visit.revision),
+        )).run();
+      if (changed.changes !== 1) {
+        const latest = tx.select().from(visits).where(eq(visits.id, visit.id)).get();
+        if (!latest) throw notFound("ไม่พบ Visit");
+        if (latest.revision !== visit.revision) assertExpectedRevision(latest.revision, visit.revision, "visit");
+        throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่อนุญาตให้แก้ไขคำสั่งยา" });
+      }
+      const updated = tx.select().from(visits).where(eq(visits.id, visit.id)).get();
+      if (!updated) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "อัปเดต Visit ไม่สำเร็จ" });
+      return {
+        id: updated.id,
+        status: visitStatusSchema.parse(updated.status),
+        revision: updated.revision,
+        arrivedAt: updated.arrivedAt,
+        startedAt: updated.startedAt,
+      };
+    },
+
+    transitionAllergySafety(tx, actor, visit, reason) {
+      if (actor.role !== "doctor" || visit.status !== "AWAITING_PREPARATION") {
+        throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่อนุญาตให้ทบทวนข้อมูลแพ้" });
+      }
+      const nextRevision = visit.revision + 1;
+      const changed = tx.update(visits)
+        .set({ status: "AWAITING_ORDER_REVISION", revision: nextRevision })
+        .where(and(
+          eq(visits.id, visit.id),
+          eq(visits.clinicId, "clinic"),
+          eq(visits.status, "AWAITING_PREPARATION"),
+          eq(visits.revision, visit.revision),
+        )).run();
+      if (changed.changes !== 1) {
+        const latest = tx.select().from(visits).where(eq(visits.id, visit.id)).get();
+        if (!latest) throw notFound("ไม่พบ Visit");
+        if (latest.revision !== visit.revision) assertExpectedRevision(latest.revision, visit.revision, "visit");
+        throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่อนุญาตให้ทบทวนข้อมูลแพ้" });
+      }
+      const updated = tx.select().from(visits).where(eq(visits.id, visit.id)).get();
+      if (!updated) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "อัปเดต Visit ไม่สำเร็จ" });
+      writeAudit({
+        tx, actor, id: idFactory(), action: "visit.allergy-safety-changed", entityType: "visit",
+        entityId: updated.id, entityRevision: nextRevision, reason, occurredAt: clock().toISOString(),
+        metadata: { previousStatus: "AWAITING_PREPARATION", nextStatus: "AWAITING_ORDER_REVISION" },
+      });
       return {
         id: updated.id,
         status: visitStatusSchema.parse(updated.status),

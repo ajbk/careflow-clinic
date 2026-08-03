@@ -98,7 +98,9 @@ function seedClinicalEvidence(databasePath: string): void {
         signed_by, signed_at, content_hash, signed_by_display_name
       ) VALUES ('reset-note', '${visitId}', 1, 'subjective', 'objective', 'assessment', 'plan', 1, 'reset-assistant-001', '${now}', '${hash}', 'ผู้ช่วยรีเซ็ต');
       INSERT INTO clinical_note_diagnoses VALUES ('reset-note-diagnosis', 'reset-note', 0, 'diagnosis');
-      INSERT INTO clinical_note_amendments VALUES ('reset-note-amendment', 'reset-note', 1, 'content', 'reason', 'reset-assistant-001', '${now}', '${hash}');
+      INSERT INTO clinical_note_amendments (
+        id, clinical_note_id, version, content, reason, signed_by, signed_by_display_name, signed_at, content_hash
+      ) VALUES ('reset-note-amendment', 'reset-note', 1, 'content', 'reason', 'reset-assistant-001', 'ผู้ช่วยรีเซ็ต', '${now}', '${hash}');
       INSERT INTO medication_decision_drafts VALUES ('reset-decision-draft', '${visitId}', 1, 'ORDER', NULL, 'reset-assistant-001', 'reset-assistant-001', '${now}', '${now}');
       INSERT INTO medication_order_draft_items VALUES ('reset-order-draft-item', 'reset-decision-draft', 0, 'DEMO-MED-001', 1, 1, 'ทดสอบ');
       INSERT INTO medication_decisions (

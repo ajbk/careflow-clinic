@@ -213,6 +213,8 @@ describe("clinical evidence schema", () => {
       .toContain("`signed_by_display_name` text DEFAULT 'legacy signer snapshot unavailable' NOT NULL");
     expect(tableSql(value, "medication_decisions"))
       .toContain("`signed_by_display_name` text DEFAULT 'legacy signer snapshot unavailable' NOT NULL");
+    expect(tableSql(value, "clinical_note_amendments"))
+      .toContain("`signed_by_display_name` text DEFAULT 'legacy signer snapshot unavailable' NOT NULL");
 
     const expectedForeignKeys: Record<string, Array<Record<string, string>>> = {
       patient_allergy_revisions: [
@@ -328,7 +330,9 @@ describe("clinical evidence schema", () => {
         signed_by, signed_at, content_hash, signed_by_display_name
       ) VALUES ('note-001', 'visit-001', 1, 'subjective', 'objective', 'assessment', 'plan', 1, 'doctor-001', '${now}', '${hash}', 'พญ. ทดสอบ');
       INSERT INTO clinical_note_diagnoses VALUES ('note-diagnosis-001', 'note-001', 0, 'diagnosis');
-      INSERT INTO clinical_note_amendments VALUES ('note-amendment-001', 'note-001', 1, 'amendment', 'reason', 'doctor-001', '${now}', '${hash}');
+      INSERT INTO clinical_note_amendments (
+        id, clinical_note_id, version, content, reason, signed_by, signed_by_display_name, signed_at, content_hash
+      ) VALUES ('note-amendment-001', 'note-001', 1, 'amendment', 'reason', 'doctor-001', 'พญ. ทดสอบ', '${now}', '${hash}');
       INSERT INTO medication_decision_drafts VALUES ('decision-draft-001', 'visit-001', 1, 'ORDER', NULL, 'doctor-001', 'doctor-001', '${now}', '${now}');
       INSERT INTO medication_order_draft_items VALUES ('order-draft-item-001', 'decision-draft-001', 0, 'DEMO-MED-001', 1, 1, 'ทดสอบ');
       INSERT INTO medication_decisions (

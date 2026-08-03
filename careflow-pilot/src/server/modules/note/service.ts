@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import type {
   Actor,
+  ClinicalNoteAmendmentDto,
   ClinicalNoteDraftDto,
   ClinicalNoteDraftInput,
   SignedClinicalNoteDto,
@@ -17,11 +18,12 @@ import {
   type AppTransaction,
   type AuditedTransaction,
 } from "../platform/index.js";
-import { clinicalNoteDiagnoses, clinicalNoteDraftDiagnoses, clinicalNoteDrafts, clinicalNotes } from "./schema.js";
+import { clinicalNoteAmendments, clinicalNoteDiagnoses, clinicalNoteDraftDiagnoses, clinicalNoteDrafts, clinicalNotes } from "./schema.js";
 
 export interface NoteService {
   getDraft(visitId: string): ClinicalNoteDraftDto | null;
   getSignedNote(visitId: string): SignedClinicalNoteDto | null;
+  getAmendment(clinicalNoteId: string, version: number): ClinicalNoteAmendmentDto | null;
   saveDraft(
     tx: AuditedTransaction,
     actor: Actor,
@@ -35,6 +37,14 @@ export interface NoteService {
     visitId: string,
     expectedDraftRevision: number,
   ): SignedClinicalNoteDto;
+  signAmendment(
+    tx: AuditedTransaction,
+    actor: Actor,
+    noteId: string,
+    expectedAmendmentVersion: number,
+    content: string,
+    reason: string,
+  ): ClinicalNoteAmendmentDto;
 }
 
 export interface NoteServiceOptions {
@@ -109,6 +119,25 @@ export function createNoteService(options: NoteServiceOptions): NoteService {
         diagnoses, sourceDraftRevision: note.sourceDraftRevision, revisionReason: null, supersedesId: null,
         signedBy: { id: note.signedBy, displayName: note.signedByDisplayName },
         signedAt: note.signedAt, contentHash: note.contentHash,
+      };
+    },
+
+    getAmendment(clinicalNoteId, version) {
+      const amendment = options.database.db.select().from(clinicalNoteAmendments)
+        .where(and(
+          eq(clinicalNoteAmendments.clinicalNoteId, clinicalNoteId),
+          eq(clinicalNoteAmendments.version, version),
+        )).get();
+      if (!amendment) return null;
+      return {
+        id: amendment.id,
+        clinicalNoteId: amendment.clinicalNoteId,
+        version: amendment.version,
+        content: amendment.content,
+        reason: amendment.reason,
+        signedBy: { id: amendment.signedBy, displayName: amendment.signedByDisplayName },
+        signedAt: amendment.signedAt,
+        contentHash: amendment.contentHash,
       };
     },
 
@@ -229,6 +258,45 @@ export function createNoteService(options: NoteServiceOptions): NoteService {
         entityId: signed.id, entityRevision: signed.version, reason: null, occurredAt: signed.signedAt,
       });
       return signed;
+    },
+
+    signAmendment(tx, actor, noteId, expectedAmendmentVersion, content, reason) {
+      const note = tx.select({ id: clinicalNotes.id }).from(clinicalNotes)
+        .where(eq(clinicalNotes.id, noteId)).get();
+      if (!note) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบบันทึกที่ลงนาม" });
+      const currentVersion = tx.select({ maximum: sql<number>`coalesce(max(${clinicalNoteAmendments.version}), 0)` })
+        .from(clinicalNoteAmendments)
+        .where(eq(clinicalNoteAmendments.clinicalNoteId, noteId))
+        .get()?.maximum ?? 0;
+      assertExpectedRevision(currentVersion, expectedAmendmentVersion, "amendment");
+      const signedAt = clock().toISOString();
+      const evidence = {
+        id: idFactory(),
+        clinicalNoteId: noteId,
+        version: currentVersion + 1,
+        content: completeText(content, "amendment.content"),
+        reason: completeText(reason, "amendment.reason"),
+        signedBy: { id: actor.id, displayName: actor.displayName },
+        signedAt,
+      } as const;
+      const amendment: ClinicalNoteAmendmentDto = { ...evidence, contentHash: hashEvidence(evidence) };
+      tx.insert(clinicalNoteAmendments).values({
+        id: amendment.id,
+        clinicalNoteId: amendment.clinicalNoteId,
+        version: amendment.version,
+        content: amendment.content,
+        reason: amendment.reason,
+        signedBy: actor.id,
+        signedByDisplayName: actor.displayName,
+        signedAt: amendment.signedAt,
+        contentHash: amendment.contentHash,
+      }).run();
+      appendAuditEvent({
+        tx, actor, id: idFactory(), action: "note.amendment-signed", entityType: "clinical_note_amendment",
+        entityId: amendment.id, entityRevision: amendment.version, reason: amendment.reason,
+        occurredAt: amendment.signedAt, metadata: { clinicalNoteId: noteId },
+      });
+      return amendment;
     },
   };
 }

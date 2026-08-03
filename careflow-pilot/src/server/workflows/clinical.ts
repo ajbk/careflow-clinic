@@ -1,12 +1,16 @@
 import type {
   Actor,
   AllergyReviewResultDto,
+  ClinicalNoteAmendmentDto,
   ReviewAllergyBody,
   SaveConsultationDraftBody,
   ClinicalNoteDraftDto,
   MedicationDecisionDraftDto,
   FinalizeConsultationBody,
   FinalizeConsultationResultDto,
+  MedicationDecisionRevisionResultDto,
+  SignClinicalNoteAmendmentBody,
+  SignMedicationDecisionRevisionBody,
 } from "../../shared/contracts.js";
 import { randomUUID } from "node:crypto";
 import { ApiError } from "../errors.js";
@@ -23,6 +27,18 @@ export interface ClinicalWorkflow {
     patientId: string,
     body: ReviewAllergyBody,
   ): AllergyReviewResultDto;
+  amendNote(
+    tx: AuditedTransaction,
+    actor: Actor,
+    noteId: string,
+    body: SignClinicalNoteAmendmentBody,
+  ): ClinicalNoteAmendmentDto;
+  reviseMedicationDecision(
+    tx: AuditedTransaction,
+    actor: Actor,
+    visitId: string,
+    body: SignMedicationDecisionRevisionBody,
+  ): MedicationDecisionRevisionResultDto;
   saveConsultationDraft(
     tx: AuditedTransaction,
     actor: Actor,
@@ -56,6 +72,13 @@ export interface ClinicalWorkflow {
     clinicalNoteId: string;
     medicationDecisionId: string;
   }): FinalizeConsultationResultDto;
+  replayAmendment(reference: { clinicalNoteId: string; amendmentId: string; amendmentVersion: number }): ClinicalNoteAmendmentDto;
+  replayMedicationDecisionRevision(reference: {
+    visitId: string;
+    visitRevision: number;
+    medicationDecisionId: string;
+    medicationDecisionVersion: number;
+  }): MedicationDecisionRevisionResultDto;
 }
 
 export function createClinicalWorkflow(input: {
@@ -67,6 +90,10 @@ export function createClinicalWorkflow(input: {
   idFactory?: () => string;
   /** Test seam for proving the enclosing transaction rolls back before the Visit write. */
   beforeVisitTransition?: () => void;
+  /** Test seam for proving allergy evidence and its audit roll back with the safety transition. */
+  beforeAllergySafetyTransition?: () => void;
+  /** Test seam for proving decision evidence and its audit roll back with its Visit transition. */
+  beforeDecisionRevisionTransition?: () => void;
 }): ClinicalWorkflow {
   const clock = input.clock ?? (() => new Date());
   const idFactory = input.idFactory ?? randomUUID;
@@ -80,7 +107,40 @@ export function createClinicalWorkflow(input: {
         body.expectedRevisions.patient,
         body.payload,
       );
-      return { patient, allergy, visit };
+      if (visit.status !== "AWAITING_PREPARATION") return { patient, allergy, visit };
+      const decision = input.medications.getSignedDecision(visit.id);
+      if (!decision || decision.kind !== "ORDER") {
+        throw new ApiError({ code: "INVALID_STATE", messageTh: "Visit นี้ไม่มีคำสั่งยาที่ต้องทบทวน" });
+      }
+      input.beforeAllergySafetyTransition?.();
+      return { patient, allergy, visit: input.visits.transitionAllergySafety(tx, actor, visit, body.payload.reason) };
+    },
+
+    amendNote(tx, actor, noteId, body) {
+      if (!hasPermission(actor, "clinical:amend")) {
+        throw new ApiError({ code: "FORBIDDEN", messageTh: "บัญชีนี้ไม่มีสิทธิ์ดำเนินการ" });
+      }
+      return input.notes.signAmendment(
+        tx, actor, noteId, body.expectedRevisions.amendment, body.payload.content, body.payload.reason,
+      );
+    },
+
+    reviseMedicationDecision(tx, actor, visitId, body) {
+      if (!hasPermission(actor, "medication:sign-decision")) {
+        throw new ApiError({ code: "FORBIDDEN", messageTh: "บัญชีนี้ไม่มีสิทธิ์ดำเนินการ" });
+      }
+      const visit = input.visits.assertDecisionRevisionVisit(
+        tx, actor, visitId, body.expectedRevisions.visit, body.expectedRevisions.patient,
+      );
+      const medicationDecision = input.medications.signDecisionRevision(
+        tx, actor, visitId, body.expectedRevisions.medicationDecision,
+        body.payload.decision, body.payload.revisionReason,
+      );
+      input.beforeDecisionRevisionTransition?.();
+      return {
+        visit: input.visits.transitionDecisionRevision(tx, actor, visit, medicationDecision.kind),
+        medicationDecision,
+      };
     },
 
     saveConsultationDraft(tx, actor, visitId, body) {
@@ -177,6 +237,29 @@ export function createClinicalWorkflow(input: {
         throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่พบข้อมูลที่ลงนามสำหรับการเรียกซ้ำ" });
       }
       return { visit, clinicalNote, medicationDecision };
+    },
+
+    replayAmendment(reference) {
+      const amendment = input.notes.getAmendment(reference.clinicalNoteId, reference.amendmentVersion);
+      if (!amendment || amendment.id !== reference.amendmentId) {
+        throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่พบข้อมูลแก้ไขเพิ่มเติมสำหรับการเรียกซ้ำ" });
+      }
+      return amendment;
+    },
+
+    replayMedicationDecisionRevision(reference) {
+      const visit = input.visits.getVisitSummary(reference.visitId);
+      const medicationDecision = input.medications.getSignedDecision(reference.visitId);
+      if (
+        !visit ||
+        !medicationDecision ||
+        visit.revision !== reference.visitRevision ||
+        medicationDecision.id !== reference.medicationDecisionId ||
+        medicationDecision.version !== reference.medicationDecisionVersion
+      ) {
+        throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่พบคำสั่งยาที่แก้ไขสำหรับการเรียกซ้ำ" });
+      }
+      return { visit, medicationDecision };
     },
   };
 }

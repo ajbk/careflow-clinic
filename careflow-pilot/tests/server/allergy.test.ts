@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createPatientService, patientAllergyItems, patientAllergyRevisions } from "../../src/server/modules/patient/index.js";
-import { auditEvents, idempotencyRecords } from "../../src/server/modules/platform/index.js";
-import { visits } from "../../src/server/modules/visit/index.js";
+import { createMedicationService } from "../../src/server/modules/medication/index.js";
+import { createNoteService } from "../../src/server/modules/note/index.js";
+import { auditEvents, executeIdempotent, idempotencyRecords } from "../../src/server/modules/platform/index.js";
+import { createVisitService, visits } from "../../src/server/modules/visit/index.js";
+import { createClinicalWorkflow } from "../../src/server/workflows/clinical.js";
 import { cookieFrom, login, seedAccount } from "./helpers/auth.js";
 import { createTestApp } from "./helpers/database.js";
 
@@ -102,6 +105,13 @@ function review(
       },
     },
   });
+}
+
+function prepareAwaitingPreparationOrder(test: Awaited<ReturnType<typeof fixture>>, visitId: string) {
+  test.database.sqlite.prepare("UPDATE visits SET status='AWAITING_PREPARATION' WHERE id=?").run(visitId);
+  test.database.sqlite.prepare(
+    "INSERT INTO medication_decisions (id, visit_id, version, kind, no_medication_reason, revision_reason, supersedes_id, signed_by, signed_by_display_name, signed_at, content_hash) VALUES (?, ?, 1, 'ORDER', NULL, NULL, NULL, ?, ?, ?, ?)",
+  ).run("allergy-safety-order-001", visitId, test.doctor.actor.id, test.doctor.actor.displayName, "2026-08-03T00:00:00.000Z", "a".repeat(64));
 }
 
 describe("versioned allergy review", () => {
@@ -384,5 +394,76 @@ describe("versioned allergy review", () => {
     expect(staleReview.json().error.code).toMatch(/REVISION_CONFLICT|INVALID_STATE/);
     expect(test.database.db.select().from(patientAllergyRevisions).all()).toEqual([]);
     expect(test.database.db.select().from(visits).get()).toMatchObject({ status: "CONSULTING", revision: 2 });
+  });
+
+  it("uses Doctor allergy review to atomically send a prepared ORDER to order revision", async () => {
+    const test = await fixture();
+    const { patientId, visitId } = await createPatientAndVisit(test);
+    prepareAwaitingPreparationOrder(test, visitId);
+
+    const response = await review(test, {
+      patientId,
+      visitId,
+      cookie: test.doctorCookie,
+      state: "PRESENT",
+      items: [{ substance: "ยาทดสอบ", reaction: "ผื่น", severity: "MILD", note: null }],
+      sourceText: "พบประวัติแพ้ระหว่างเตรียมยา",
+      reason: "หยุดทบทวนคำสั่งยา",
+      key: "allergy-safety-transition-001",
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json().data).toMatchObject({ patient: { revision: 2 }, allergy: { revision: 1 }, visit: {
+      status: "AWAITING_ORDER_REVISION", revision: 2,
+    } });
+    expect(test.database.db.select().from(auditEvents).all().find((event) => event.action === "visit.allergy-safety-changed"))
+      .toMatchObject({ reason: "หยุดทบทวนคำสั่งยา" });
+  });
+
+  it("denies Assistant and AWAITING_CHARGE allergy safety transitions without an append", async () => {
+    const test = await fixture();
+    const { patientId, visitId } = await createPatientAndVisit(test);
+    prepareAwaitingPreparationOrder(test, visitId);
+    const assistant = await review(test, { patientId, visitId, cookie: test.assistantCookie, key: "allergy-safety-assistant" });
+    test.database.sqlite.prepare("UPDATE visits SET status='AWAITING_CHARGE' WHERE id=?").run(visitId);
+    const charge = await review(test, { patientId, visitId, cookie: test.doctorCookie, key: "allergy-safety-charge" });
+
+    expect(assistant.json().error.code).toBe("INVALID_STATE");
+    expect(charge.json().error.code).toBe("INVALID_STATE");
+    expect(test.database.db.select().from(patientAllergyRevisions).all()).toEqual([]);
+  });
+
+  it("rolls back the allergy append and audits when the safety transition fails", async () => {
+    const test = await fixture();
+    const { patientId, visitId } = await createPatientAndVisit(test);
+    prepareAwaitingPreparationOrder(test, visitId);
+    const patients = createPatientService({ database: test.database });
+    const workflow = createClinicalWorkflow({
+      patients,
+      visits: createVisitService({ database: test.database, patients }),
+      notes: createNoteService({ database: test.database }),
+      medications: createMedicationService({ database: test.database }),
+      beforeAllergySafetyTransition: () => { throw new Error("injected allergy safety failure"); },
+    });
+    const body = {
+      expectedRevisions: { patient: 1, visit: 1 },
+      payload: { visitId, state: "NONE_KNOWN" as const, items: [], sourceText: "ทบทวน", reason: "ความปลอดภัย" },
+    };
+
+    expect(() => executeIdempotent({
+      db: test.database.db,
+      actor: test.doctor.actor,
+      key: "allergy-safety-rollback",
+      operation: "patient.review-allergy.v1",
+      scope: patientId,
+      requestBody: body,
+      work: (tx) => ({ statusCode: 201, data: workflow.reviewAllergy(tx, test.doctor.actor, patientId, body) }),
+    })).toThrow("injected allergy safety failure");
+    expect(test.database.db.select().from(patientAllergyRevisions).all()).toEqual([]);
+    expect(test.database.db.select().from(auditEvents).all().filter((event) => (
+      event.action === "allergy.updated" || event.action === "visit.allergy-safety-changed"
+    ))).toEqual([]);
+    expect(test.database.db.select().from(visits).where(eq(visits.id, visitId)).get())
+      .toMatchObject({ status: "AWAITING_PREPARATION", revision: 1 });
   });
 });

@@ -1,14 +1,20 @@
 import type { FastifyInstance } from "fastify";
 import {
   allergyReviewResultSchema,
+  clinicalNoteAmendmentResponseSchema,
+  medicationDecisionRevisionResponseSchema,
   finalizeConsultationBodySchema,
   finalizeConsultationResponseSchema,
   saveConsultationDraftBodySchema,
   saveConsultationDraftResponseSchema,
   reviewAllergyBodySchema,
+  signClinicalNoteAmendmentBodySchema,
+  signMedicationDecisionRevisionBodySchema,
   type AllergyReviewResultDto,
   type ClinicalNoteDraftDto,
+  type ClinicalNoteAmendmentDto,
   type MedicationDecisionDraftDto,
+  type MedicationDecisionRevisionResultDto,
   type FinalizeConsultationResultDto,
 } from "../../shared/contracts.js";
 import { requireActor } from "../auth/hooks.js";
@@ -50,6 +56,65 @@ export function registerClinicalRoutes(input: {
         }),
         rebuild: (_tx, reference) => input.clinical.replayAllergyReview(reference),
         isLegacyResponse: (data): data is AllergyReviewResultDto => allergyReviewResultSchema.safeParse(data).success,
+      },
+    });
+    return reply.code(result.statusCode).send(result.body);
+  });
+
+  input.app.post("/api/clinical-notes/:noteId/amendments", async (request, reply) => {
+    const actor = requireActor(request, "clinical:amend");
+    const noteId = (request.params as { noteId?: string }).noteId ?? "";
+    const body = signClinicalNoteAmendmentBodySchema.parse(request.body);
+    const rawKey = request.headers["idempotency-key"];
+    const key = typeof rawKey === "string" ? rawKey : "";
+    const result = executeIdempotent({
+      db: input.database.db,
+      actor,
+      key,
+      operation: "clinical.amend-note.v1",
+      scope: noteId,
+      requestBody: body,
+      work: (tx) => ({ statusCode: 201, data: input.clinical.amendNote(tx, actor, noteId, body) }),
+      safeReplay: {
+        store: (data) => ({
+          clinicalNoteId: data.clinicalNoteId,
+          amendmentId: data.id,
+          amendmentVersion: data.version,
+        }),
+        rebuild: (_tx, reference) => input.clinical.replayAmendment(reference),
+        isLegacyResponse: (data): data is ClinicalNoteAmendmentDto => (
+          clinicalNoteAmendmentResponseSchema.safeParse({ data, replayed: false }).success
+        ),
+      },
+    });
+    return reply.code(result.statusCode).send(result.body);
+  });
+
+  input.app.post("/api/visits/:visitId/medication-decision-revisions", async (request, reply) => {
+    const actor = requireActor(request, "medication:sign-decision");
+    const visitId = (request.params as { visitId?: string }).visitId ?? "";
+    const body = signMedicationDecisionRevisionBodySchema.parse(request.body);
+    const rawKey = request.headers["idempotency-key"];
+    const key = typeof rawKey === "string" ? rawKey : "";
+    const result = executeIdempotent({
+      db: input.database.db,
+      actor,
+      key,
+      operation: "medication.revise-decision.v1",
+      scope: visitId,
+      requestBody: body,
+      work: (tx) => ({ statusCode: 201, data: input.clinical.reviseMedicationDecision(tx, actor, visitId, body) }),
+      safeReplay: {
+        store: (data) => ({
+          visitId: data.visit.id,
+          visitRevision: data.visit.revision,
+          medicationDecisionId: data.medicationDecision.id,
+          medicationDecisionVersion: data.medicationDecision.version,
+        }),
+        rebuild: (_tx, reference) => input.clinical.replayMedicationDecisionRevision(reference),
+        isLegacyResponse: (data): data is MedicationDecisionRevisionResultDto => (
+          medicationDecisionRevisionResponseSchema.safeParse({ data, replayed: false }).success
+        ),
       },
     });
     return reply.code(result.statusCode).send(result.body);

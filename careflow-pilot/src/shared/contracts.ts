@@ -500,6 +500,32 @@ export const signedClinicalNoteSchema = z.strictObject({
 });
 export type SignedClinicalNoteDto = z.infer<typeof signedClinicalNoteSchema>;
 
+export const clinicalNoteAmendmentSchema = z.strictObject({
+  id: z.string().min(1),
+  clinicalNoteId: z.string().min(1),
+  version: z.number().int().min(1),
+  content: requiredClinicalText(4000),
+  reason: requiredClinicalText(500),
+  signedBy: signedBySchema,
+  signedAt: z.string().datetime(),
+  contentHash: contentHashSchema,
+});
+export type ClinicalNoteAmendmentDto = z.infer<typeof clinicalNoteAmendmentSchema>;
+
+export const signClinicalNoteAmendmentBodySchema = rejectOwnPrototypeKeys(
+  z.strictObject({
+    expectedRevisions: z.strictObject({ amendment: z.number().int().min(0) }),
+    payload: z.strictObject({ content: requiredClinicalText(4000), reason: requiredClinicalText(500) }),
+  }),
+);
+export type SignClinicalNoteAmendmentBody = z.infer<typeof signClinicalNoteAmendmentBodySchema>;
+
+export const clinicalNoteAmendmentResponseSchema = z.strictObject({
+  data: clinicalNoteAmendmentSchema,
+  replayed: z.boolean(),
+});
+export type ClinicalNoteAmendmentResponse = z.infer<typeof clinicalNoteAmendmentResponseSchema>;
+
 const signedMedicationDecisionBaseSchema = z.strictObject({
   id: z.string().min(1),
   visitId: z.string().min(1),
@@ -527,6 +553,42 @@ export const signedMedicationDecisionSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 export type SignedMedicationDecisionDto = z.infer<typeof signedMedicationDecisionSchema>;
+
+export const signedDecisionInputSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("ORDER"),
+    items: z.array(medicationDecisionDraftItemInputSchema).min(1).max(20),
+  }),
+  z.strictObject({ kind: z.literal("NO_MEDICATION"), noMedicationReason: requiredClinicalText(500) }),
+]);
+export type SignedDecisionInput = z.infer<typeof signedDecisionInputSchema>;
+
+export const signMedicationDecisionRevisionBodySchema = rejectOwnPrototypeKeys(
+  z.strictObject({
+    expectedRevisions: z.strictObject({
+      visit: z.number().int().min(1),
+      patient: z.number().int().min(1),
+      medicationDecision: z.number().int().min(1),
+    }),
+    payload: z.strictObject({
+      revisionReason: requiredClinicalText(500),
+      decision: signedDecisionInputSchema,
+    }),
+  }),
+);
+export type SignMedicationDecisionRevisionBody = z.infer<typeof signMedicationDecisionRevisionBodySchema>;
+
+export const medicationDecisionRevisionResultSchema = z.strictObject({
+  visit: visitSummarySchema,
+  medicationDecision: signedMedicationDecisionSchema,
+});
+export type MedicationDecisionRevisionResultDto = z.infer<typeof medicationDecisionRevisionResultSchema>;
+
+export const medicationDecisionRevisionResponseSchema = z.strictObject({
+  data: medicationDecisionRevisionResultSchema,
+  replayed: z.boolean(),
+});
+export type MedicationDecisionRevisionResponse = z.infer<typeof medicationDecisionRevisionResponseSchema>;
 
 export const finalizeConsultationBodySchema = rejectOwnPrototypeKeys(
   z.strictObject({
