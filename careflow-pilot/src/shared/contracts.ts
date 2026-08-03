@@ -1,5 +1,38 @@
 import { z } from "zod";
 
+export interface Actor {
+  id: string;
+  role: "assistant" | "doctor";
+  displayName: string;
+}
+
+export type Permission =
+  | "patient:read"
+  | "patient:create-synthetic"
+  | "visit:submit-intake"
+  | "visit:read-queue"
+  | "visit:start-consultation";
+
+export interface IdempotentEnvelope<T> {
+  data: T;
+  replayed: boolean;
+}
+
+export interface CommandWorkResult<T> {
+  statusCode: number;
+  data: T;
+}
+
+export interface CommandHttpResult<T> {
+  statusCode: number;
+  body: IdempotentEnvelope<T>;
+}
+
+export interface CommandBody<TPayload, TRevisions extends Record<string, number>> {
+  expectedRevisions: TRevisions;
+  payload: TPayload;
+}
+
 export const apiErrorCodeSchema = z.enum([
   "VALIDATION_FAILED",
   "AUTH_REQUIRED",
