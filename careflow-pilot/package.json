@@ -23,6 +23,7 @@
     "typecheck:server": "tsc -p tsconfig.server.json --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --env-file-if-exists=.env --import tsx scripts/migrate.ts",
+    "users": "node --env-file-if-exists=.env --import tsx scripts/users.ts",
     "lint": "eslint ."
   },
   "dependencies": {

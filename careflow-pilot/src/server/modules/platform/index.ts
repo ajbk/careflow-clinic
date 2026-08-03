@@ -14,3 +14,4 @@ export * from "./idempotency.js";
 export * from "./permissions.js";
 export * from "./revision.js";
 export * from "./schema.js";
+export * from "./sessions.js";

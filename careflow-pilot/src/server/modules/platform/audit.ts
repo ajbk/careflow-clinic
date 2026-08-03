@@ -26,6 +26,8 @@ const auditActionPolicyEntries = [
   ["account.created", "optional"],
   ["account.disabled", "optional"],
   ["account.password-reset", "optional"],
+  ["account.password-changed", "optional"],
+  ["account.pilot-acknowledged", "optional"],
   ["patient.synthetic-created", "optional"],
   ["visit.intake-submitted", "optional"],
   ["visit.consultation-started", "optional"],

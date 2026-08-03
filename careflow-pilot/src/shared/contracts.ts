@@ -6,12 +6,49 @@ export interface Actor {
   displayName: string;
 }
 
-export type Permission =
-  | "patient:read"
-  | "patient:create-synthetic"
-  | "visit:submit-intake"
-  | "visit:read-queue"
-  | "visit:start-consultation";
+export const roleSchema = z.enum(["assistant", "doctor"]);
+export const permissionSchema = z.enum([
+  "patient:read",
+  "patient:create-synthetic",
+  "visit:submit-intake",
+  "visit:read-queue",
+  "visit:start-consultation",
+]);
+
+export const loginBodySchema = z.strictObject({
+  username: z.string().trim().min(1).max(120),
+  password: z.string().min(1).max(256),
+});
+export type LoginBody = z.infer<typeof loginBodySchema>;
+
+export const sessionDtoSchema = z.strictObject({
+  user: z.strictObject({
+    id: z.string().min(1),
+    username: z.string().min(1),
+    displayName: z.string().min(1),
+    role: roleSchema,
+  }),
+  clinic: z.strictObject({ id: z.string().min(1), name: z.string().min(1) }),
+  permissions: z.array(permissionSchema),
+  pilotAcknowledgedAt: z.string().datetime().nullable(),
+  mustChangePassword: z.boolean(),
+  idleExpiresAt: z.string().datetime(),
+});
+export type SessionDto = z.infer<typeof sessionDtoSchema>;
+
+export const sessionResponseSchema = z.strictObject({ data: sessionDtoSchema });
+export type SessionResponse = z.infer<typeof sessionResponseSchema>;
+
+export const pilotAcknowledgementBodySchema = z.strictObject({ accepted: z.literal(true) });
+export type PilotAcknowledgementBody = z.infer<typeof pilotAcknowledgementBodySchema>;
+
+export const changePasswordBodySchema = z.strictObject({
+  currentPassword: z.string().min(1).max(256),
+  newPassword: z.string().min(1).max(256),
+});
+export type ChangePasswordBody = z.infer<typeof changePasswordBodySchema>;
+
+export type Permission = z.infer<typeof permissionSchema>;
 
 export interface IdempotentEnvelope<T> {
   data: T;

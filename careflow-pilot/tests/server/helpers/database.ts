@@ -2,9 +2,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
-import { buildApp } from "../../../src/server/app.js";
+import { buildApp, type BuildAppOptions } from "../../../src/server/app.js";
 import type { AppConfig } from "../../../src/server/config.js";
 import { openDatabase, type DatabaseHandle } from "../../../src/server/db/client.js";
+import { requireActor } from "../../../src/server/auth/hooks.js";
 
 export interface TestDatabase extends DatabaseHandle {
   databasePath: string;
@@ -36,7 +37,9 @@ export function createTestDatabase(): TestDatabase {
   };
 }
 
-export async function createTestApp(): Promise<{
+export async function createTestApp(
+  overrides: Partial<Omit<BuildAppOptions, "db" | "config">> = {},
+): Promise<{
   app: FastifyInstance;
   database: TestDatabase;
   databasePath: string;
@@ -57,7 +60,12 @@ export async function createTestApp(): Promise<{
     config,
     clock: () => new Date("2026-08-03T00:00:00.000Z"),
     idFactory: () => "test-request-id",
+    ...overrides,
   });
+  app.get("/api/test/doctor", async (request) => ({
+    actor: requireActor(request, "visit:start-consultation"),
+  }));
+  await app.ready();
 
   return {
     app,

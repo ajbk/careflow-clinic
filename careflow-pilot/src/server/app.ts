@@ -6,12 +6,22 @@ import type { ApiErrorBody } from "../shared/contracts.js";
 import type { AppConfig } from "./config.js";
 import type { DatabaseHandle } from "./db/client.js";
 import { ApiError, errorMessages } from "./errors.js";
+import { registerAuthHooks } from "./auth/hooks.js";
+import {
+  registerAuthRoutes,
+  type PasswordHasher,
+  type PasswordVerifier,
+} from "./auth/routes.js";
+import { createSessionService } from "./modules/platform/index.js";
 
 export interface BuildAppOptions {
   db: DatabaseHandle;
   config: AppConfig;
   clock: () => Date;
   idFactory: () => string;
+  passwordVerifier?: PasswordVerifier;
+  passwordHasher?: PasswordHasher;
+  sessionTokenFactory?: () => string;
 }
 
 function zodFieldErrors(error: ZodError): Record<string, string> {
@@ -53,6 +63,24 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   await app.register(helmet);
   await app.register(cookie);
+
+  const sessionService = createSessionService({
+    database: options.db,
+    idleMinutes: options.config.sessionIdleMinutes,
+    absoluteHours: options.config.sessionAbsoluteHours,
+    tokenFactory: options.sessionTokenFactory,
+  });
+  registerAuthHooks({ app, sessions: sessionService, clock: options.clock });
+  registerAuthRoutes({
+    app,
+    database: options.db,
+    config: options.config,
+    clock: options.clock,
+    idFactory: options.idFactory,
+    sessionService,
+    passwordVerifier: options.passwordVerifier,
+    passwordHasher: options.passwordHasher,
+  });
 
   const requestStartedAt = new WeakMap<object, number>();
   app.addHook("onRequest", async (request) => {
@@ -110,7 +138,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         messageTh: errorMessages.malformedJson,
       });
     } else {
-      request.log.error({ requestId: request.id, err: error }, "Unhandled request error");
+      request.log.error({ requestId: request.id }, "Unhandled request error");
       apiError = new ApiError({
         code: "INTERNAL_ERROR",
         statusCode: 500,
@@ -133,6 +161,5 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     return reply.code(apiError.statusCode).send(body);
   });
 
-  await app.ready();
   return app;
 }
