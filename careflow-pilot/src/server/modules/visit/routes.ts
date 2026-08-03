@@ -60,6 +60,7 @@ export function registerVisitRoutes(input: {
       actor,
       key,
       operation: "visit.start-consultation.v1",
+      scope: visitId,
       requestBody: body,
       work: (tx) => ({
         statusCode: 200,

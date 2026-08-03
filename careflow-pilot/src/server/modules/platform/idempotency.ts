@@ -33,9 +33,14 @@ function assertValidIdempotencyKey(key: string): void {
 function requestHash(
   operation: string,
   requestBody: CommandBody<unknown, Record<string, number>>,
+  scope?: string,
 ): string {
+  const hashInput =
+    scope === undefined
+      ? { operation, requestBody }
+      : { operation, scope, requestBody };
   return createHash("sha256")
-    .update(stableStringify({ operation, requestBody }))
+    .update(stableStringify(hashInput))
     .digest("hex");
 }
 
@@ -58,11 +63,13 @@ export function executeIdempotent<T>(input: {
   actor: Actor;
   key: string;
   operation: string;
+  /** Optional stable route/entity scope included in the request hash. */
+  scope?: string;
   requestBody: CommandBody<unknown, Record<string, number>>;
   work: (tx: AuditedTransaction) => CommandWorkResult<T>;
 }): CommandHttpResult<T> {
   assertValidIdempotencyKey(input.key);
-  const hash = requestHash(input.operation, input.requestBody);
+  const hash = requestHash(input.operation, input.requestBody, input.scope);
 
   return runNamedAuditedTransactionInternal({
     db: input.db,
