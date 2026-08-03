@@ -1,4 +1,4 @@
-import { ClipboardCheck, Clock3, FileSignature, LockKeyhole, Stethoscope } from "lucide-react";
+import { ClipboardCheck, FileSignature, LockKeyhole, Stethoscope } from "lucide-react";
 import type { ReactElement } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAuth } from "../auth/AuthProvider";
@@ -32,31 +32,50 @@ export function ConsultationScreen(): ReactElement {
 
   return (
     <div className="flow-page consultation-page">
-      <PageHeader eyebrow="DOCTOR WORKSPACE" title="ห้องตรวจ" description="อ่านข้อมูล Intake ที่บันทึกจากระบบ · การบันทึก Clinical Note จะเปิดใน Milestone ถัดไป" actions={<Link className="care-button care-button-secondary" to="/queue">กลับคิวผู้ป่วย</Link>} />
-      <Card className="clinical-record">
-        <PatientHeader patient={data.patient} status={status.label} statusTone={status.tone} />
-        <div className="consultation-meta" aria-label="สถานะ Visit"><span>Visit {data.visit.id}</span><span>revision {data.visit.revision}</span><StatusBadge tone={status.tone}>{status.label}</StatusBadge></div>
-        <div className="clinical-grid">
-          <section>
-            <SectionHeading icon={Stethoscope} title="ข้อมูลการตรวจ" description={`อาการสำคัญ: ${data.intake.chiefComplaint}`} />
+      <PageHeader eyebrow="DOCTOR WORKSPACE · CONSULTATION" title="ห้องตรวจผู้ป่วย" description="อ่านข้อมูล Intake ที่บันทึกจากระบบโดยไม่มีการแก้ไขข้อมูลทางคลินิก" />
+      <div className="clinical-workspace-grid">
+        <aside className="care-card consultation-patient-rail" aria-label="บริบทผู้ป่วย">
+          <PatientHeader patient={data.patient} status={status.label} statusTone={status.tone} />
+          <Link className="care-button care-button-secondary" to="/queue">กลับคิวผู้ป่วย</Link>
+        </aside>
+        <div className="consultation-clinical-content">
+          <section className="care-card consultation-current-visit" aria-label="ข้อมูล Visit ปัจจุบัน">
+            <SectionHeading icon={Stethoscope} title="ข้อมูล Visit ปัจจุบัน" description={`อาการสำคัญ: ${data.intake.chiefComplaint}`} />
+            <div className="consultation-meta" aria-label="สถานะ Visit">
+              <span>Visit {data.visit.id}</span>
+              <span>revision {data.visit.revision}</span>
+              <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
+            </div>
             <div className="vitals-summary">
               <span>อุณหภูมิ <strong>{vital(data.intake.vitals.temperatureC, " °C")}</strong></span>
               <span>ความดัน <strong>{data.intake.vitals.systolicMmhg === null || data.intake.vitals.diastolicMmhg === null ? "—" : `${data.intake.vitals.systolicMmhg}/${data.intake.vitals.diastolicMmhg}`}</strong></span>
               <span>ชีพจร <strong>{vital(data.intake.vitals.heartRateBpm, " ครั้ง/นาที")}</strong></span>
               <span>SpO₂ <strong>{vital(data.intake.vitals.spo2Percent, "%")}</strong></span>
+              <span>น้ำหนัก <strong>{vital(data.intake.vitals.weightKg, " กก.")}</strong></span>
+              <span>ส่วนสูง <strong>{vital(data.intake.vitals.heightCm, " ซม.")}</strong></span>
             </div>
             <section className="clinical-evidence" aria-label="หลักฐานจาก Intake">
               <SectionHeading icon={ClipboardCheck} title="หลักฐานจาก Intake" description="ข้อมูลนี้มาจาก snapshot ที่บันทึกแล้ว" />
-              <div className="evidence-grid"><div><span>ผู้บันทึก</span><strong>{data.intake.recordedBy.displayName}</strong></div><div><span>เวลาบันทึก</span><strong>{formatThaiDateTime(data.intake.recordedAt)}</strong></div><div><span>มาถึงคลินิก</span><strong>{formatThaiDateTime(data.visit.arrivedAt)}</strong></div><div><span>เริ่มห้องตรวจ</span><strong>{data.visit.startedAt ? formatThaiDateTime(data.visit.startedAt) : "ยังไม่เริ่ม"}</strong></div></div>
+              <div className="evidence-grid">
+                <div><span>ผู้บันทึก</span><strong>{data.intake.recordedBy.displayName}</strong></div>
+                <div><span>เวลาบันทึก</span><strong>{formatThaiDateTime(data.intake.recordedAt)}</strong></div>
+                <div><span>มาถึงคลินิก</span><strong>{formatThaiDateTime(data.visit.arrivedAt)}</strong></div>
+                <div><span>เริ่มห้องตรวจ</span><strong>{data.visit.startedAt ? formatThaiDateTime(data.visit.startedAt) : "ยังไม่เริ่ม"}</strong></div>
+              </div>
             </section>
           </section>
-          <aside className="clinical-aside">
-            <SectionHeading icon={FileSignature} title="Clinical Note" description="ยังไม่เปิดให้บันทึกใน Milestone นี้" />
+          <section className="care-card consultation-note-panel" aria-label="Clinical Note">
+            <SectionHeading icon={FileSignature} title="Clinical Note" description="พื้นที่งานแพทย์แบบอ่านอย่างเดียวใน Pilot นี้" />
+            <div className="clinical-note-placeholder-grid">
+              <div><strong>Subjective</strong><span>จะเปิดให้แพทย์บันทึกใน Milestone ถัดไป</span></div>
+              <div><strong>Objective</strong><span>อ้างอิงข้อมูล Visit และ Intake ที่บันทึกแล้วด้านบน</span></div>
+              <div><strong>Assessment</strong><span>ยังไม่มีการวินิจฉัยหรือการตัดสินใจทางคลินิก</span></div>
+              <div><strong>Plan</strong><span>ยังไม่มีคำสั่งยา การรักษา หรือการส่งต่อ</span></div>
+            </div>
             <div className="signed-note milestone-next-copy"><LockKeyhole aria-hidden="true" size={17} />เริ่มตรวจแล้ว — การบันทึกและลงนาม Clinical Note จะเปิดใน Milestone ถัดไป</div>
-            <section className="consultation-readonly" aria-label="ข้อมูลอ้างอิง Visit"><div><Clock3 aria-hidden="true" size={17} /><span>สถานะจากระบบ</span><strong>{status.label} · revision {data.visit.revision}</strong></div><p>หน้านี้เป็น workspace แบบอ่านอย่างเดียว ไม่มี SOAP, diagnosis, medication decision, order หรือ dispatch ใน Pilot นี้</p></section>
-          </aside>
+          </section>
         </div>
-      </Card>
+      </div>
     </div>
   );
 }

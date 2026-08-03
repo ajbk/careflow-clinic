@@ -92,6 +92,13 @@ describe("pilot router", () => {
     expect(within(navigation).getAllByRole("link").map((link) => link.getAttribute("href")))
       .toEqual(["/queue", "/overview"]);
   });
+
+  it("gives Intake one focused job without global navigation", async () => {
+    renderRoleApp("/intake", "assistant");
+    expect(await screen.findByRole("heading", { name: "ลงทะเบียนผู้ป่วยและซักประวัติ" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "เมนูหลัก" })).not.toBeInTheDocument();
+    expect(screen.getByText("ASSISTANT WORKSPACE")).toBeInTheDocument();
+  });
 });
 
 afterEach(() => {

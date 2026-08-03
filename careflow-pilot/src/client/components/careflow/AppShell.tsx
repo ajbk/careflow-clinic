@@ -24,6 +24,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const workspace = roleWorkspaceFor(auth.session?.user.role ?? "assistant");
   const roleLabel = auth.session?.user.role === "doctor" ? "แพทย์" : "ผู้ช่วย";
+  const mode = pathname === "/intake"
+    ? "focused"
+    : pathname.startsWith("/consultations/")
+      ? "clinical"
+      : "operational";
 
   const nav = (
     <nav aria-label="เมนูหลัก" className="sidebar-nav">
@@ -44,6 +49,31 @@ export function AppShell({ children }: { children: ReactNode }) {
       })}
     </nav>
   );
+
+  if (mode !== "operational") {
+    return (
+      <div className={`app-shell app-shell-${mode}`}>
+        <a className="skip-link" href="#main-content">ข้ามไปยังเนื้อหาหลัก</a>
+        <header className="focused-workspace-header">
+          <Link to="/" className="brand-lockup" aria-label="CareFlow หน้าหลัก">
+            <span className="brand-mark"><HeartPulse aria-hidden="true" size={22} /></span>
+            <span><strong>CareFlow</strong><small>Rural Health Commons</small></span>
+          </Link>
+          <span className="focused-workspace-role">{workspace.labelEn}</span>
+          <button className="account-placeholder" type="button" onClick={() => void auth.logout()}>
+            {auth.session?.user.displayName ?? "บัญชีผู้ใช้"} · {roleLabel}
+          </button>
+        </header>
+        <main
+          id="main-content"
+          className={mode === "focused" ? "focused-workspace-main" : "clinical-workspace-main"}
+        >
+          <p className="pilot-banner" role="status">PILOT — ข้อมูลสังเคราะห์เท่านั้น ห้ามกรอกข้อมูลผู้ป่วยจริง</p>
+          {children}
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">

@@ -157,6 +157,49 @@ button {
   min-height: 100vh;
 }
 
+.app-shell-focused,
+.app-shell-clinical {
+  min-height: 100vh;
+}
+
+.focused-workspace-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  min-height: 72px;
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid rgba(64, 73, 69, 0.08);
+  padding: 10px clamp(16px, 4vw, 40px);
+  background: rgba(249, 250, 247, 0.94);
+  backdrop-filter: blur(16px);
+}
+
+.focused-workspace-header .brand-lockup {
+  min-height: 48px;
+}
+
+.focused-workspace-role {
+  margin-left: auto;
+  color: var(--primary-container);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.focused-workspace-main {
+  width: min(calc(100% - 32px), 768px);
+  margin: 0 auto;
+  padding: 28px 0 64px;
+}
+
+.clinical-workspace-main {
+  width: min(100%, 1440px);
+  margin: 0 auto;
+  padding: 28px clamp(16px, 3vw, 40px) 64px;
+}
+
 .desktop-sidebar {
   position: fixed;
   inset: 0 auto 0 0;
@@ -722,6 +765,11 @@ button {
 
 @media (max-width: 620px) {
   .app-main { padding: 24px 16px 48px; }
+  .focused-workspace-header { flex-wrap: wrap; gap: 8px 12px; padding-inline: 16px; }
+  .focused-workspace-header .brand-lockup { margin-right: auto; }
+  .focused-workspace-role { order: 3; width: 100%; margin-left: 0; }
+  .focused-workspace-header .account-placeholder { max-width: 48%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .focused-workspace-main, .clinical-workspace-main { padding-top: 24px; padding-bottom: 48px; }
   .page-header { align-items: stretch; flex-direction: column; margin-bottom: 24px; }
   .page-header h1 { font-size: 26px; }
   .page-actions { display: grid; grid-template-columns: 1fr 1fr; }

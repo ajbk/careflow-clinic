@@ -255,14 +255,17 @@ describe("connected shared queue workflow", () => {
     expect(screen.getByRole("button", { name: /เริ่มการตรวจ/ })).toBeEnabled();
   });
 
-  it("renders a committed Consultation snapshot with milestone copy and no writable clinical controls", async () => {
+  it("renders a Doctor clinical workspace from the committed snapshot without writable clinical controls", async () => {
     renderRoute("/consultations/visit-42");
-    expect(await screen.findByText(patient.displayName)).toBeInTheDocument();
+    expect(await screen.findByRole("complementary", { name: "บริบทผู้ป่วย" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "ข้อมูล Visit ปัจจุบัน" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Clinical Note" })).toBeInTheDocument();
+    expect(screen.getByText(patient.displayName)).toBeInTheDocument();
     expect(screen.getByText(/มีไข้และไอ/)).toBeInTheDocument();
     expect(screen.getByText(/เริ่มตรวจแล้ว — การบันทึกและลงนาม Clinical Note จะเปิดใน Milestone ถัดไป/)).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /ลงนาม|เพิ่มยา|ส่งห้องยา/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /ลงนาม|เพิ่มยา|บันทึกร่าง|ส่งห้องยา/ })).not.toBeInTheDocument();
   });
 
   it("shows arrival and consultation start times for each queue state", async () => {

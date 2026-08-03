@@ -233,9 +233,9 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
   return (
     <div className="flow-page intake-page">
       <PageHeader
-        eyebrow="PATIENT INTAKE"
-        title="รับผู้ป่วย"
-        description="บันทึกข้อมูลที่จำเป็นก่อนส่งเข้าคิวแพทย์"
+        eyebrow="ASSISTANT WORKSPACE · PATIENT INTAKE"
+        title="ลงทะเบียนผู้ป่วยและซักประวัติ"
+        description="ค้นหาหรือสร้างผู้ป่วย บันทึกสัญญาณชีพ แล้วส่งพบแพทย์"
       />
 
       {summaryError ? (

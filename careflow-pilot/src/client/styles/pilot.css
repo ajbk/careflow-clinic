@@ -354,7 +354,7 @@
 .inline-retry-button {
   display: inline-flex;
   width: fit-content;
-  min-height: 40px;
+  min-height: 48px;
   align-items: center;
   border: 0;
   border-radius: 10px;
@@ -423,7 +423,32 @@
 .consultation-readonly p { margin: 0; color: var(--on-surface-variant); font-size: 11px; }
 .consultation-skeleton { height: 90px; margin: 22px; border-radius: 14px; background: var(--surface-container); animation: pilot-skeleton 1.2s ease-in-out infinite alternate; }
 .consultation-skeleton-large { height: 300px; margin-top: 0; }
+.app-shell-clinical .consultation-page { max-width: 1360px; }
+.clinical-workspace-grid { display: grid; grid-template-columns: minmax(240px, 252px) minmax(0, 1fr); align-items: start; gap: 24px; }
+.consultation-patient-rail { position: sticky; top: 96px; display: grid; overflow: hidden; }
+.consultation-patient-rail .patient-header { align-items: flex-start; flex-direction: column; padding: 20px; }
+.consultation-patient-rail .patient-header-copy { gap: 4px; margin-right: 0; }
+.consultation-patient-rail .status-pill { margin-left: 0; }
+.consultation-patient-rail .care-button { margin: 16px; }
+.consultation-clinical-content { display: grid; min-width: 0; gap: 24px; }
+.consultation-current-visit, .consultation-note-panel { padding: 24px; }
+.consultation-current-visit .consultation-meta { margin: -4px 0 20px; padding: 0 0 16px; }
+.consultation-current-visit .vitals-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.consultation-note-panel { display: grid; gap: 20px; }
+.consultation-note-panel .section-heading { margin-bottom: 0; }
+.clinical-note-placeholder-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.clinical-note-placeholder-grid > div { display: grid; min-height: 96px; align-content: start; gap: 5px; border: 1px solid rgba(112, 121, 116, .14); border-radius: 12px; padding: 14px; background: var(--surface-container-low); }
+.clinical-note-placeholder-grid strong { color: var(--primary); font-size: 13px; }
+.clinical-note-placeholder-grid span { color: var(--on-surface-variant); font-size: 12px; }
 @keyframes pilot-skeleton { from { opacity: .55; } to { opacity: 1; } }
+
+@media (max-width: 767px) {
+  .clinical-workspace-grid { grid-template-columns: 1fr; }
+  .consultation-patient-rail { position: static; }
+  .consultation-patient-rail .patient-header { align-items: center; flex-direction: row; }
+  .consultation-patient-rail .patient-header-copy { margin-right: auto; }
+  .clinical-note-placeholder-grid { grid-template-columns: 1fr; }
+}
 
 @media (max-width: 620px) {
   .patient-search-row {
@@ -455,4 +480,9 @@
   .consultation-meta { align-items: flex-start; flex-wrap: wrap; padding-inline: 16px; }
   .consultation-meta .status-pill { margin-left: 0; }
   .evidence-grid { grid-template-columns: 1fr; }
+  .consultation-current-visit, .consultation-note-panel { padding: 20px 16px; }
+  .consultation-current-visit .consultation-meta { padding-inline: 0; }
+  .consultation-current-visit .vitals-summary { grid-template-columns: 1fr 1fr; }
+  .consultation-patient-rail .patient-header { align-items: flex-start; flex-wrap: wrap; }
+  .consultation-patient-rail .patient-header .status-pill { margin-left: 62px; }
 }
