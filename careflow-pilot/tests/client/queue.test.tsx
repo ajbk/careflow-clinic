@@ -166,6 +166,28 @@ describe("connected shared queue workflow", () => {
     expect(screen.getByText("เลือกผู้ป่วยเพื่อเริ่มหรือกลับเข้าห้องตรวจ")).toBeInTheDocument();
   });
 
+  it("uses Assistant handoff copy when a cached waiting Queue becomes stale", async () => {
+    let queueRequests = 0;
+    server.use(
+      http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))),
+      http.get("/api/queue", () => {
+        queueRequests += 1;
+        return queueRequests === 1
+          ? HttpResponse.json({ data: [waitingItem] })
+          : jsonError("INTERNAL_ERROR", "ระบบคิวไม่พร้อมใช้งาน", 503);
+      }),
+    );
+    renderRoute("/queue");
+    await screen.findByRole("article", { name: /DEMO-000042/ });
+
+    window.dispatchEvent(new Event("focus"));
+
+    expect(await screen.findByText("กำลังแสดงข้อมูลคิวล่าสุดที่บันทึกไว้", {}, { timeout: 3_000 })).toBeInTheDocument();
+    const row = screen.getByRole("article", { name: /DEMO-000042/ });
+    expect(row).toHaveTextContent("โหลดข้อมูลล่าสุดเพื่อติดตามการส่งต่อ");
+    expect(row).not.toHaveTextContent("โหลดข้อมูลล่าสุดก่อนเริ่มการตรวจ");
+  });
+
   it("refetches once after five seconds while visible, pauses hidden polling, and refetches on focus", async () => {
     vi.useFakeTimers();
     let queueRequests = 0;
@@ -264,6 +286,7 @@ describe("connected shared queue workflow", () => {
   it("renders a Doctor clinical workspace from the committed snapshot without writable clinical controls", async () => {
     renderRoute("/consultations/visit-42");
     expect(await screen.findByRole("complementary", { name: "บริบทผู้ป่วย" })).toBeInTheDocument();
+    expect(screen.getByText("DOCTOR WORKSPACE / งานแพทย์")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "ข้อมูล Visit ปัจจุบัน" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Clinical Note" })).toBeInTheDocument();
     expect(screen.getByText(patient.displayName)).toBeInTheDocument();
@@ -305,15 +328,42 @@ describe("connected shared queue workflow", () => {
     expect(screen.queryByText(/฿|บาท|คงเหลือ/)).not.toBeInTheDocument();
   });
 
-  it("links the Assistant Overview action to Intake", async () => {
-    server.use(http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))));
+  it("keeps Assistant Intake affordances in an empty Overview", async () => {
+    server.use(
+      http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))),
+      http.get("/api/queue", () => HttpResponse.json({ data: [] })),
+    );
     renderRoute("/overview");
-    expect(await screen.findByRole("link", { name: "รับผู้ป่วย" })).toHaveAttribute("href", "/intake");
+    const headerAction = await screen.findByRole("link", { name: "รับผู้ป่วย" });
+    expect(headerAction).toHaveAttribute("href", "/intake");
+    expect(headerAction.querySelector(".lucide-clipboard-plus")).toBeInTheDocument();
+
+    const overview = screen.getByRole("heading", { name: "ภาพรวมคลินิก" }).closest(".overview-page");
+    expect(overview).not.toBeNull();
+    const overviewScope = within(overview as HTMLElement);
+    expect(overviewScope.getByText("เริ่มงานด้วยการรับผู้ป่วยสังเคราะห์เข้าคิว")).toBeInTheDocument();
+    const emptyAction = overviewScope.getByRole("link", { name: "รับผู้ป่วยเข้าคิว" });
+    expect(emptyAction).toHaveAttribute("href", "/intake");
+    expect(emptyAction.querySelector(".lucide-clipboard-plus")).toBeInTheDocument();
   });
 
-  it("links the Doctor Overview action to Queue", async () => {
+  it("uses only Queue affordances in an empty Doctor Overview", async () => {
+    server.use(http.get("/api/queue", () => HttpResponse.json({ data: [] })));
     renderRoute("/overview");
-    expect(await screen.findByRole("link", { name: "ไปยังคิวตรวจ" })).toHaveAttribute("href", "/queue");
+    const headerAction = await screen.findByRole("link", { name: "ไปยังคิวตรวจ" });
+    expect(headerAction).toHaveAttribute("href", "/queue");
+    expect(headerAction.querySelector(".lucide-users-round")).toBeInTheDocument();
+
+    const overview = screen.getByRole("heading", { name: "ภาพรวมคลินิก" }).closest(".overview-page");
+    expect(overview).not.toBeNull();
+    const overviewScope = within(overview as HTMLElement);
+    expect(overviewScope.getByText("เมื่อผู้ช่วยส่งผู้ป่วยเข้าคิว รายการจะแสดงที่นี่")).toBeInTheDocument();
+    const emptyAction = overviewScope.getByRole("link", { name: "ดูคิวผู้ป่วย" });
+    expect(emptyAction).toHaveAttribute("href", "/queue");
+    expect(emptyAction.querySelector(".lucide-users-round")).toBeInTheDocument();
+    expect(overviewScope.queryAllByRole("link").some((link) => link.getAttribute("href") === "/intake")).toBe(false);
+    expect(overviewScope.queryByText(/รับผู้ป่วย/)).not.toBeInTheDocument();
+    expect(overview?.querySelector(".lucide-clipboard-plus")).not.toBeInTheDocument();
   });
 
   it("keeps Overview intake unavailable while the queue read is pending", async () => {
@@ -379,16 +429,21 @@ describe("connected shared queue workflow", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("บัญชีนี้ไม่มีสิทธิ์เข้าถึงข้อมูลคิวของคลินิก");
   });
 
-  it("renders explicit empty and unavailable Queue states", async () => {
+  it("keeps Assistant Intake guidance and CTA in an empty Queue", async () => {
     server.use(
       http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))),
       http.get("/api/queue", () => HttpResponse.json({ data: [] })),
     );
     renderRoute("/queue");
-    expect(await screen.findByText("ยังไม่มีผู้ป่วยในคิว")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "ไปหน้ารับผู้ป่วย" })).toBeInTheDocument();
+    const emptyTitle = await screen.findByText("ยังไม่มีผู้ป่วยในคิว");
+    const emptyCard = emptyTitle.closest(".queue-empty-card");
+    expect(emptyCard).not.toBeNull();
+    const emptyScope = within(emptyCard as HTMLElement);
+    expect(emptyScope.getByText("เริ่มงานด้วยการรับผู้ป่วยสังเคราะห์เข้าคิว")).toBeInTheDocument();
+    expect(emptyScope.getByRole("link", { name: "ไปหน้ารับผู้ป่วย" })).toHaveAttribute("href", "/intake");
+  });
 
-    cleanup();
+  it("renders an explicit unavailable Queue state", async () => {
     server.use(http.get("/api/queue", () => jsonError("INTERNAL_ERROR", "ระบบคิวไม่พร้อมใช้งาน", 503)));
     renderRoute("/queue");
     expect((await screen.findAllByText(/ระบบคิวไม่พร้อมใช้งาน/, {}, { timeout: 3_000 })).length).toBeGreaterThan(0);
@@ -397,7 +452,12 @@ describe("connected shared queue workflow", () => {
   it("omits the Assistant intake CTA from an empty Doctor Queue", async () => {
     server.use(http.get("/api/queue", () => HttpResponse.json({ data: [] })));
     renderRoute("/queue");
-    expect(await screen.findByText("ยังไม่มีผู้ป่วยในคิว")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "ไปหน้ารับผู้ป่วย" })).not.toBeInTheDocument();
+    const emptyTitle = await screen.findByText("ยังไม่มีผู้ป่วยในคิว");
+    const emptyCard = emptyTitle.closest(".queue-empty-card");
+    expect(emptyCard).not.toBeNull();
+    const emptyScope = within(emptyCard as HTMLElement);
+    expect(emptyScope.getByText("เมื่อผู้ช่วยส่งผู้ป่วยเข้าคิว รายการจะแสดงที่นี่")).toBeInTheDocument();
+    expect(emptyScope.queryByRole("link", { name: "ไปหน้ารับผู้ป่วย" })).not.toBeInTheDocument();
+    expect(emptyCard as HTMLElement).not.toHaveTextContent("รับผู้ป่วยสังเคราะห์");
   });
 });

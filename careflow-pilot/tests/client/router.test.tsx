@@ -93,11 +93,29 @@ describe("pilot router", () => {
       .toEqual(["/queue", "/overview"]);
   });
 
+  it.each([
+    ["/queue", "assistant", "ASSISTANT WORKSPACE / งานผู้ช่วย", "DOCTOR WORKSPACE / งานแพทย์"],
+    ["/overview", "assistant", "ASSISTANT WORKSPACE / งานผู้ช่วย", "DOCTOR WORKSPACE / งานแพทย์"],
+    ["/queue", "doctor", "DOCTOR WORKSPACE / งานแพทย์", "ASSISTANT WORKSPACE / งานผู้ช่วย"],
+    ["/overview", "doctor", "DOCTOR WORKSPACE / งานแพทย์", "ASSISTANT WORKSPACE / งานผู้ช่วย"],
+  ] as const)("exposes the mapped bilingual identity on %s for %s", async (path, role, expectedIdentity, otherIdentity) => {
+    renderRoleApp(path, role);
+    expect(await screen.findAllByText(expectedIdentity)).toHaveLength(2);
+    expect(screen.queryByText(otherIdentity)).not.toBeInTheDocument();
+  });
+
   it("gives Intake one focused job without global navigation", async () => {
     renderRoleApp("/intake", "assistant");
     expect(await screen.findByRole("heading", { name: "ลงทะเบียนผู้ป่วยและซักประวัติ" })).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "เมนูหลัก" })).not.toBeInTheDocument();
-    expect(screen.getByText("ASSISTANT WORKSPACE")).toBeInTheDocument();
+    expect(screen.getByText("ASSISTANT WORKSPACE / งานผู้ช่วย")).toBeInTheDocument();
+  });
+
+  it("normalizes trailing-slash Intake into the focused Assistant workspace", async () => {
+    renderRoleApp("/intake/", "assistant");
+    expect(await screen.findByRole("heading", { name: "ลงทะเบียนผู้ป่วยและซักประวัติ" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "เมนูหลัก" })).not.toBeInTheDocument();
+    expect(screen.getByText("ASSISTANT WORKSPACE / งานผู้ช่วย")).toBeInTheDocument();
   });
 });
 

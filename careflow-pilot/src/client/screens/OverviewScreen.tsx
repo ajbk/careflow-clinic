@@ -79,9 +79,27 @@ export function OverviewScreen(): ReactElement {
   const hasCachedQueue = Array.isArray(queue.data);
   const queueStale = Boolean(queue.error && hasCachedQueue && !(isApiError(queue.error) && queue.error.status === 403));
   const isDoctor = auth.session?.user.role === "doctor";
-  const primaryAction = isDoctor
-    ? { to: "/queue", label: "ไปยังคิวตรวจ" }
-    : { to: "/intake", label: "รับผู้ป่วย" };
+  const roleAction = isDoctor
+    ? {
+        header: { to: "/queue", label: "ไปยังคิวตรวจ", icon: UsersRound },
+        empty: {
+          detail: "เมื่อผู้ช่วยส่งผู้ป่วยเข้าคิว รายการจะแสดงที่นี่",
+          to: "/queue",
+          label: "ดูคิวผู้ป่วย",
+          icon: UsersRound,
+        },
+      }
+    : {
+        header: { to: "/intake", label: "รับผู้ป่วย", icon: ClipboardPlus },
+        empty: {
+          detail: "เริ่มงานด้วยการรับผู้ป่วยสังเคราะห์เข้าคิว",
+          to: "/intake",
+          label: "รับผู้ป่วยเข้าคิว",
+          icon: ClipboardPlus,
+        },
+      };
+  const HeaderActionIcon = roleAction.header.icon;
+  const EmptyActionIcon = roleAction.empty.icon;
 
   return (
     <div className="operations-page overview-page">
@@ -89,7 +107,7 @@ export function OverviewScreen(): ReactElement {
         eyebrow="CARE FOR THE COMMUNITY"
         title="ภาพรวมคลินิก"
         description={`สถานะสดจากระบบคิว · อัปเดตล่าสุด ${formatThaiDateTime(metrics.updatedAt)}`}
-        actions={queueLoading ? undefined : <Link className="care-button care-button-primary" to={primaryAction.to}><ClipboardPlus aria-hidden="true" size={18} />{primaryAction.label}</Link>}
+        actions={queueLoading ? undefined : <Link className="care-button care-button-primary" to={roleAction.header.to}><HeaderActionIcon aria-hidden="true" size={18} />{roleAction.header.label}</Link>}
       />
 
       <section className="metric-grid" aria-label="สรุปสถานะคลินิก">
@@ -119,11 +137,11 @@ export function OverviewScreen(): ReactElement {
               })}
             </div>
               ) : (
-            <EmptyState icon={UsersRound} title="ยังไม่มีผู้ป่วยในคิว" detail="เริ่มงานด้วยการรับผู้ป่วยสังเคราะห์เข้าคิว" />
+            <EmptyState icon={UsersRound} title="ยังไม่มีผู้ป่วยในคิว" detail={roleAction.empty.detail} />
               )}
             </>
           )}
-          {!queueLoading && activeRows.length === 0 && !queueError ? <Link className="care-button care-button-secondary overview-intake-link" to="/intake"><ClipboardPlus aria-hidden="true" size={18} />รับผู้ป่วยเข้าคิว</Link> : null}
+          {!queueLoading && activeRows.length === 0 && !queueError ? <Link className="care-button care-button-secondary overview-intake-link" to={roleAction.empty.to}><EmptyActionIcon aria-hidden="true" size={18} />{roleAction.empty.label}</Link> : null}
         </Card>
 
         <Card className="quick-actions-card">

@@ -78,6 +78,7 @@ function QueueCard({
   blocked,
   startError,
   stale,
+  staleWaitingCopy,
   onStart,
 }: {
   item: QueueItemDto;
@@ -87,6 +88,7 @@ function QueueCard({
   blocked?: ApiError;
   startError?: unknown;
   stale: boolean;
+  staleWaitingCopy: string;
   onStart: (item: QueueItemDto) => void;
 }): ReactElement {
   const status = statusFor(item.visit.status);
@@ -102,7 +104,7 @@ function QueueCard({
       {blocked ? <div className="queue-blocked"><strong>{blocked.messageTh}</strong><span>ข้อมูลคิวอาจเปลี่ยนแปลงแล้ว กรุณาโหลดข้อมูลล่าสุดก่อนดำเนินการต่อ</span></div> : null}
       {startError ? <div className="queue-action-error" role="alert"><strong>เริ่มการตรวจไม่สำเร็จ</strong><span>{actionErrorMessage(startError)}</span></div> : null}
       {item.visit.status === "WAITING" && startAllowed ? <ActionButton className="queue-action" variant="secondary" onClick={() => onStart(item)} disabled={pending || Boolean(blocked)}>{pending ? "กำลังเริ่มห้องตรวจ…" : "เริ่มการตรวจ"}</ActionButton> : null}
-      {item.visit.status === "WAITING" && !startAllowed && !blocked ? <span className="queue-waiting-action" aria-label={stale ? "ข้อมูลคิวต้องโหลดใหม่" : "รอแพทย์เริ่มการตรวจ"}>{stale ? "โหลดข้อมูลล่าสุดก่อนเริ่มการตรวจ" : "รอแพทย์เริ่มการตรวจ"}</span> : null}
+      {item.visit.status === "WAITING" && !startAllowed && !blocked ? <span className="queue-waiting-action" aria-label={stale ? "ข้อมูลคิวต้องโหลดใหม่" : "รอแพทย์เริ่มการตรวจ"}>{stale ? staleWaitingCopy : "รอแพทย์เริ่มการตรวจ"}</span> : null}
       {item.visit.status === "CONSULTING" && canOpenClinical ? <Link className="queue-link" to={`/consultations/${item.visit.id}`}>เปิดห้องตรวจ</Link> : null}
     </article>
   );
@@ -129,11 +131,15 @@ export function QueueScreen(): ReactElement {
         eyebrow: "DOCTOR WORKSPACE · CLINICAL QUEUE",
         description: "เลือกผู้ป่วยเพื่อเริ่มหรือกลับเข้าห้องตรวจ",
         action: <Link className="care-button care-button-secondary" to="/overview">ดูภาพรวม</Link>,
+        staleWaitingCopy: "โหลดข้อมูลล่าสุดก่อนเริ่มการตรวจ",
+        emptyDetail: "เมื่อผู้ช่วยส่งผู้ป่วยเข้าคิว รายการจะแสดงที่นี่",
       }
     : {
         eyebrow: "ASSISTANT WORKSPACE · PATIENT HANDOFF",
         description: "ติดตามการส่งต่อผู้ป่วยให้แพทย์",
         action: <Link className="care-button care-button-primary" to="/intake">รับผู้ป่วยใหม่</Link>,
+        staleWaitingCopy: "โหลดข้อมูลล่าสุดเพื่อติดตามการส่งต่อ",
+        emptyDetail: "เริ่มงานด้วยการรับผู้ป่วยสังเคราะห์เข้าคิว",
       };
 
   function start(item: QueueItemDto): void {
@@ -201,7 +207,7 @@ export function QueueScreen(): ReactElement {
     <section className={`queue-column queue-column-${tone}`} key={title}>
       <header><div><h2>{title}</h2><p>{detail}</p></div><UsersRound aria-hidden="true" size={20} /></header>
       <div className="queue-stack">
-        {items.length > 0 ? items.map((item) => <QueueCard key={item.visit.id} item={item} canStart={canStart} canOpenClinical={canStart} pending={pendingVisitId === item.visit.id} blocked={blocked[item.visit.id]} startError={startErrors[item.visit.id]} stale={staleQueue} onStart={start} />) : <EmptyState icon={UsersRound} title="ยังไม่มีผู้ป่วย" detail="รายการใหม่จะแสดงที่นี่" />}
+        {items.length > 0 ? items.map((item) => <QueueCard key={item.visit.id} item={item} canStart={canStart} canOpenClinical={canStart} pending={pendingVisitId === item.visit.id} blocked={blocked[item.visit.id]} startError={startErrors[item.visit.id]} stale={staleQueue} staleWaitingCopy={queueWorkspace.staleWaitingCopy} onStart={start} />) : <EmptyState icon={UsersRound} title="ยังไม่มีผู้ป่วย" detail="รายการใหม่จะแสดงที่นี่" />}
       </div>
     </section>
   );
@@ -211,7 +217,7 @@ export function QueueScreen(): ReactElement {
       <PageHeader eyebrow={queueWorkspace.eyebrow} title="คิวผู้ป่วย" description={queueWorkspace.description} actions={queueWorkspace.action} />
       <ConflictBanner visible={hasBlockedVisits} error={showStaleQueue ? queueError : undefined} fetching={queue.isFetching} onReload={() => void reload()} />
       {showStaleQueue && !hasBlockedVisits ? <StaleQueueBanner error={queueError} fetching={queue.isFetching} onReload={() => void reload()} /> : null}
-      {rows.length === 0 ? <Card className="queue-empty-card"><EmptyState icon={UsersRound} title="ยังไม่มีผู้ป่วยในคิว" detail="เริ่มงานด้วยการรับผู้ป่วยสังเคราะห์เข้าคิว" />{!isDoctor ? <Link className="care-button care-button-primary" to="/intake">ไปหน้ารับผู้ป่วย</Link> : null}</Card> : <div className="queue-board">{renderGroup("รอพบแพทย์", `${waiting.length} ราย`, waiting, "waiting")}{renderGroup("กำลังตรวจ", `${consulting.length} ราย`, consulting, "active")}</div>}
+      {rows.length === 0 ? <Card className="queue-empty-card"><EmptyState icon={UsersRound} title="ยังไม่มีผู้ป่วยในคิว" detail={queueWorkspace.emptyDetail} />{!isDoctor ? <Link className="care-button care-button-primary" to="/intake">ไปหน้ารับผู้ป่วย</Link> : null}</Card> : <div className="queue-board">{renderGroup("รอพบแพทย์", `${waiting.length} ราย`, waiting, "waiting")}{renderGroup("กำลังตรวจ", `${consulting.length} ราย`, consulting, "active")}</div>}
     </div>
   );
 }

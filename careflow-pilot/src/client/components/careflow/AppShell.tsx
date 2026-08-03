@@ -23,10 +23,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { pathname } = useLocation();
   const workspace = roleWorkspaceFor(auth.session?.user.role ?? "assistant");
+  const workspaceIdentity = `${workspace.labelEn} / ${workspace.label}`;
   const roleLabel = auth.session?.user.role === "doctor" ? "แพทย์" : "ผู้ช่วย";
-  const mode = pathname === "/intake"
+  const normalizedPathname = pathname === "/" ? pathname : pathname.replace(/\/+$/, "");
+  const mode = normalizedPathname === "/intake"
     ? "focused"
-    : pathname.startsWith("/consultations/")
+    : normalizedPathname.startsWith("/consultations/")
       ? "clinical"
       : "operational";
 
@@ -59,7 +61,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <span className="brand-mark"><HeartPulse aria-hidden="true" size={22} /></span>
             <span><strong>CareFlow</strong><small>Rural Health Commons</small></span>
           </Link>
-          <span className="focused-workspace-role">{workspace.labelEn}</span>
+          <span className="focused-workspace-role">{workspaceIdentity}</span>
           <button className="account-placeholder" type="button" onClick={() => void auth.logout()}>
             {auth.session?.user.displayName ?? "บัญชีผู้ใช้"} · {roleLabel}
           </button>
@@ -88,7 +90,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="sidebar-footer">
           <div className="role-card">
             <span className="role-avatar">{auth.session?.user.displayName.slice(0, 1) ?? "?"}</span>
-            <span><strong>{auth.session?.user.displayName ?? "บัญชี Pilot"}</strong><small>{roleLabel}</small></span>
+            <span><strong>{auth.session?.user.displayName ?? "บัญชี Pilot"}</strong><small>{roleLabel}</small><small>{workspaceIdentity}</small></span>
           </div>
           <button className="reset-button" type="button" onClick={() => void auth.logout()}>ออกจากระบบ</button>
         </div>
@@ -96,6 +98,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <div className="mobile-topbar">
         <Link to="/" className="brand-lockup"><span className="brand-mark"><HeartPulse aria-hidden="true" size={21} /></span><strong>Care<span>Flow</span></strong></Link>
+        <span className="mobile-workspace-role">{workspaceIdentity}</span>
         <button className="icon-button" aria-label={mobileOpen ? "ปิดเมนู" : "เปิดเมนู"} onClick={() => setMobileOpen((open) => !open)}>
           {mobileOpen ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
         </button>
