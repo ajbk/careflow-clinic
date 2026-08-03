@@ -9,11 +9,21 @@ const copy: Record<ScreenStateKind, { title: string; message: string }> = {
   unavailable: { title: "ระบบไม่พร้อมใช้งาน", message: "ไม่สามารถเชื่อมต่อระบบได้ กรุณาลองใหม่อีกครั้ง" },
 };
 
-export function ScreenState({ kind, title, message }: { kind: ScreenStateKind; title?: string; message?: string }): ReactElement {
+export function ScreenState({
+  kind,
+  title,
+  message,
+  showPilotBanner = true,
+}: {
+  kind: ScreenStateKind;
+  title?: string;
+  message?: string;
+  showPilotBanner?: boolean;
+}): ReactElement {
   const defaults = copy[kind];
   return (
     <section className={`screen-state screen-state-${kind}`} aria-live="polite">
-      <p className="pilot-banner" role="status">PILOT — ข้อมูลสังเคราะห์เท่านั้น ห้ามกรอกข้อมูลผู้ป่วยจริง</p>
+      {showPilotBanner ? <p className="pilot-banner" role="status">PILOT — ข้อมูลสังเคราะห์เท่านั้น ห้ามกรอกข้อมูลผู้ป่วยจริง</p> : null}
       <p className="eyebrow">CARE<span>FLOW</span> · LOCAL PILOT</p>
       <h1>{title ?? defaults.title}</h1>
       <p>{message ?? defaults.message}</p>

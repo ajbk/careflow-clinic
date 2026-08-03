@@ -10,7 +10,7 @@ test.describe("shared Visit journey", () => {
     const doctorPage = await doctorContext.newPage();
     try {
       await loginAndAcknowledge(assistantPage, server.baseURL, "assistant");
-      await assistantPage.goto(`${server.baseURL}/intake`);
+      await expect(assistantPage).toHaveURL(/\/intake$/);
       await assistantPage.getByRole("button", { name: "สร้างผู้ป่วยสังเคราะห์" }).click();
       await expect(assistantPage.locator(".patient-header")).toBeVisible();
       const patientHeader = assistantPage.locator(".patient-header");
@@ -25,16 +25,36 @@ test.describe("shared Visit journey", () => {
       expect(visitId).toMatch(/^DEMO-\d{6} .+/);
 
       await loginAndAcknowledge(doctorPage, server.baseURL, "doctor");
-      await doctorPage.goto(`${server.baseURL}/queue`);
+      await expect(doctorPage).toHaveURL(/\/queue$/);
       await expect(doctorPage.locator(".queue-card")).toContainText(hn);
       await doctorPage.getByRole("button", { name: "เริ่มการตรวจ" }).click();
       await expect(doctorPage).toHaveURL(/\/consultations\/[^/]+$/);
+      await expect(doctorPage.getByRole("heading", { name: "ห้องตรวจผู้ป่วย" })).toBeVisible();
       await expect(doctorPage.locator(".status-active").first()).toContainText("กำลังตรวจ");
-      await expect(doctorPage.locator(".clinical-record")).toContainText(hn);
+      await expect(doctorPage.locator(".consultation-patient-rail")).toContainText(hn);
+      await expect(doctorPage.locator(".consultation-clinical-content")).toBeVisible();
+
+      const consultationPath = new URL(doctorPage.url()).pathname;
+      const consultingVisitId = consultationPath.replace("/consultations/", "");
+      const assistantWorkspaceRequests: string[] = [];
+      assistantPage.on("request", (request) => {
+        const requestPath = new URL(request.url()).pathname;
+        if (requestPath === `/api/visits/${consultingVisitId}/workspace`) {
+          assistantWorkspaceRequests.push(requestPath);
+        }
+      });
 
       await assistantPage.goto(`${server.baseURL}/queue`);
       await expect(assistantPage.locator(".queue-card")).toContainText(hn);
       await expect(assistantPage.locator(".status-active").first()).toContainText("กำลังตรวจ");
+      await expect(assistantPage.getByRole("link", { name: "เปิดห้องตรวจ" })).toHaveCount(0);
+
+      await assistantPage.goto(`${server.baseURL}${consultationPath}`);
+      await expect(assistantPage.getByRole("heading", { name: "ไม่มีสิทธิ์ใช้งาน" })).toBeVisible();
+      await expect(assistantPage.locator(".pilot-banner")).toHaveCount(1);
+      await expect(assistantPage.locator(".clinical-workspace-grid, .consultation-patient-rail, .consultation-clinical-content")).toHaveCount(0);
+      await expect(assistantPage.getByText(hn, { exact: false })).toHaveCount(0);
+      expect(assistantWorkspaceRequests).toHaveLength(0);
       expect(await assistantPage.evaluate(() => localStorage.length)).toBe(0);
       expect(await doctorPage.evaluate(() => localStorage.length)).toBe(0);
     } finally {

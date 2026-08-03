@@ -121,6 +121,7 @@ describe("auth boundary", () => {
     });
     renderApp("/consultations/visit-1", fetchImpl);
     expect(await screen.findByRole("heading", { name: /ไม่มีสิทธิ์/ })).toBeInTheDocument();
+    expect(screen.getAllByText(/PILOT — ข้อมูลสังเคราะห์เท่านั้น/)).toHaveLength(1);
     expect(workspaceRequests).toBe(0);
   });
 

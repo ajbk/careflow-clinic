@@ -50,18 +50,26 @@ export function SessionOnlyRoute({
   return <>{children}</>;
 }
 
-export function AuthGate({ children, requiredPermission }: { children: ReactNode; requiredPermission?: Permission }): ReactElement {
+export function AuthGate({
+  children,
+  requiredPermission,
+  showPilotBanner = true,
+}: {
+  children: ReactNode;
+  requiredPermission?: Permission;
+  showPilotBanner?: boolean;
+}): ReactElement {
   const location = useLocation();
   const auth = useAuth();
-  if (auth.isLoading) return <ScreenState kind="loading" />;
+  if (auth.isLoading) return <ScreenState kind="loading" showPilotBanner={showPilotBanner} />;
   if (auth.error) {
     if (isApiError(auth.error) && auth.error.status === 401) {
       return <Navigate replace to={loginTarget(location.pathname, location.search)} />;
     }
-    return <ScreenState kind={auth.error.code === "SERVER_UNAVAILABLE" ? "unavailable" : "error"} />;
+    return <ScreenState kind={auth.error.code === "SERVER_UNAVAILABLE" ? "unavailable" : "error"} showPilotBanner={showPilotBanner} />;
   }
   if (!auth.session) return <Navigate replace to={loginTarget(location.pathname, location.search)} />;
-  if (requiredPermission && !auth.session.permissions.includes(requiredPermission)) return <ScreenState kind="denied" />;
+  if (requiredPermission && !auth.session.permissions.includes(requiredPermission)) return <ScreenState kind="denied" showPilotBanner={showPilotBanner} />;
   const target = sanitizeReturnTo(`${location.pathname}${location.search}`);
   if (!auth.session.pilotAcknowledgedAt && location.pathname !== "/pilot-rules") {
     return <Navigate replace to={`/pilot-rules?returnTo=${encodeURIComponent(target)}`} />;
