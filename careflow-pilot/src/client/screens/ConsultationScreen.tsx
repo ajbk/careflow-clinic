@@ -1,87 +1,41 @@
 import { ClipboardCheck, FileSignature, LockKeyhole, Stethoscope } from "lucide-react";
-import type { ReactElement } from "react";
+import { useEffect, useState, type ReactElement } from "react";
 import { Link, useParams } from "react-router-dom";
+import type { ClinicalNoteDraftInput, MedicationDecisionDraftInput, ReviewAllergyPayload, VisitWorkspaceDto } from "../../shared/contracts";
 import { useAuth } from "../auth/AuthProvider";
-import { PatientHeader } from "../components/careflow/PatientHeader";
-import { Card, PageHeader, SectionHeading, StatusBadge } from "../components/careflow/ui";
+import { AllergyReviewDialog } from "../components/careflow/AllergyReviewDialog";
+import { ClinicalNoteEditor } from "../components/careflow/ClinicalNoteEditor";
+import { MedicationDecisionEditor } from "../components/careflow/MedicationDecisionEditor";
+import { SignedClinicalEvidence } from "../components/careflow/SignedClinicalEvidence";
+import { ActionButton, Card, PageHeader, SectionHeading, StatusBadge } from "../components/careflow/ui";
+import { createReviewAllergyAttempt, useReviewAllergy } from "../features/allergy";
+import { createFinalizeAttempt, createSaveDraftAttempt, type ConsultationFormValue, useAmendClinicalNote, useFinalizeConsultation, useReviseMedicationDecision, useSaveConsultationDraft } from "../features/clinical";
 import { useVisitWorkspace } from "../features/visit";
 import { isApiError } from "../lib/api-error";
+import { createCommandAttempt } from "../lib/idempotency";
 import { formatThaiDateTime } from "../lib/thai-date";
 
-function WorkspaceState({ title, message, denied = false }: { title: string; message: string; denied?: boolean }): ReactElement {
-  return <section className={`workflow-blocked ${denied ? "workflow-blocked-denied" : "workflow-blocked-unavailable"}`} role="alert"><LockKeyhole aria-hidden="true" size={24} /><div><h2>{title}</h2><p>{message}</p></div></section>;
+const blankNote: ClinicalNoteDraftInput = { subjective: "", objective: "", assessment: "", plan: "", diagnoses: [""] };
+const blankValue: ConsultationFormValue = { note: blankNote, medicationDecision: { kind: "UNDECIDED" } };
+function WorkspaceState({ title, message, denied = false }: { title: string; message: string; denied?: boolean }): ReactElement { return <section className={`workflow-blocked ${denied ? "workflow-blocked-denied" : "workflow-blocked-unavailable"}`} role="alert"><LockKeyhole aria-hidden="true" size={24} /><div><h2>{title}</h2><p>{message}</p></div></section>; }
+function workspaceValue(workspace: VisitWorkspaceDto): ConsultationFormValue {
+  const note = workspace.consultationDraft.note;
+  const decision = workspace.consultationDraft.medicationDecision;
+  return { note: note ? { subjective: note.subjective, objective: note.objective, assessment: note.assessment, plan: note.plan, diagnoses: note.diagnoses.length ? note.diagnoses : [""] } : blankNote, medicationDecision: decision ? decision.kind === "ORDER" ? { kind: "ORDER", items: decision.items.map((item) => ({ medicationId: item.medication.id, medicationRevision: item.medication.revision, quantity: item.quantity, directionsTh: item.directionsTh })) } : decision.kind === "NO_MEDICATION" ? { kind: "NO_MEDICATION", noMedicationReason: decision.noMedicationReason } : { kind: "UNDECIDED" } : { kind: "UNDECIDED" } };
 }
+function fieldErrors(error: unknown): Record<string, string> { return isApiError(error) ? error.fieldErrors ?? {} : {}; }
 
 export function ConsultationScreen(): ReactElement {
-  const { visitId = "" } = useParams();
-  const auth = useAuth();
-  const workspace = useVisitWorkspace(visitId);
-
-  if (workspace.isPending) {
-    return <div className="flow-page consultation-page"><PageHeader eyebrow="DOCTOR WORKSPACE" title="ห้องตรวจ" description="เปิดดูข้อมูล Intake ที่บันทึกจากระบบ" /><Card className="clinical-record"><div className="consultation-skeleton" /><div className="consultation-skeleton consultation-skeleton-large" /></Card></div>;
-  }
-  if (workspace.error || !workspace.data) {
-    const error = workspace.error;
-    const denied = !auth.session?.permissions.includes("visit:start-consultation") || (isApiError(error) && error.status === 403);
-    return <div className="flow-page consultation-page"><PageHeader eyebrow="DOCTOR WORKSPACE" title="ห้องตรวจ" description="เปิดดูข้อมูล Intake ที่บันทึกจากระบบ" /><Card><WorkspaceState denied={denied} title={denied ? "ไม่มีสิทธิ์เปิดห้องตรวจ" : "ไม่พบข้อมูลห้องตรวจ"} message={denied ? "บัญชีนี้ไม่มีสิทธิ์เข้าถึงข้อมูลห้องตรวจนี้" : (isApiError(error) ? error.messageTh : "ไม่สามารถเชื่อมต่อระบบได้ กรุณาลองใหม่อีกครั้ง")} /></Card></div>;
-  }
-
-  const data = workspace.data;
-  const status = data.visit.status === "CONSULTING" ? { label: "กำลังตรวจ", tone: "active" as const } : { label: "รอตรวจ", tone: "waiting" as const };
-  const consultationStarted = data.visit.status === "CONSULTING" && data.visit.startedAt !== null;
-  const vital = (value: number | null, suffix = "") => value === null ? "—" : `${value}${suffix}`;
-
-  return (
-    <div className="flow-page consultation-page">
-      <PageHeader eyebrow="DOCTOR WORKSPACE · CONSULTATION" title="ห้องตรวจผู้ป่วย" description="อ่านข้อมูล Intake ที่บันทึกจากระบบโดยไม่มีการแก้ไขข้อมูลทางคลินิก" />
-      <div className="clinical-workspace-grid">
-        <aside className="care-card consultation-patient-rail" aria-label="บริบทผู้ป่วย">
-          <PatientHeader patient={data.patient} status={status.label} statusTone={status.tone} />
-          <Link className="care-button care-button-secondary" to="/queue">กลับคิวผู้ป่วย</Link>
-        </aside>
-        <div className="consultation-clinical-content">
-          <section className="care-card consultation-current-visit" aria-label="ข้อมูล Visit ปัจจุบัน">
-            <SectionHeading icon={Stethoscope} title="ข้อมูล Visit ปัจจุบัน" description={`อาการสำคัญ: ${data.intake.chiefComplaint}`} />
-            <div className="consultation-meta" aria-label="สถานะ Visit">
-              <span>Visit {data.visit.id}</span>
-              <span>revision {data.visit.revision}</span>
-              <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
-            </div>
-            <div className="vitals-summary">
-              <span>อุณหภูมิ <strong>{vital(data.intake.vitals.temperatureC, " °C")}</strong></span>
-              <span>ความดัน <strong>{data.intake.vitals.systolicMmhg === null || data.intake.vitals.diastolicMmhg === null ? "—" : `${data.intake.vitals.systolicMmhg}/${data.intake.vitals.diastolicMmhg}`}</strong></span>
-              <span>ชีพจร <strong>{vital(data.intake.vitals.heartRateBpm, " ครั้ง/นาที")}</strong></span>
-              <span>SpO₂ <strong>{vital(data.intake.vitals.spo2Percent, "%")}</strong></span>
-              <span>น้ำหนัก <strong>{vital(data.intake.vitals.weightKg, " กก.")}</strong></span>
-              <span>ส่วนสูง <strong>{vital(data.intake.vitals.heightCm, " ซม.")}</strong></span>
-            </div>
-            <section className="clinical-evidence" aria-label="หลักฐานจาก Intake">
-              <SectionHeading icon={ClipboardCheck} title="หลักฐานจาก Intake" description="ข้อมูลนี้มาจาก snapshot ที่บันทึกแล้ว" />
-              <div className="evidence-grid">
-                <div><span>ผู้บันทึก</span><strong>{data.intake.recordedBy.displayName}</strong></div>
-                <div><span>เวลาบันทึก</span><strong>{formatThaiDateTime(data.intake.recordedAt)}</strong></div>
-                <div><span>มาถึงคลินิก</span><strong>{formatThaiDateTime(data.visit.arrivedAt)}</strong></div>
-                <div><span>เริ่มห้องตรวจ</span><strong>{data.visit.startedAt ? formatThaiDateTime(data.visit.startedAt) : "ยังไม่เริ่ม"}</strong></div>
-              </div>
-            </section>
-          </section>
-          <section className="care-card consultation-note-panel" aria-label="Clinical Note">
-            <SectionHeading icon={FileSignature} title="Clinical Note" description="พื้นที่งานแพทย์แบบอ่านอย่างเดียวใน Pilot นี้" />
-            <div className="clinical-note-placeholder-grid">
-              <div><strong>Subjective</strong><span>จะเปิดให้แพทย์บันทึกใน Milestone ถัดไป</span></div>
-              <div><strong>Objective</strong><span>อ้างอิงข้อมูล Visit และ Intake ที่บันทึกแล้วด้านบน</span></div>
-              <div><strong>Assessment</strong><span>ยังไม่มีการวินิจฉัยหรือการตัดสินใจทางคลินิก</span></div>
-              <div><strong>Plan</strong><span>ยังไม่มีคำสั่งยา การรักษา หรือการส่งต่อ</span></div>
-            </div>
-            <div className="signed-note milestone-next-copy">
-              <LockKeyhole aria-hidden="true" size={17} />
-              {consultationStarted
-                ? "เริ่มตรวจแล้ว — การบันทึกและลงนาม Clinical Note จะเปิดใน Milestone ถัดไป"
-                : "ยังไม่ได้เริ่มตรวจ — กลับไปที่คิวผู้ป่วยเพื่อเริ่มการตรวจ"}
-            </div>
-          </section>
-        </div>
-      </div>
-    </div>
-  );
+  const { visitId = "" } = useParams(); const auth = useAuth(); const workspace = useVisitWorkspace(visitId); const save = useSaveConsultationDraft(); const finalize = useFinalizeConsultation(); const allergy = useReviewAllergy(); const amend = useAmendClinicalNote(); const revise = useReviseMedicationDecision();
+  const [value, setValue] = useState<ConsultationFormValue>(blankValue); const [initializedRevision, setInitializedRevision] = useState<number | null>(null); const [saveAttempt, setSaveAttempt] = useState<ReturnType<typeof createSaveDraftAttempt> | null>(null); const [finalizeAttempt, setFinalizeAttempt] = useState<ReturnType<typeof createFinalizeAttempt> | null>(null); const [showAllergy, setShowAllergy] = useState(false); const [showConfirm, setShowConfirm] = useState(false); const [conflict, setConflict] = useState(false); const [evidenceAction, setEvidenceAction] = useState<"amend" | "revise" | null>(null); const [evidenceText, setEvidenceText] = useState(""); const [evidenceReason, setEvidenceReason] = useState("");
+  useEffect(() => { if (workspace.data && workspace.data.visit.revision !== initializedRevision) { queueMicrotask(() => { setValue(workspaceValue(workspace.data!)); setInitializedRevision(workspace.data!.visit.revision); setConflict(false); setSaveAttempt(null); setFinalizeAttempt(null); }); } }, [workspace.data, initializedRevision]);
+  if (workspace.isPending) return <div className="flow-page consultation-page"><PageHeader eyebrow="DOCTOR WORKSPACE" title="ห้องตรวจ" description="กำลังเปิดข้อมูลห้องตรวจ" /><Card className="clinical-record"><div className="consultation-skeleton" /><div className="consultation-skeleton consultation-skeleton-large" /></Card></div>;
+  if (workspace.error || !workspace.data) { const denied = !auth.session?.permissions.includes("clinical:read") || (isApiError(workspace.error) && workspace.error.status === 403); return <div className="flow-page consultation-page"><PageHeader eyebrow="DOCTOR WORKSPACE" title="ห้องตรวจ" description="ข้อมูลห้องตรวจ" /><Card><WorkspaceState denied={denied} title={denied ? "ไม่มีสิทธิ์เปิดห้องตรวจ" : "ไม่พบข้อมูลห้องตรวจ"} message={denied ? "บัญชีนี้ไม่มีสิทธิ์เข้าถึงข้อมูลห้องตรวจนี้" : (isApiError(workspace.error) ? workspace.error.messageTh : "ไม่สามารถเชื่อมต่อระบบได้ กรุณาลองใหม่อีกครั้ง")} /></Card></div>; }
+  const data = workspace.data; const status = data.visit.status === "CONSULTING" ? { label: "กำลังตรวจ", tone: "active" as const } : { label: data.visit.status, tone: "waiting" as const }; const vital = (number: number | null, suffix = "") => number === null ? "—" : `${number}${suffix}`; const editable = data.allowedActions.includes("SAVE_DRAFT") && auth.session?.user.role === "doctor";
+  const decisionExplicit = value.medicationDecision.kind !== "UNDECIDED";
+  const saveDraft = () => { if (!decisionExplicit) return; const attempt = saveAttempt ?? createSaveDraftAttempt(data, value); setSaveAttempt(attempt); save.mutate({ visitId: data.visit.id, attempt }, { onSuccess: () => setSaveAttempt(null), onError: (error) => { if (isApiError(error) && error.status === 409) { setConflict(true); setSaveAttempt(null); } } }); };
+  const sign = () => { if (conflict) return; let attempt: ReturnType<typeof createFinalizeAttempt>; try { attempt = finalizeAttempt ?? createFinalizeAttempt(data); } catch { return; } setFinalizeAttempt(attempt); finalize.mutate({ visitId: data.visit.id, attempt }, { onSuccess: () => { setFinalizeAttempt(null); setShowConfirm(false); }, onError: (error) => { if (isApiError(error) && error.status === 409) { setConflict(true); setFinalizeAttempt(null); setShowConfirm(false); } } }); };
+  const reviewAllergy = (payload: ReviewAllergyPayload) => allergy.mutate({ workspace: data, attempt: createReviewAllergyAttempt(data, { ...payload, visitId: data.visit.id }) }, { onSuccess: () => setShowAllergy(false) });
+  const evidenceDialog = evidenceAction && data.signedClinicalNote && data.medicationDecision ? <div className="dialog-backdrop"><section className="care-card sign-dialog" role="dialog" aria-modal="true" aria-label={evidenceAction === "amend" ? "เพิ่มคำแก้ไข" : "แก้ไขการตัดสินใจยา"}><h2>{evidenceAction === "amend" ? "เพิ่มคำแก้ไข" : "แก้ไขการตัดสินใจยา"}</h2><textarea className="care-input care-textarea" aria-label="รายละเอียด" value={evidenceText} onChange={(event) => setEvidenceText(event.target.value)} /><textarea className="care-input care-textarea" aria-label="เหตุผล" value={evidenceReason} onChange={(event) => setEvidenceReason(event.target.value)} /><div className="dialog-actions"><ActionButton type="button" variant="secondary" onClick={() => setEvidenceAction(null)}>ยกเลิก</ActionButton><ActionButton type="button" onClick={() => { if (evidenceAction === "amend") amend.mutate({ noteId: data.signedClinicalNote!.id, attempt: createCommandAttempt({ amendment: data.amendments.length }, { content: evidenceText, reason: evidenceReason }) }, { onSuccess: () => setEvidenceAction(null) }); else revise.mutate({ visitId: data.visit.id, attempt: createCommandAttempt({ visit: data.visit.revision, patient: data.patient.revision, medicationDecision: data.medicationDecision!.version }, { revisionReason: evidenceReason, decision: { kind: "NO_MEDICATION", noMedicationReason: evidenceText } }) }, { onSuccess: () => setEvidenceAction(null) }); }}>ลงนาม</ActionButton></div></section></div> : null;
+  return <div className="flow-page consultation-page"><PageHeader eyebrow="DOCTOR WORKSPACE · CONSULTATION" title="ห้องตรวจผู้ป่วย" description="บันทึก Clinical Note และการตัดสินใจเรื่องยาในข้อมูลสังเคราะห์" /><div className="clinical-workspace-grid"><aside className="care-card consultation-patient-rail" aria-label="บริบทผู้ป่วย"><div className="patient-header"><div className="patient-header-copy"><strong>{data.patient.displayName}</strong><span>HN {data.patient.hn}</span></div><StatusBadge tone={status.tone}>{status.label}</StatusBadge></div><div className="allergy-summary"><span>ประวัติแพ้ยา</span><strong>{data.patientSnapshot.allergy.state}</strong><ActionButton type="button" variant="secondary" onClick={() => setShowAllergy(true)} disabled={!data.allowedActions.includes("REVIEW_ALLERGY")}>ทบทวนประวัติแพ้</ActionButton></div><Link className="care-button care-button-secondary" to="/queue">กลับคิวผู้ป่วย</Link></aside><div className="consultation-clinical-content"><section className="care-card consultation-current-visit" aria-label="ข้อมูล Visit ปัจจุบัน"><SectionHeading icon={Stethoscope} title="ข้อมูล Visit ปัจจุบัน" description={`อาการสำคัญ: ${data.intake.chiefComplaint}`} /><div className="consultation-meta"><span>Visit {data.visit.id}</span><span>revision {data.visit.revision}</span><StatusBadge tone={status.tone}>{status.label}</StatusBadge></div><div className="vitals-summary"><span>อุณหภูมิ <strong>{vital(data.intake.vitals.temperatureC, " °C")}</strong></span><span>ความดัน <strong>{data.intake.vitals.systolicMmhg === null || data.intake.vitals.diastolicMmhg === null ? "—" : `${data.intake.vitals.systolicMmhg}/${data.intake.vitals.diastolicMmhg}`}</strong></span><span>ชีพจร <strong>{vital(data.intake.vitals.heartRateBpm, " ครั้ง/นาที")}</strong></span><span>SpO₂ <strong>{vital(data.intake.vitals.spo2Percent, "%")}</strong></span><span>น้ำหนัก <strong>{vital(data.intake.vitals.weightKg, " กก.")}</strong></span><span>ส่วนสูง <strong>{vital(data.intake.vitals.heightCm, " ซม.")}</strong></span></div><section className="clinical-evidence" aria-label="หลักฐานจาก Intake"><SectionHeading icon={ClipboardCheck} title="หลักฐานจาก Intake" description="ข้อมูลนี้มาจาก snapshot ที่บันทึกแล้ว" /><div className="evidence-grid"><div><span>ผู้บันทึก</span><strong>{data.intake.recordedBy.displayName}</strong></div><div><span>เวลาบันทึก</span><strong>{formatThaiDateTime(data.intake.recordedAt)}</strong></div><div><span>มาถึงคลินิก</span><strong>{formatThaiDateTime(data.visit.arrivedAt)}</strong></div><div><span>เริ่มห้องตรวจ</span><strong>{data.visit.startedAt ? formatThaiDateTime(data.visit.startedAt) : "ยังไม่เริ่ม"}</strong></div></div></section></section>{data.signedClinicalNote && data.medicationDecision ? <SignedClinicalEvidence note={data.signedClinicalNote} decision={data.medicationDecision} amendments={data.amendments} onAmend={data.allowedActions.includes("AMEND_NOTE") ? () => setEvidenceAction("amend") : undefined} onRevise={data.allowedActions.includes("REVISE_MEDICATION_DECISION") ? () => setEvidenceAction("revise") : undefined} /> : <section className="care-card consultation-note-panel" aria-label="Clinical Note"><SectionHeading icon={FileSignature} title="Clinical Note" description="บันทึกโดยแพทย์เท่านั้น" />{conflict ? <div role="alert" className="conflict-alert">ข้อมูลเวอร์ชันปัจจุบันเปลี่ยนแปลงแล้ว กรุณาโหลดข้อมูลล่าสุดก่อนลงนาม <ActionButton type="button" variant="secondary" onClick={() => void workspace.refetch()}>โหลดข้อมูลล่าสุด</ActionButton></div> : null}{save.error && !conflict ? <div role="alert" className="field-error">{isApiError(save.error) ? save.error.messageTh : "ยังบันทึกไม่ได้"}</div> : null}<ClinicalNoteEditor value={value.note} onChange={(note) => { setValue({ ...value, note }); setSaveAttempt(null); }} errors={fieldErrors(save.error)} disabled={!editable || save.isPending || finalize.isPending} /><SectionHeading title="การตัดสินใจเรื่องยา" description="ต้องเลือกคำสั่งยา หรือระบุว่าไม่สั่งยา" /><MedicationDecisionEditor value={value.medicationDecision} onChange={(medicationDecision: MedicationDecisionDraftInput) => { setValue({ ...value, medicationDecision }); setSaveAttempt(null); }} errors={fieldErrors(save.error)} disabled={!editable || save.isPending || finalize.isPending} /><div className="consultation-actions"><ActionButton type="button" variant="secondary" onClick={saveDraft} disabled={!editable || save.isPending || !decisionExplicit}>{save.isPending ? "กำลังบันทึก…" : "บันทึกร่าง"}</ActionButton><ActionButton type="button" onClick={() => setShowConfirm(true)} disabled={!editable || conflict || !decisionExplicit || !data.consultationDraft.note || !data.consultationDraft.medicationDecision}>ลงนามและส่งต่อ</ActionButton></div></section>}</div></div>{showAllergy ? <AllergyReviewDialog allergy={data.patientSnapshot.allergy} onClose={() => setShowAllergy(false)} onSave={reviewAllergy} pending={allergy.isPending} /> : null}{showConfirm ? <div className="dialog-backdrop" role="presentation"><section className="care-card sign-dialog" role="dialog" aria-modal="true" aria-label="ยืนยันการลงนาม" onKeyDown={(event) => { if (event.key === "Escape") setShowConfirm(false); if (event.key === "Enter" && !event.shiftKey) sign(); }} tabIndex={-1}><h2>ยืนยันการลงนาม</h2><p>การวินิจฉัย: {value.note.diagnoses.filter(Boolean).join(", ") || "ยังไม่ระบุ"}</p><p>การตัดสินใจยา: {value.medicationDecision.kind === "ORDER" ? "สั่งยา" : value.medicationDecision.kind === "NO_MEDICATION" ? "ไม่สั่งยา" : "ยังไม่เลือก"}</p><div className="dialog-actions"><ActionButton type="button" variant="secondary" onClick={() => setShowConfirm(false)} disabled={finalize.isPending}>ยกเลิก</ActionButton><ActionButton type="button" onClick={sign} disabled={finalize.isPending}>{finalize.isPending ? "กำลังลงนาม…" : "ยืนยันการลงนาม"}</ActionButton></div></section></div> : null}{evidenceDialog}</div>;
 }

@@ -42,7 +42,7 @@ export const appRoutes: RouteObject[] = [
           { path: "intake", element: <AuthGate requiredPermission="visit:submit-intake" showPilotBanner={false}><IntakeScreen /></AuthGate> },
           { path: "queue", element: <AuthGate requiredPermission="visit:read-queue" showPilotBanner={false}><QueueScreen /></AuthGate> },
           { path: "overview", element: <AuthGate requiredPermission="visit:read-queue" showPilotBanner={false}><OverviewScreen /></AuthGate> },
-          { path: "consultations/:visitId", element: <AuthGate requiredPermission="visit:start-consultation" showPilotBanner={false}><ConsultationScreen /></AuthGate> },
+          { path: "consultations/:visitId", element: <AuthGate requiredPermission="clinical:read" showPilotBanner={false}><ConsultationScreen /></AuthGate> },
           { path: "dispensing/:visitId", element: <PilotUnavailableScreen title="จัดยา" /> },
           { path: "dispensing/:visitId/labels", element: <PilotUnavailableScreen title="ฉลากยา" /> },
           { path: "checkout/:visitId", element: <PilotUnavailableScreen title="ชำระเงิน" /> },

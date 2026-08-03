@@ -1,0 +1,21 @@
+import { Search, X } from "lucide-react";
+import { useState } from "react";
+import type { MedicationDecisionDraftInput, MedicationDto } from "../../../shared/contracts";
+import { useMedicationSearch } from "../../features/medications";
+import { ActionButton, TextAreaField } from "./ui";
+
+type OrderItem = { medicationId: string; medicationRevision: number; quantity: number; directionsTh: string; medication?: MedicationDto };
+export function MedicationDecisionEditor({ value, onChange, errors = {}, disabled = false }: { value: MedicationDecisionDraftInput; onChange: (value: MedicationDecisionDraftInput) => void; errors?: Record<string, string>; disabled?: boolean }) {
+  const [query, setQuery] = useState("");
+  const search = useMedicationSearch(query, value.kind === "ORDER" && !disabled);
+  const items: OrderItem[] = value.kind === "ORDER" ? value.items : [];
+  const select = (medication: MedicationDto) => { if (items.some((item) => item.medicationId === medication.id)) return; onChange({ kind: "ORDER", items: [...items, { medicationId: medication.id, medicationRevision: medication.revision, quantity: 1, directionsTh: "", medication }] } as MedicationDecisionDraftInput); setQuery(""); };
+  const toDraftItems = (entries: OrderItem[]) => entries.map((item) => ({ medicationId: item.medicationId, medicationRevision: item.medicationRevision, quantity: item.quantity, directionsTh: item.directionsTh }));
+  const update = (index: number, patch: Partial<OrderItem>) => { const next = items.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item); onChange({ kind: "ORDER", items: toDraftItems(next) } as MedicationDecisionDraftInput); };
+  return <section className="medication-editor" aria-label="Medication decision">
+    <div className="decision-choice"><ActionButton type="button" variant={value.kind === "ORDER" ? "primary" : "secondary"} onClick={() => onChange({ kind: "ORDER", items })} disabled={disabled}>สั่งยาจากรายการทดสอบ</ActionButton><ActionButton type="button" variant={value.kind === "NO_MEDICATION" ? "primary" : "secondary"} onClick={() => onChange({ kind: "NO_MEDICATION", noMedicationReason: "" })} disabled={disabled}>ไม่สั่งยา</ActionButton></div>
+    {value.kind === "UNDECIDED" ? <p className="field-hint">เลือกการตัดสินใจเรื่องยาอย่างชัดเจนก่อนบันทึก</p> : null}
+    {value.kind === "NO_MEDICATION" ? <TextAreaField label="เหตุผลที่ไม่สั่งยา" value={value.noMedicationReason} onChange={(event) => onChange({ kind: "NO_MEDICATION", noMedicationReason: event.target.value })} error={errors["payload.medicationDecision.noMedicationReason"]} disabled={disabled} /> : null}
+    {value.kind === "ORDER" ? <div className="medication-order"><label className="field"><span className="field-label">ค้นหารายการยา</span><div className="search-input"><Search aria-hidden="true" size={18} /><input className="care-input" value={query} onChange={(event) => setQuery(event.target.value)} disabled={disabled} /></div></label>{search.isError ? <p className="field-error">ค้นหารายการยาไม่ได้</p> : null}{search.data?.map((medication) => <button className="catalog-result" type="button" onClick={() => select(medication)} key={medication.id}>เลือก {medication.displayName} · {medication.strengthText}</button>)}{items.map((item, index) => <div className="medication-item" key={item.medicationId}><strong>{item.medication?.displayName ?? item.medicationId}</strong><label className="field"><span className="field-label">จำนวน</span><input className="care-input" aria-label="จำนวน" type="number" min="1" value={item.quantity} onChange={(event) => update(index, { quantity: Number(event.target.value) })} disabled={disabled} /></label><TextAreaField label="วิธีใช้ยา" value={item.directionsTh} onChange={(event) => update(index, { directionsTh: event.target.value })} disabled={disabled} /><ActionButton type="button" variant="ghost" icon={X} onClick={() => onChange({ kind: "ORDER", items: toDraftItems(items.filter((_, itemIndex) => itemIndex !== index)) } as MedicationDecisionDraftInput)} disabled={disabled}>ลบ</ActionButton></div>)}{errors["payload.medicationDecision.items"] ? <p className="field-error">{errors["payload.medicationDecision.items"]}</p> : null}</div> : null}
+  </section>;
+}

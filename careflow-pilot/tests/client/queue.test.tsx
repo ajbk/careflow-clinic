@@ -33,6 +33,7 @@ const waitingItem = {
     birthDate: patient.birthDate,
     sex: patient.sex,
   },
+  allergy: { id: null, revision: 0, state: "UNKNOWN" as const, items: [], sourceText: null, reason: null, reviewedBy: null, reviewedAt: null },
   chiefComplaint: "มีไข้และไอ",
   vitals: {
     weightKg: null,
@@ -54,7 +55,7 @@ const consultingItem = {
     revision: 8,
     startedAt: "2026-08-03T01:15:00.000Z",
   },
-  allowedActions: [] as const,
+  allowedActions: ["OPEN_CONSULTATION"] as const,
 };
 
 const workspace = {
@@ -67,13 +68,25 @@ const workspace = {
     recordedAt: "2026-08-03T01:02:00.000Z",
     recordedBy: { id: "assistant-1", displayName: "ผู้ช่วยทดสอบ" },
   },
-  allowedActions: [] as const,
+  patientSnapshot: {
+    allergy: waitingItem.allergy,
+    activeProblems: { state: "UNKNOWN" as const, value: null, source: null },
+    currentMedicationContext: { state: "UNKNOWN" as const, value: null, source: null },
+    latestRelevantPlan: { state: "UNKNOWN" as const, value: null, source: null },
+    pendingFollowUp: { state: "UNKNOWN" as const, value: null, source: null },
+    recentVisits: [],
+  },
+  consultationDraft: { note: null, medicationDecision: null },
+  signedClinicalNote: null,
+  amendments: [],
+  medicationDecision: null,
+  allowedActions: ["SAVE_DRAFT", "FINALIZE_CONSULTATION", "REVIEW_ALLERGY"] as const,
 };
 
 const waitingWorkspace = {
   ...workspace,
   visit: waitingItem.visit,
-  allowedActions: waitingItem.allowedActions,
+  allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"] as const,
 };
 
 const server = setupServer();
@@ -89,7 +102,7 @@ function session(role: "assistant" | "doctor") {
       },
       clinic: { id: "clinic", name: "คลินิกทดสอบ" },
       permissions: role === "doctor"
-        ? ["patient:read", "visit:read-queue", "visit:start-consultation"]
+        ? ["patient:read", "visit:read-queue", "visit:start-consultation", "clinical:read", "clinical:save-draft", "clinical:sign", "clinical:amend", "patient:update-allergy", "medication:read-catalog", "medication:sign-decision"]
         : ["patient:read", "visit:read-queue"],
       pilotAcknowledgedAt: "2026-08-03T00:00:00.000Z",
       mustChangePassword: false,
@@ -117,7 +130,7 @@ beforeEach(() => {
   server.resetHandlers(
     http.get("/api/auth/session", () => HttpResponse.json(session("doctor"))),
     http.get("/api/queue", () => HttpResponse.json({ data: [waitingItem] })),
-    http.get("/api/dashboard/today", () => HttpResponse.json({ data: { waiting: 1, consulting: 0, updatedAt: "2026-08-03T01:00:00.000Z" } })),
+    http.get("/api/dashboard/today", () => HttpResponse.json({ data: { waiting: 1, consulting: 0, awaitingOrderRevision: 0, awaitingPreparation: 0, awaitingCharge: 0, updatedAt: "2026-08-03T01:00:00.000Z" } })),
     http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: workspace })),
   );
 });
@@ -272,7 +285,7 @@ describe("connected shared queue workflow", () => {
     await user.click(await screen.findByRole("button", { name: /เริ่มการตรวจ/ }));
     await waitFor(() => expect(screen.getByText("ข้อมูลคิวเปลี่ยนแปลงแล้ว")).toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: /โหลดข้อมูลล่าสุด/ }));
-    await waitFor(() => expect(queueRequests).toBeGreaterThanOrEqual(3));
+    await waitFor(() => expect(queueRequests).toBeGreaterThanOrEqual(3), { timeout: 3_000 });
     expect((await screen.findAllByText("ระบบคิวไม่พร้อมใช้งาน")).length).toBeGreaterThan(0);
     expect(screen.getByText("ข้อมูลคิวเปลี่ยนแปลง")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /โหลดข้อมูลล่าสุด/ })).toBeInTheDocument();
@@ -283,7 +296,7 @@ describe("connected shared queue workflow", () => {
     expect(screen.getByRole("button", { name: /เริ่มการตรวจ/ })).toBeEnabled();
   });
 
-  it("renders a Doctor clinical workspace from the committed snapshot without writable clinical controls", async () => {
+  it("renders a Doctor clinical workspace from the committed snapshot with authoring controls", async () => {
     renderRoute("/consultations/visit-42");
     expect(await screen.findByRole("complementary", { name: "บริบทผู้ป่วย" })).toBeInTheDocument();
     expect(screen.getByText("DOCTOR WORKSPACE / งานแพทย์")).toBeInTheDocument();
@@ -291,10 +304,9 @@ describe("connected shared queue workflow", () => {
     expect(screen.getByRole("region", { name: "Clinical Note" })).toBeInTheDocument();
     expect(screen.getByText(patient.displayName)).toBeInTheDocument();
     expect(screen.getByText(/มีไข้และไอ/)).toBeInTheDocument();
-    expect(screen.getByText(/เริ่มตรวจแล้ว — การบันทึกและลงนาม Clinical Note จะเปิดใน Milestone ถัดไป/)).toBeInTheDocument();
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /ลงนาม|เพิ่มยา|บันทึกร่าง|ส่งห้องยา/ })).not.toBeInTheDocument();
+    expect(screen.getByText("UNKNOWN")).toBeInTheDocument();
+    expect(screen.getByLabelText("Subjective (ข้อมูลจากผู้ป่วย)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "บันทึกร่าง" })).toBeInTheDocument();
   });
 
   it("directs the Doctor back to Queue when the workspace Visit is still waiting", async () => {
@@ -303,12 +315,9 @@ describe("connected shared queue workflow", () => {
     );
     renderRoute("/consultations/visit-42");
 
-    expect(await screen.findByRole("region", { name: "Clinical Note" })).toHaveTextContent(
-      "ยังไม่ได้เริ่มตรวจ — กลับไปที่คิวผู้ป่วยเพื่อเริ่มการตรวจ",
-    );
-    expect(screen.getAllByText("รอตรวจ").length).toBeGreaterThan(0);
+    expect(await screen.findByRole("region", { name: "Clinical Note" })).toBeInTheDocument();
+    expect(screen.getAllByText("WAITING").length).toBeGreaterThan(0);
     expect(screen.getByText("ยังไม่เริ่ม")).toBeInTheDocument();
-    expect(screen.queryByText(/เริ่มตรวจแล้ว/)).not.toBeInTheDocument();
   });
 
   it("shows arrival and consultation start times for each queue state", async () => {

@@ -117,6 +117,19 @@ describe("pilot router", () => {
     expect(screen.queryByRole("navigation", { name: "เมนูหลัก" })).not.toBeInTheDocument();
     expect(screen.getByText("ASSISTANT WORKSPACE / งานผู้ช่วย")).toBeInTheDocument();
   });
+
+  it("denies an Assistant consultation route before requesting clinical workspace or catalog", async () => {
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input); requests.push(path);
+      if (path === "/api/auth/session") return new Response(JSON.stringify(completeSession("assistant")), { status: 200 });
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const router = createMemoryRouter(appRoutes, { initialEntries: ["/consultations/visit-42"] });
+    render(<AppProviders><RouterProvider router={router} /></AppProviders>);
+    expect(await screen.findByText("ไม่มีสิทธิ์ใช้งาน")).toBeInTheDocument();
+    expect(requests).toEqual(["/api/auth/session"]);
+  });
 });
 
 afterEach(() => {
