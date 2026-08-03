@@ -44,8 +44,7 @@ function requestHash(
     .digest("hex");
 }
 
-function parseStoredEnvelope<T>(responseJson: string): IdempotentEnvelope<T> {
-  const parsed: unknown = JSON.parse(responseJson);
+function parseStoredEnvelope<T>(parsed: unknown): IdempotentEnvelope<T> {
   if (
     typeof parsed !== "object" ||
     parsed === null ||
@@ -58,12 +57,23 @@ function parseStoredEnvelope<T>(responseJson: string): IdempotentEnvelope<T> {
   return parsed as IdempotentEnvelope<T>;
 }
 
-function parseStoredReference<T>(responseJson: string): T {
-  const parsed: unknown = JSON.parse(responseJson);
+function parseStoredReference<T>(parsed: unknown): T | null {
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    "type" in parsed &&
+    parsed.type !== "safe-replay-reference"
+  ) {
+    throw new Error("Invalid stored idempotency replay reference");
+  }
   if (
     typeof parsed !== "object" ||
     parsed === null ||
-    !("type" in parsed) ||
+    !("type" in parsed)
+  ) {
+    return null;
+  }
+  if (
     parsed.type !== "safe-replay-reference" ||
     !("reference" in parsed)
   ) {
@@ -75,6 +85,7 @@ function parseStoredReference<T>(responseJson: string): T {
 export interface SafeReplayStrategy<TResponse, TReference> {
   store(response: TResponse): TReference;
   rebuild(tx: AuditedTransaction, reference: TReference): TResponse;
+  isLegacyResponse(data: unknown): data is TResponse;
 }
 
 export function executeIdempotent<T, TReference = never>(input: {
@@ -115,9 +126,32 @@ export function executeIdempotent<T, TReference = never>(input: {
           });
         }
 
-        const data = input.safeReplay
-          ? input.safeReplay.rebuild(tx, parseStoredReference<TReference>(existing.responseJson))
-          : parseStoredEnvelope<T>(existing.responseJson).data;
+        const parsed = JSON.parse(existing.responseJson) as unknown;
+        let data: T;
+        if (input.safeReplay) {
+          const storedReference = parseStoredReference<TReference>(parsed);
+          const reference = storedReference ?? (() => {
+            const legacy = parseStoredEnvelope<unknown>(parsed);
+            if (!input.safeReplay.isLegacyResponse(legacy.data)) {
+              throw new Error("Invalid legacy idempotency response for safe replay");
+            }
+            const rebuiltReference = input.safeReplay.store(legacy.data);
+            const changed = tx.update(idempotencyRecords)
+              .set({
+                responseJson: stableStringify({ type: "safe-replay-reference", reference: rebuiltReference }),
+              })
+              .where(and(
+                eq(idempotencyRecords.actorId, existing.actorId),
+                eq(idempotencyRecords.key, existing.key),
+              ))
+              .run();
+            if (changed.changes !== 1) throw new Error("Unable to redact legacy idempotency response");
+            return rebuiltReference;
+          })();
+          data = input.safeReplay.rebuild(tx, reference);
+        } else {
+          data = parseStoredEnvelope<T>(parsed).data;
+        }
         return {
           statusCode: existing.responseStatus,
           body: { data, replayed: true },

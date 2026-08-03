@@ -217,6 +217,30 @@ describe("consultation draft workflow", () => {
       .toHaveLength(1);
   });
 
+  it("redacts a matching legacy draft envelope before rebuilding its replay", async () => {
+    const test = await fixture();
+    const visitId = await createConsultingVisit(test);
+    const key = "clinical-legacy-replay-001";
+    const first = await saveDraft(test, visitId, draftBody(), key);
+    const legacyResponseJson = JSON.stringify({ data: first.json().data, replayed: false });
+    test.database.sqlite.prepare(
+      "UPDATE idempotency_records SET response_json=? WHERE actor_id=? AND key=?",
+    ).run(legacyResponseJson, test.doctor.actor.id, key);
+
+    const replay = await saveDraft(test, visitId, draftBody(), key);
+    const stored = test.database.db.select().from(idempotencyRecords).all()
+      .find((record) => record.actorId === test.doctor.actor.id && record.key === key);
+
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toEqual({ data: first.json().data, replayed: true });
+    expect(stored?.responseJson).not.toContain("อาการทดสอบ");
+    expect(stored?.responseJson).not.toContain("การวินิจฉัยทดสอบ");
+    expect(stored?.responseJson).not.toContain("คำแนะนำทดสอบ");
+    expect(JSON.parse(stored?.responseJson ?? "{}")).toMatchObject({ type: "safe-replay-reference" });
+    expect(test.database.db.select().from(auditEvents).all().filter((event) => event.action === "note.draft-saved"))
+      .toHaveLength(1);
+  });
+
   it("requires a Doctor in CONSULTING state and a strict command body", async () => {
     const test = await fixture();
     const visitId = await createConsultingVisit(test);

@@ -177,6 +177,45 @@ describe("idempotent audited transactions", () => {
     });
   });
 
+  it("fails closed instead of redacting an unrelated legacy envelope for safe replay", () => {
+    const { database, actor } = databaseWithActor();
+    const body = commandBody({ value: 1 });
+    const work = vi.fn(() => ({ statusCode: 200, data: { id: "safe-entity" } }));
+    const safeReplay = {
+      store: (data: { id: string }) => ({ id: data.id }),
+      rebuild: (_tx: Parameters<typeof appendAuditEvent>[0]["tx"], reference: { id: string }) => ({ id: reference.id }),
+      isLegacyResponse: (data: unknown): data is { id: string } => (
+        typeof data === "object" && data !== null && "id" in data && typeof data.id === "string"
+      ),
+    };
+    executeIdempotent({
+      db: database.db,
+      actor,
+      key: "safe-replay-legacy-001",
+      operation: "test.safe-replay.v1",
+      requestBody: body,
+      work,
+      safeReplay,
+    });
+    database.db.update(idempotencyRecords)
+      .set({ responseJson: JSON.stringify({ data: { unrelated: true }, replayed: false }) })
+      .where(eq(idempotencyRecords.key, "safe-replay-legacy-001"))
+      .run();
+
+    expect(() => executeIdempotent({
+      db: database.db,
+      actor,
+      key: "safe-replay-legacy-001",
+      operation: "test.safe-replay.v1",
+      requestBody: body,
+      work,
+      safeReplay,
+    })).toThrow("Invalid legacy idempotency response for safe replay");
+    expect(work).toHaveBeenCalledTimes(1);
+    expect(database.db.select().from(idempotencyRecords).get()?.responseJson)
+      .toContain("unrelated");
+  });
+
   it.each([
     {
       label: "changed body",

@@ -234,6 +234,36 @@ describe("versioned allergy review", () => {
     expect(stored?.responseJson).not.toContain(input.items[0].note ?? "");
   });
 
+  it("redacts a matching legacy allergy envelope before rebuilding its replay", async () => {
+    const test = await fixture();
+    const { patientId, visitId } = await createPatientAndVisit(test);
+    const key = "allergy-legacy-replay-001";
+    const input = {
+      patientId,
+      visitId,
+      state: "PRESENT" as const,
+      items: [{ substance: "ยาเก่าสำหรับรีเพลย์", reaction: "ผื่นเก่าสำหรับรีเพลย์", severity: "MILD" as const, note: "บันทึกเก่าสำหรับรีเพลย์" }],
+      sourceText: "ข้อมูลเก่าสำหรับรีเพลย์",
+      reason: "เหตุผลเก่าสำหรับรีเพลย์",
+      key,
+    };
+    const first = await review(test, input);
+    test.database.sqlite.prepare(
+      "UPDATE idempotency_records SET response_json=? WHERE actor_id=? AND key=?",
+    ).run(JSON.stringify({ data: first.json().data, replayed: false }), test.assistant.actor.id, key);
+
+    const replay = await review(test, input);
+    const stored = test.database.db.select().from(idempotencyRecords).all()
+      .find((record) => record.actorId === test.assistant.actor.id && record.key === key);
+
+    expect(replay.statusCode).toBe(201);
+    expect(replay.json()).toEqual({ data: first.json().data, replayed: true });
+    expect(stored?.responseJson).not.toContain(input.sourceText);
+    expect(stored?.responseJson).not.toContain(input.reason);
+    expect(stored?.responseJson).not.toContain(input.items[0].substance);
+    expect(JSON.parse(stored?.responseJson ?? "{}")).toMatchObject({ type: "safe-replay-reference" });
+  });
+
   it("rejects stale patient and visit revisions with no appended revision", async () => {
     const test = await fixture();
     const { patientId, visitId } = await createPatientAndVisit(test);
