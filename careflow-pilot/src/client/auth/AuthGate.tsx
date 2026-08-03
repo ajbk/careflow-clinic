@@ -10,7 +10,17 @@ function loginTarget(pathname: string, search: string): string {
   return `/login?returnTo=${encodeURIComponent(returnTo)}`;
 }
 
-export function SessionOnlyRoute({ children }: { children: ReactNode }): ReactElement {
+function returnTarget(search: string): string {
+  return sanitizeReturnTo(new URLSearchParams(search).get("returnTo"));
+}
+
+export function SessionOnlyRoute({
+  children,
+  requiredState,
+}: {
+  children: ReactNode;
+  requiredState?: "pilot-rules" | "change-password";
+}): ReactElement {
   const location = useLocation();
   const auth = useAuth();
   if (auth.isLoading) return <ScreenState kind="loading" />;
@@ -21,6 +31,22 @@ export function SessionOnlyRoute({ children }: { children: ReactNode }): ReactEl
     return <ScreenState kind={auth.error.code === "SERVER_UNAVAILABLE" ? "unavailable" : "error"} />;
   }
   if (!auth.session) return <Navigate replace to={loginTarget(location.pathname, location.search)} />;
+  if (requiredState === "pilot-rules") {
+    if (auth.session.pilotAcknowledgedAt) {
+      const target = returnTarget(location.search);
+      if (auth.session.mustChangePassword) {
+        return <Navigate replace to={`/change-password?returnTo=${encodeURIComponent(target)}`} />;
+      }
+      return <Navigate replace to={target} />;
+    }
+  }
+  if (requiredState === "change-password") {
+    const target = returnTarget(location.search);
+    if (!auth.session.pilotAcknowledgedAt) {
+      return <Navigate replace to={`/pilot-rules?returnTo=${encodeURIComponent(target)}`} />;
+    }
+    if (!auth.session.mustChangePassword) return <Navigate replace to={target} />;
+  }
   return <>{children}</>;
 }
 

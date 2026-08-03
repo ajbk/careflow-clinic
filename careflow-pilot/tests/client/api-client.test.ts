@@ -27,6 +27,16 @@ describe("ApiClient", () => {
     );
   });
 
+  it("rejects backslash authority paths before credentialed fetch", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient();
+
+    await expect(client.get("/\\\\evil", responseSchema)).rejects.toThrow(/same-origin/);
+    await expect(client.get("/\\evil", responseSchema)).rejects.toThrow(/same-origin/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("rejects malformed success bodies without returning data", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ nope: true }), { status: 200 })));
 

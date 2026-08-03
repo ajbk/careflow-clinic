@@ -17,9 +17,12 @@ const activityEvents = ["keydown", "pointerdown", "touchstart"] as const;
 export function createBrowserActivityAdapter(target: Document = document): ActivityAdapter {
   return {
     subscribe(listener) {
-      for (const eventName of activityEvents) target.addEventListener(eventName, listener, { passive: true });
+      const trustedListener = (event: Event): void => {
+        if (event.isTrusted) listener();
+      };
+      for (const eventName of activityEvents) target.addEventListener(eventName, trustedListener, { passive: true });
       return () => {
-        for (const eventName of activityEvents) target.removeEventListener(eventName, listener);
+        for (const eventName of activityEvents) target.removeEventListener(eventName, trustedListener);
       };
     },
   };
@@ -27,6 +30,10 @@ export function createBrowserActivityAdapter(target: Document = document): Activ
 
 const defaultActivityAdapter: ActivityAdapter | null =
   typeof document === "undefined" ? null : createBrowserActivityAdapter(document);
+
+function dispatchAuthRequired(): void {
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("careflow-auth-required"));
+}
 
 export function sanitizeReturnTo(value: string | null | undefined): string {
   if (!value) return "/";
@@ -69,6 +76,7 @@ export function AuthProvider({
   const location = useLocation();
   const navigate = useNavigate();
   const lastActivityAt = useRef<number>(Number.NEGATIVE_INFINITY);
+  const expiryTimer = useRef<number | undefined>(undefined);
 
   const sessionQuery = useQuery({
     queryKey: queryKeys.session,
@@ -77,7 +85,10 @@ export function AuthProvider({
       try {
         return (await apiClient.get("/api/auth/session", sessionResponseSchema, signal)).data;
       } catch (error) {
-        if (isApiError(error) && error.status === 401) return null;
+        if (isApiError(error) && error.status === 401) {
+          dispatchAuthRequired();
+          return null;
+        }
         throw error;
       }
     },
@@ -107,14 +118,19 @@ export function AuthProvider({
   }, [goToLogin]);
 
   useEffect(() => {
+    if (expiryTimer.current !== undefined) window.clearTimeout(expiryTimer.current);
+    expiryTimer.current = undefined;
     if (!session) return undefined;
     const expiresIn = Date.parse(session.idleExpiresAt) - Date.now();
     if (!Number.isFinite(expiresIn) || expiresIn <= 0) {
       goToLogin();
       return undefined;
     }
-    const timer = window.setTimeout(goToLogin, expiresIn);
-    return () => window.clearTimeout(timer);
+    expiryTimer.current = window.setTimeout(goToLogin, expiresIn);
+    return () => {
+      if (expiryTimer.current !== undefined) window.clearTimeout(expiryTimer.current);
+      expiryTimer.current = undefined;
+    };
   }, [goToLogin, session]);
 
   const recordActivity = useCallback(() => {
@@ -122,10 +138,17 @@ export function AuthProvider({
     const now = Date.now();
     if (now - lastActivityAt.current < 60_000) return;
     lastActivityAt.current = now;
-    void apiClient.void("POST", "/api/auth/activity").catch((error: unknown) => {
-      if (isApiError(error) && error.status === 401) goToLogin();
-    });
-  }, [apiClient, goToLogin, session]);
+    if (expiryTimer.current !== undefined) {
+      window.clearTimeout(expiryTimer.current);
+      expiryTimer.current = undefined;
+    }
+    void apiClient
+      .void("POST", "/api/auth/activity")
+      .then(() => queryClient.invalidateQueries({ queryKey: queryKeys.session }))
+      .catch((error: unknown) => {
+        if (isApiError(error) && error.status === 401) goToLogin();
+      });
+  }, [apiClient, goToLogin, queryClient, session]);
 
   useEffect(() => {
     if (!activityAdapter || !session) return undefined;
@@ -135,28 +158,22 @@ export function AuthProvider({
   const login = useCallback(
     async (input: { username: string; password: string }): Promise<SessionDto> => {
       const result = await apiClient.json("POST", "/api/auth/login", input, sessionResponseSchema);
+      clearProtectedQueries();
       queryClient.setQueryData(queryKeys.session, result.data);
       return result.data;
     },
-    [apiClient, queryClient],
+    [apiClient, clearProtectedQueries, queryClient],
   );
 
   const acknowledgePilot = useCallback(async () => {
     await apiClient.void("POST", "/api/auth/acknowledge-pilot", { accepted: true });
-    const current = queryClient.getQueryData<SessionDto>(queryKeys.session);
-    if (current) {
-      queryClient.setQueryData<SessionDto>(queryKeys.session, {
-        ...current,
-        pilotAcknowledgedAt: new Date().toISOString(),
-      });
-    }
+    await queryClient.invalidateQueries({ queryKey: queryKeys.session });
   }, [apiClient, queryClient]);
 
   const changePassword = useCallback(
     async (input: { currentPassword: string; newPassword: string }) => {
       await apiClient.void("POST", "/api/auth/change-password", input);
-      const current = queryClient.getQueryData<SessionDto>(queryKeys.session);
-      if (current) queryClient.setQueryData<SessionDto>(queryKeys.session, { ...current, mustChangePassword: false });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.session });
     },
     [apiClient, queryClient],
   );

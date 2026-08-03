@@ -11,7 +11,13 @@ export const queryKeys = {
 
 function shouldRetry(failureCount: number, error: unknown): boolean {
   if (failureCount >= 1) return false;
-  if (!isApiError(error)) return true;
+  if (
+    (error instanceof DOMException && error.name === "AbortError") ||
+    (typeof error === "object" && error !== null && "name" in error && error.name === "AbortError")
+  ) {
+    return false;
+  }
+  if (!isApiError(error)) return error instanceof TypeError;
   return error.status === 0 || error.status >= 500;
 }
 

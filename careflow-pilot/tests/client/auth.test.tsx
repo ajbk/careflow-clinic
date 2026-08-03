@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createBrowserActivityAdapter } from "../../src/client/auth/AuthProvider";
 import { appRoutes } from "../../src/client/app/router";
 
 function renderApp(path: string, fetchImpl: typeof fetch) {
@@ -13,7 +14,7 @@ function renderApp(path: string, fetchImpl: typeof fetch) {
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return router;
+  return { router, client };
 }
 
 const session = {
@@ -27,7 +28,10 @@ const session = {
   },
 };
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("auth boundary", () => {
   it("redirects an anonymous protected route to login with a safe return target", async () => {
@@ -36,7 +40,7 @@ describe("auth boundary", () => {
         status: 401,
       }),
     );
-    const router = renderApp("/queue", fetchImpl);
+    const { router } = renderApp("/queue", fetchImpl);
     await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
     expect(router.state.location.search).toBe("?returnTo=%2Fqueue");
     await waitFor(() => expect(screen.getByRole("heading", { name: /เข้าสู่ระบบ/ })).toBeInTheDocument());
@@ -60,12 +64,74 @@ describe("auth boundary", () => {
           { status: 200 },
         ),
       )
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
-    const router = renderApp("/pilot-rules?returnTo=%2Fqueue", fetchImpl);
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(session), { status: 200 }));
+    const { router } = renderApp("/pilot-rules?returnTo=%2Fqueue", fetchImpl);
     await waitFor(() => expect(screen.getByRole("heading", { name: /กติกา/ })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("checkbox"));
     fireEvent.click(screen.getByRole("button", { name: /ยืนยัน/ }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/queue"));
-    expect(fetchImpl).toHaveBeenLastCalledWith("/api/auth/acknowledge-pilot", expect.objectContaining({ credentials: "include" }));
+    expect(fetchImpl.mock.calls.some(([path]) => path === "/api/auth/acknowledge-pilot")).toBe(true);
+  });
+
+  it("keeps Pilot Rules as the only prerequisite screen for unacknowledged sessions", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...session,
+      data: { ...session.data, pilotAcknowledgedAt: null, mustChangePassword: true },
+    }), { status: 200 }));
+    renderApp("/change-password?returnTo=%2Fqueue", fetchImpl);
+    await waitFor(() => expect(screen.getByRole("heading", { name: /กติกา/ })).toBeInTheDocument());
+  });
+
+  it("redirects direct Pilot Rules visits for an already acknowledged account", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify(session), { status: 200 }));
+    const { router } = renderApp("/pilot-rules?returnTo=%2Fqueue", fetchImpl);
+    await waitFor(() => expect(router.state.location.pathname).toBe("/queue"));
+  });
+
+  it("forces an acknowledged temporary-password account to Change Password", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...session,
+      data: { ...session.data, mustChangePassword: true },
+    }), { status: 200 }));
+    const { router } = renderApp("/queue", fetchImpl);
+    await waitFor(() => expect(router.state.location.pathname).toBe("/change-password"));
+    expect(screen.getByRole("heading", { name: /เปลี่ยนรหัสผ่าน/ })).toBeInTheDocument();
+  });
+
+  it("shows permission denied for an Assistant opening the Doctor consultation route", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...session,
+      data: {
+        ...session.data,
+        user: { ...session.data.user, role: "assistant" },
+        permissions: ["patient:read", "visit:read-queue", "visit:submit-intake"],
+      },
+    }), { status: 200 }));
+    renderApp("/consultations/visit-1", fetchImpl);
+    await waitFor(() => expect(screen.getByRole("heading", { name: /ไม่มีสิทธิ์/ })).toBeInTheDocument());
+  });
+
+  it("clears protected cache when the session query itself returns 401", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(session), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: "AUTH_REQUIRED", messageTh: "กรุณาเข้าสู่ระบบ", requestId: "expired" } }), { status: 401 }));
+    const { router, client } = renderApp("/queue", fetchImpl);
+    await waitFor(() => expect(screen.getByText("พญ. ทดสอบ")).toBeInTheDocument());
+    client.setQueryData(["queue"], { data: [{ id: "protected" }] });
+    await client.invalidateQueries({ queryKey: ["session"] });
+    await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
+    expect(client.getQueryData(["queue"])).toBeUndefined();
+  });
+
+  it("ignores untrusted browser activity events", () => {
+    const listener = vi.fn();
+    const adapter = createBrowserActivityAdapter(document);
+    const unsubscribe = adapter.subscribe(listener);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "a" }));
+    document.dispatchEvent(new PointerEvent("pointerdown"));
+    expect(listener).not.toHaveBeenCalled();
+    unsubscribe();
   });
 });

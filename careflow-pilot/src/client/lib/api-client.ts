@@ -9,7 +9,12 @@ export interface ApiClientOptions {
 }
 
 function assertSameOriginPath(path: string): void {
-  if (!path.startsWith("/") || path.startsWith("//") || /^[a-z][a-z\d+.-]*:/i.test(path)) {
+  if (
+    !path.startsWith("/") ||
+    path.startsWith("//") ||
+    path.includes("\\") ||
+    /^[a-z][a-z\d+.-]*:/i.test(path)
+  ) {
     throw new TypeError("API paths must be same-origin relative paths");
   }
 }
