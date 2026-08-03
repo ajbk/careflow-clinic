@@ -2,7 +2,7 @@
 
 **Status:** Approved in conversation on 3 August 2026 when the user confirmed that the Local Pilot must follow the supplied Stitch reference and said “เริ่มเลยครับ”.
 
-**Scope:** Correct the current Foundation UI so Assistant and Doctor have visibly different starting points, navigation, copy, actions, and clinical access while preserving the existing React components, CSS design tokens, API, SQLite data, and workflow state.
+**Scope:** Correct the current Foundation UI so Assistant and Doctor have visibly different starting points, navigation, copy, actions, and clinical access while preserving the existing React components, CSS design tokens, API shapes, SQLite data, and workflow state. Tighten the existing Consultation workspace endpoint so the same role boundary is enforced by the server.
 
 ## 1. Problem
 
@@ -45,8 +45,8 @@ Use one authenticated application frame and one server session, but derive landi
 
 - Visiting `/` redirects to `/intake` after authentication and Pilot prerequisites.
 - The workspace identity reads “ASSISTANT WORKSPACE / งานผู้ช่วย”.
-- Primary navigation order is Intake, Queue, then Overview.
-- Intake is the visually dominant starting job and retains the existing server-backed Patient search/generation and Intake form.
+- Outside the focused Intake task, primary navigation order is Intake, Queue, then Overview.
+- Intake follows the Stitch transactional composition: it suppresses global navigation, uses a narrow centered form canvas, and presents “ส่งพบแพทย์” as its single terminal action. It retains the existing server-backed Patient search/generation and Intake form.
 - Queue copy describes operational handoff to the Doctor and never offers “เริ่มการตรวจ” or “เปิดห้องตรวจ”.
 - A direct Consultation URL is denied before the clinical workspace fetch or UI renders.
 
@@ -57,7 +57,7 @@ Use one authenticated application frame and one server session, but derive landi
 - Primary navigation contains Queue and Overview. Intake remains directly accessible because the Pilot PRD permits a Doctor to perform Assistant operations when working alone, but it is not presented as a primary Doctor navigation job.
 - Queue copy describes the Doctor's examination list. Waiting rows expose “เริ่มการตรวจ” only when both the session permission and server `allowedActions` permit it.
 - Consulting rows expose “เปิดห้องตรวจ” only to Doctor.
-- Consultation uses the supplied Doctor composition: Patient context, committed Intake/vitals, visit evidence, and a clearly clinical right-hand workspace. Clinical authoring remains visibly unavailable/read-only until the Clinical Record API milestone; the UI must not pretend a draft or signature was persisted.
+- Consultation switches from the operational shell to the supplied Doctor clinical composition: patient context/sidebar, committed Intake/vitals, visit evidence, clinical-note area, and a clinical action rail. Clinical authoring remains visibly unavailable/read-only until the Clinical Record API milestone; the UI must not pretend a draft or signature was persisted.
 
 ### Shared Overview
 
@@ -71,6 +71,7 @@ Use one authenticated application frame and one server session, but derive landi
 - Add a role landing component at the index route. It reads the authenticated server session and performs a replace navigation to the role home.
 - Preserve safe explicit `returnTo` behavior. A login opened with `returnTo=/` reaches the role home through the index redirect; a safe explicit `/queue` or `/intake` target remains respected when authorized.
 - Change `/consultations/:visitId` to require `visit:start-consultation` at the route gate. Server authorization remains authoritative.
+- Change `GET /api/visits/:visitId/workspace` to require the same Doctor-only permission. Assistant access returns `403` before the Visit workspace service runs.
 - Do not introduce a client-side role switch, localStorage role, duplicate session state, or role query parameter.
 - Unknown or unauthorized clinical data must not be briefly rendered during redirect.
 
@@ -78,11 +79,11 @@ Use one authenticated application frame and one server session, but derive landi
 
 - `role-workspace.ts` is the single pure mapping from authenticated role to home path, workspace identity, and navigation items.
 - `RoleLandingScreen.tsx` performs only the index redirect.
-- `AppShell.tsx` renders the mapping and keeps the existing responsive sidebar/drawer, branding, account card, and Pilot banner.
+- `AppShell.tsx` renders the mapping and keeps the existing responsive sidebar/drawer, branding, account card, and Pilot banner for operational pages. It applies a focused mode for Intake and a clinical mode for Consultation so those Stitch task compositions do not inherit the generic operational navigation.
 - `QueueScreen.tsx` derives role-focused header/actions and hides clinical links from Assistant while keeping the shared Queue data model.
 - `OverviewScreen.tsx` derives only its role-aware primary action; metrics remain shared.
 - `ConsultationScreen.tsx` keeps committed server data and adopts the Doctor-focused Stitch composition without enabling unsupported writes.
-- Existing visual tokens and general component primitives remain unchanged. Add only role-workspace and consultation composition rules to the existing stylesheets.
+- Existing visual tokens and general component primitives remain unchanged. Add only focused-workspace and consultation composition rules to the existing stylesheets.
 
 ## 7. States and Error Handling
 
@@ -108,7 +109,7 @@ Behavior-first client tests must prove:
 3. Doctor navigation exposes Queue and Overview as primary jobs and does not present Intake as primary navigation.
 4. Assistant never sees “เริ่มการตรวจ” or “เปิดห้องตรวจ”, including a `CONSULTING` Queue row.
 5. Doctor sees those actions only when server state permits them.
-6. Assistant direct Consultation access is denied without requesting the workspace endpoint.
+6. Assistant direct Consultation access is denied in the client without requesting the workspace endpoint, and a direct API call returns `403`.
 7. Overview primary action is Intake for Assistant and Queue for Doctor.
 8. Existing Intake submission, shared Queue, RBAC API, responsive, build, and two-browser workflow tests remain green.
 
@@ -117,7 +118,7 @@ Each changed behavior follows a red-green TDD cycle. The final gate is client te
 ## 10. Explicitly Out of Scope
 
 - Writable SOAP, diagnosis, Medication Order, signatures, dispensing, inventory, finance, or OPD records.
-- New backend tables or API endpoints.
+- New backend tables, response shapes, or API endpoints. Tightening authorization on the existing workspace endpoint is in scope.
 - Two independent front-end applications.
 - Replacing the existing design system, global CSS, authentication, SQLite, or Fastify foundation.
 - Claiming readiness for real patient data.
