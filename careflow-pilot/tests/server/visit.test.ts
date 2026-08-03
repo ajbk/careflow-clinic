@@ -448,7 +448,7 @@ describe("shared Intake, Queue, and consultation workflow", () => {
   it("orders Queue by state first and arrival time second", async () => {
     const test = await fixture();
     const created: string[] = [];
-    for (const suffix of ["old", "new", "consulting"]) {
+    for (const suffix of ["old", "new", "consulting", "order-revision", "preparation", "charge"]) {
       const patient = await createPatient(test.app, test.assistantCookie, `queue-patient-${suffix}`);
       const visit = await submitIntake(
         test.app,
@@ -467,6 +467,11 @@ describe("shared Intake, Queue, and consultation workflow", () => {
     test.database.sqlite
       .prepare("UPDATE visits SET status = 'CONSULTING', started_at = ?, arrived_at = ? WHERE id = ?")
       .run("2026-08-03T00:01:00.000Z", "2026-08-03T00:01:00.000Z", created[2]);
+    for (const [index, status] of ["AWAITING_ORDER_REVISION", "AWAITING_PREPARATION", "AWAITING_CHARGE"].entries()) {
+      test.database.sqlite
+        .prepare("UPDATE visits SET status = ?, arrived_at = ? WHERE id = ?")
+        .run(status, `2026-08-03T00:0${index}:30.000Z`, created[index + 3]);
+    }
 
     const queue = await test.app.inject({
       method: "GET",
@@ -478,6 +483,9 @@ describe("shared Intake, Queue, and consultation workflow", () => {
       created[1],
       created[0],
       created[2],
+      created[3],
+      created[4],
+      created[5],
     ]);
   });
 

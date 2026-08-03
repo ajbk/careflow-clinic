@@ -108,6 +108,28 @@ describe("real-file restart boundary", () => {
     expect(started.statusCode).toBe(200);
     expect(started.json().data.visit).toMatchObject({ id: visitId, status: "CONSULTING", revision: 2 });
 
+    const allergyReview = await firstApp.inject({
+      method: "POST",
+      url: `/api/patients/${patient.id}/allergy-revisions`,
+      headers: { cookie: doctorCookie, "idempotency-key": "restart-allergy-001" },
+      payload: {
+        expectedRevisions: { patient: 1, visit: 2 },
+        payload: {
+          visitId,
+          state: "PRESENT",
+          items: [{ substance: "เพนิซิลลิน", reaction: "ผื่น", severity: "MODERATE", note: "ยืนยันกับผู้ป่วย" }],
+          sourceText: "ผู้ป่วยยืนยันประวัติแพ้เพนิซิลลิน",
+          reason: "บันทึกก่อนการรักษา",
+        },
+      },
+    });
+    expect(allergyReview.statusCode).toBe(201);
+    expect(allergyReview.json().data).toMatchObject({
+      patient: { id: patient.id, revision: 2 },
+      allergy: { revision: 1, state: "PRESENT", items: [{ substance: "เพนิซิลลิน" }] },
+      visit: { id: visitId, revision: 2 },
+    });
+
     const draft = await firstApp.inject({
       method: "POST", url: `/api/visits/${visitId}/consultation-draft`,
       headers: { cookie: doctorCookie, "idempotency-key": "restart-draft-001" },
@@ -123,16 +145,22 @@ describe("real-file restart boundary", () => {
     const finalized = await firstApp.inject({
       method: "POST", url: `/api/visits/${visitId}/finalize-consultation`,
       headers: { cookie: doctorCookie, "idempotency-key": "restart-finalize-001" },
-      payload: { expectedRevisions: { visit: 2, patient: 1, noteDraft: 1, medicationDraft: 1 }, payload: {} },
+      payload: { expectedRevisions: { visit: 2, patient: 2, noteDraft: 1, medicationDraft: 1 }, payload: {} },
     });
     expect(finalized.statusCode).toBe(200);
     const finalizedData = finalized.json().data;
-    const amendment = await firstApp.inject({
+    const firstAmendment = await firstApp.inject({
       method: "POST", url: `/api/clinical-notes/${finalizedData.clinicalNote.id}/amendments`,
       headers: { cookie: doctorCookie, "idempotency-key": "restart-amendment-001" },
       payload: { expectedRevisions: { amendment: 0 }, payload: { content: "ติดตามอาการ", reason: "เพิ่มคำแนะนำ" } },
     });
-    expect(amendment.statusCode).toBe(201);
+    expect(firstAmendment.statusCode).toBe(201);
+    const secondAmendment = await firstApp.inject({
+      method: "POST", url: `/api/clinical-notes/${finalizedData.clinicalNote.id}/amendments`,
+      headers: { cookie: doctorCookie, "idempotency-key": "restart-amendment-002" },
+      payload: { expectedRevisions: { amendment: 1 }, payload: { content: "ทบทวนสัญญาณอันตราย", reason: "เพิ่มข้อควรกลับมาพบแพทย์" } },
+    });
+    expect(secondAmendment.statusCode).toBe(201);
 
     const beforeAuditIds = firstDatabase.sqlite
       .prepare("SELECT id FROM audit_events ORDER BY id")
@@ -152,11 +180,15 @@ describe("real-file restart boundary", () => {
     const beforeEvidence = {
       note: finalizedData.clinicalNote,
       decision: finalizedData.medicationDecision,
-      amendment: amendment.json().data,
+      allergy: workspaceBefore.json().data.patientSnapshot.allergy,
+      amendments: workspaceBefore.json().data.amendments,
       patientRevision: workspaceBefore.json().data.patient.revision,
       visitRevision: workspaceBefore.json().data.visit.revision,
-      allergyRevision: workspaceBefore.json().data.patientSnapshot.allergy.revision,
     };
+    expect(beforeEvidence.amendments).toEqual([
+      firstAmendment.json().data,
+      secondAmendment.json().data,
+    ]);
     await firstApp.close();
     firstDatabase.close();
 
@@ -187,16 +219,16 @@ describe("real-file restart boundary", () => {
     expect(workspaceAfter.json().data).toMatchObject({
       signedClinicalNote: { id: beforeEvidence.note.id, version: 1, contentHash: beforeEvidence.note.contentHash },
       medicationDecision: { id: beforeEvidence.decision.id, version: 1, contentHash: beforeEvidence.decision.contentHash },
-      amendments: [{ id: beforeEvidence.amendment.id, version: 1, contentHash: beforeEvidence.amendment.contentHash }],
       patient: { revision: beforeEvidence.patientRevision },
       visit: { revision: beforeEvidence.visitRevision },
       patientSnapshot: {
-        allergy: { revision: beforeEvidence.allergyRevision },
         activeProblems: { state: "VALUE", value: ["หวัด"], source: { type: "CLINICAL_NOTE", id: beforeEvidence.note.id, occurredAt: beforeEvidence.note.signedAt } },
         latestRelevantPlan: { state: "VALUE", value: "พักผ่อน", source: { type: "CLINICAL_NOTE", id: beforeEvidence.note.id, occurredAt: beforeEvidence.note.signedAt } },
         currentMedicationContext: { state: "VALUE", value: ["[DEMO] ยาทดสอบชนิด A"], source: { type: "MEDICATION_DECISION", id: beforeEvidence.decision.id, occurredAt: beforeEvidence.decision.signedAt } },
       },
     });
+    expect(workspaceAfter.json().data.patientSnapshot.allergy).toEqual(beforeEvidence.allergy);
+    expect(workspaceAfter.json().data.amendments).toEqual(beforeEvidence.amendments);
     const queueAfter = await secondApp.inject({
       method: "GET",
       url: "/api/queue",
