@@ -34,6 +34,42 @@ function indexNames(value: TestDatabase): string[] {
     .all() as string[];
 }
 
+function primaryKeyColumns(value: TestDatabase, table: string): string[] {
+  return (value.sqlite.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string; pk: number }>)
+    .filter((column) => column.pk > 0)
+    .sort((left, right) => left.pk - right.pk)
+    .map((column) => column.name);
+}
+
+function uniqueIndexNames(value: TestDatabase, table: string): string[] {
+  return (value.sqlite.prepare(`PRAGMA index_list('${table}')`).all() as Array<{
+    name: string;
+    origin: string;
+    unique: number;
+  }>)
+    .filter((index) => index.unique === 1 && index.origin !== "pk")
+    .map((index) => index.name)
+    .sort();
+}
+
+function foreignKeyRules(value: TestDatabase, table: string): Array<Record<string, string>> {
+  return (value.sqlite.prepare(`PRAGMA foreign_key_list('${table}')`).all() as Array<{
+    table: string;
+    from: string;
+    to: string;
+    on_update: string;
+    on_delete: string;
+  }>)
+    .map((foreignKey) => ({
+      table: foreignKey.table,
+      from: foreignKey.from,
+      to: foreignKey.to,
+      onUpdate: foreignKey.on_update,
+      onDelete: foreignKey.on_delete,
+    }))
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+}
+
 function seedClinicalReferences(value: TestDatabase): void {
   const now = "2026-08-03T00:00:00.000Z";
   value.sqlite.prepare(`INSERT INTO staff_accounts (
@@ -78,26 +114,165 @@ describe("clinical evidence schema", () => {
       "visits",
     ]);
 
-    expect(tableSql(value, "patient_allergy_revisions")).toContain("patient_allergy_revisions_revision_check");
-    expect(tableSql(value, "patient_allergy_revisions")).toContain("patient_allergy_revisions_state_check");
-    expect(tableSql(value, "patient_allergy_revisions")).toContain("FOREIGN KEY (`patient_id`) REFERENCES `patients`(`id`)");
-    expect(tableSql(value, "patient_allergy_revisions")).toContain("FOREIGN KEY (`reviewed_by`) REFERENCES `staff_accounts`(`id`)");
-    expect(tableSql(value, "patient_allergy_items")).toContain("patient_allergy_items_severity_check");
-    expect(tableSql(value, "patient_allergy_items")).toContain("FOREIGN KEY (`allergy_revision_id`) REFERENCES `patient_allergy_revisions`(`id`)");
-    expect(tableSql(value, "clinical_note_drafts")).toContain("clinical_note_drafts_revision_check");
+    const expectedChecks: Record<string, string[]> = {
+      patient_allergy_revisions: [
+        'CONSTRAINT "patient_allergy_revisions_revision_check" CHECK("patient_allergy_revisions"."revision" >= 1)',
+        'CONSTRAINT "patient_allergy_revisions_state_check" CHECK("patient_allergy_revisions"."state" IN (\'UNKNOWN\', \'NONE_KNOWN\', \'PRESENT\'))',
+        'CONSTRAINT "patient_allergy_revisions_source_text_check" CHECK(length("patient_allergy_revisions"."source_text") BETWEEN 1 AND 500)',
+        'CONSTRAINT "patient_allergy_revisions_reason_check" CHECK(length("patient_allergy_revisions"."reason") BETWEEN 1 AND 500)',
+      ],
+      patient_allergy_items: [
+        'CONSTRAINT "patient_allergy_items_position_check" CHECK("patient_allergy_items"."position" >= 0)',
+        'CONSTRAINT "patient_allergy_items_substance_check" CHECK(length("patient_allergy_items"."substance") BETWEEN 1 AND 200)',
+        'CONSTRAINT "patient_allergy_items_reaction_check" CHECK(length("patient_allergy_items"."reaction") BETWEEN 1 AND 300)',
+        'CONSTRAINT "patient_allergy_items_severity_check" CHECK("patient_allergy_items"."severity" IN (\'UNKNOWN\', \'MILD\', \'MODERATE\', \'SEVERE\'))',
+        'CONSTRAINT "patient_allergy_items_note_check" CHECK("patient_allergy_items"."note" IS NULL OR length("patient_allergy_items"."note") <= 500)',
+      ],
+      clinical_note_drafts: [
+        'CONSTRAINT "clinical_note_drafts_revision_check" CHECK("clinical_note_drafts"."revision" >= 1)',
+        'CONSTRAINT "clinical_note_drafts_subjective_check" CHECK(length("clinical_note_drafts"."subjective") BETWEEN 0 AND 4000)',
+        'CONSTRAINT "clinical_note_drafts_objective_check" CHECK(length("clinical_note_drafts"."objective") BETWEEN 0 AND 4000)',
+        'CONSTRAINT "clinical_note_drafts_assessment_check" CHECK(length("clinical_note_drafts"."assessment") BETWEEN 0 AND 4000)',
+        'CONSTRAINT "clinical_note_drafts_plan_check" CHECK(length("clinical_note_drafts"."plan") BETWEEN 0 AND 4000)',
+      ],
+      clinical_note_draft_diagnoses: [
+        'CONSTRAINT "clinical_note_draft_diagnoses_position_check" CHECK("clinical_note_draft_diagnoses"."position" >= 0)',
+        'CONSTRAINT "clinical_note_draft_diagnoses_text_check" CHECK(length("clinical_note_draft_diagnoses"."diagnosis_text") BETWEEN 1 AND 300)',
+      ],
+      clinical_notes: [
+        'CONSTRAINT "clinical_notes_version_check" CHECK("clinical_notes"."version" >= 1)',
+        'CONSTRAINT "clinical_notes_subjective_check" CHECK(length("clinical_notes"."subjective") BETWEEN 1 AND 4000)',
+        'CONSTRAINT "clinical_notes_objective_check" CHECK(length("clinical_notes"."objective") BETWEEN 1 AND 4000)',
+        'CONSTRAINT "clinical_notes_assessment_check" CHECK(length("clinical_notes"."assessment") BETWEEN 1 AND 4000)',
+        'CONSTRAINT "clinical_notes_plan_check" CHECK(length("clinical_notes"."plan") BETWEEN 1 AND 4000)',
+        'CONSTRAINT "clinical_notes_source_draft_revision_check" CHECK("clinical_notes"."source_draft_revision" >= 1)',
+        'CONSTRAINT "clinical_notes_content_hash_check" CHECK(length("clinical_notes"."content_hash") = 64 AND "clinical_notes"."content_hash" NOT GLOB \'*[^0-9a-f]*\')',
+      ],
+      clinical_note_diagnoses: [
+        'CONSTRAINT "clinical_note_diagnoses_position_check" CHECK("clinical_note_diagnoses"."position" >= 0)',
+        'CONSTRAINT "clinical_note_diagnoses_text_check" CHECK(length("clinical_note_diagnoses"."diagnosis_text") BETWEEN 1 AND 300)',
+      ],
+      clinical_note_amendments: [
+        'CONSTRAINT "clinical_note_amendments_version_check" CHECK("clinical_note_amendments"."version" >= 1)',
+        'CONSTRAINT "clinical_note_amendments_content_check" CHECK(length("clinical_note_amendments"."content") BETWEEN 1 AND 4000)',
+        'CONSTRAINT "clinical_note_amendments_reason_check" CHECK(length("clinical_note_amendments"."reason") BETWEEN 1 AND 500)',
+        'CONSTRAINT "clinical_note_amendments_content_hash_check" CHECK(length("clinical_note_amendments"."content_hash") = 64 AND "clinical_note_amendments"."content_hash" NOT GLOB \'*[^0-9a-f]*\')',
+      ],
+      medications: [
+        'CONSTRAINT "medications_id_check" CHECK(length("medications"."id") = 12 AND "medications"."id" GLOB \'DEMO-MED-[0-9][0-9][0-9]\')',
+        'CONSTRAINT "medications_display_name_check" CHECK(length("medications"."display_name") BETWEEN 1 AND 200)',
+        'CONSTRAINT "medications_strength_text_check" CHECK(length("medications"."strength_text") BETWEEN 1 AND 100)',
+        'CONSTRAINT "medications_dosage_form_text_check" CHECK(length("medications"."dosage_form_text") BETWEEN 1 AND 100)',
+        'CONSTRAINT "medications_canonical_unit_check" CHECK(length("medications"."canonical_unit") BETWEEN 1 AND 100)',
+        'CONSTRAINT "medications_active_check" CHECK("medications"."active" IN (0, 1))',
+        'CONSTRAINT "medications_revision_check" CHECK("medications"."revision" >= 1)',
+      ],
+      medication_decision_drafts: [
+        'CONSTRAINT "medication_decision_drafts_revision_check" CHECK("medication_decision_drafts"."revision" >= 1)',
+        'CONSTRAINT "medication_decision_drafts_kind_check" CHECK("medication_decision_drafts"."kind" IN (\'UNDECIDED\', \'ORDER\', \'NO_MEDICATION\'))',
+        'CONSTRAINT "medication_decision_drafts_no_medication_reason_check" CHECK("medication_decision_drafts"."no_medication_reason" IS NULL OR length("medication_decision_drafts"."no_medication_reason") <= 500)',
+      ],
+      medication_order_draft_items: [
+        'CONSTRAINT "medication_order_draft_items_position_check" CHECK("medication_order_draft_items"."position" >= 0)',
+        'CONSTRAINT "medication_order_draft_items_medication_revision_check" CHECK("medication_order_draft_items"."medication_revision" >= 1)',
+        'CONSTRAINT "medication_order_draft_items_quantity_check" CHECK("medication_order_draft_items"."quantity" BETWEEN 1 AND 9999)',
+        'CONSTRAINT "medication_order_draft_items_directions_th_check" CHECK(length("medication_order_draft_items"."directions_th") BETWEEN 1 AND 500)',
+      ],
+      medication_decisions: [
+        'CONSTRAINT "medication_decisions_version_check" CHECK("medication_decisions"."version" >= 1)',
+        'CONSTRAINT "medication_decisions_kind_check" CHECK("medication_decisions"."kind" IN (\'ORDER\', \'NO_MEDICATION\'))',
+        'CONSTRAINT "medication_decisions_no_medication_reason_check" CHECK("medication_decisions"."no_medication_reason" IS NULL OR length("medication_decisions"."no_medication_reason") BETWEEN 1 AND 500)',
+        'CONSTRAINT "medication_decisions_revision_reason_check" CHECK("medication_decisions"."revision_reason" IS NULL OR length("medication_decisions"."revision_reason") BETWEEN 1 AND 500)',
+        'CONSTRAINT "medication_decisions_content_hash_check" CHECK(length("medication_decisions"."content_hash") = 64 AND "medication_decisions"."content_hash" NOT GLOB \'*[^0-9a-f]*\')',
+      ],
+      medication_order_items: [
+        'CONSTRAINT "medication_order_items_position_check" CHECK("medication_order_items"."position" >= 0)',
+        'CONSTRAINT "medication_order_items_medication_revision_check" CHECK("medication_order_items"."medication_revision" >= 1)',
+        'CONSTRAINT "medication_order_items_display_name_snapshot_check" CHECK(length("medication_order_items"."display_name_snapshot") BETWEEN 1 AND 200)',
+        'CONSTRAINT "medication_order_items_strength_snapshot_check" CHECK(length("medication_order_items"."strength_snapshot") BETWEEN 1 AND 100)',
+        'CONSTRAINT "medication_order_items_dosage_form_snapshot_check" CHECK(length("medication_order_items"."dosage_form_snapshot") BETWEEN 1 AND 100)',
+        'CONSTRAINT "medication_order_items_unit_snapshot_check" CHECK(length("medication_order_items"."unit_snapshot") BETWEEN 1 AND 100)',
+        'CONSTRAINT "medication_order_items_quantity_check" CHECK("medication_order_items"."quantity" BETWEEN 1 AND 9999)',
+        'CONSTRAINT "medication_order_items_directions_th_check" CHECK(length("medication_order_items"."directions_th") BETWEEN 1 AND 500)',
+      ],
+    };
+    for (const [table, checks] of Object.entries(expectedChecks)) {
+      const sql = tableSql(value, table);
+      for (const check of checks) expect(sql).toContain(check);
+    }
+
+    const expectedForeignKeys: Record<string, Array<Record<string, string>>> = {
+      patient_allergy_revisions: [
+        { table: "patients", from: "patient_id", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+        { table: "staff_accounts", from: "reviewed_by", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+      ],
+      patient_allergy_items: [
+        { table: "patient_allergy_revisions", from: "allergy_revision_id", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+      ],
+      clinical_note_drafts: [
+        { table: "visits", from: "visit_id", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+        { table: "staff_accounts", from: "created_by", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+        { table: "staff_accounts", from: "updated_by", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+      ],
+      clinical_note_draft_diagnoses: [
+        { table: "clinical_note_drafts", from: "draft_id", to: "id", onUpdate: "NO ACTION", onDelete: "CASCADE" },
+      ],
+      clinical_notes: [
+        { table: "visits", from: "visit_id", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+        { table: "staff_accounts", from: "signed_by", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+      ],
+      clinical_note_diagnoses: [
+        { table: "clinical_notes", from: "clinical_note_id", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+      ],
+      clinical_note_amendments: [
+        { table: "clinical_notes", from: "clinical_note_id", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+        { table: "staff_accounts", from: "signed_by", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+      ],
+      medications: [],
+      medication_decision_drafts: [
+        { table: "visits", from: "visit_id", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+        { table: "staff_accounts", from: "created_by", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+        { table: "staff_accounts", from: "updated_by", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+      ],
+      medication_order_draft_items: [
+        { table: "medication_decision_drafts", from: "decision_draft_id", to: "id", onUpdate: "NO ACTION", onDelete: "CASCADE" },
+        { table: "medications", from: "medication_id", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+      ],
+      medication_decisions: [
+        { table: "visits", from: "visit_id", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+        { table: "medication_decisions", from: "supersedes_id", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+        { table: "staff_accounts", from: "signed_by", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+      ],
+      medication_order_items: [
+        { table: "medication_decisions", from: "medication_decision_id", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+        { table: "medications", from: "medication_id", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+      ],
+    };
+    for (const [table, foreignKeys] of Object.entries(expectedForeignKeys)) {
+      expect(primaryKeyColumns(value, table)).toEqual(["id"]);
+      expect(foreignKeyRules(value, table)).toEqual(
+        foreignKeys.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+      );
+    }
+
+    const expectedUniqueIndexes: Record<string, string[]> = {
+      patient_allergy_revisions: ["patient_allergy_revisions_patient_revision_unique"],
+      patient_allergy_items: ["patient_allergy_items_revision_position_unique"],
+      clinical_note_drafts: ["clinical_note_drafts_visit_id_unique"],
+      clinical_note_draft_diagnoses: ["clinical_note_draft_diagnoses_draft_position_unique"],
+      clinical_notes: ["clinical_notes_visit_version_unique"],
+      clinical_note_diagnoses: ["clinical_note_diagnoses_note_position_unique"],
+      clinical_note_amendments: ["clinical_note_amendments_note_version_unique"],
+      medications: [],
+      medication_decision_drafts: ["medication_decision_drafts_visit_id_unique"],
+      medication_order_draft_items: ["medication_order_draft_items_draft_position_unique"],
+      medication_decisions: ["medication_decisions_visit_version_unique"],
+      medication_order_items: ["medication_order_items_decision_position_unique"],
+    };
+    for (const [table, indexes] of Object.entries(expectedUniqueIndexes)) {
+      expect(uniqueIndexNames(value, table)).toEqual(indexes);
+    }
     expect(indexNames(value)).toContain("clinical_note_drafts_visit_id_unique");
-    expect(tableSql(value, "clinical_note_draft_diagnoses")).toContain("ON DELETE cascade");
-    expect(tableSql(value, "clinical_notes")).toContain("clinical_notes_content_hash_check");
-    expect(tableSql(value, "clinical_notes")).toContain("clinical_notes_source_draft_revision_check");
-    expect(tableSql(value, "clinical_note_diagnoses")).toContain("clinical_note_diagnoses_position_check");
-    expect(tableSql(value, "clinical_note_amendments")).toContain("clinical_note_amendments_content_hash_check");
-    expect(tableSql(value, "medications")).toContain("medications_id_check");
-    expect(tableSql(value, "medications")).toContain("medications_active_check");
-    expect(tableSql(value, "medication_decision_drafts")).toContain("medication_decision_drafts_kind_check");
-    expect(tableSql(value, "medication_order_draft_items")).toContain("ON DELETE cascade");
-    expect(tableSql(value, "medication_decisions")).toContain("medication_decisions_kind_check");
-    expect(tableSql(value, "medication_decisions")).toContain("medication_decisions_content_hash_check");
-    expect(tableSql(value, "medication_order_items")).toContain("medication_order_items_quantity_check");
   });
 
   it("blocks direct updates and deletes on every signed or historical clinical record while drafts remain editable", () => {
