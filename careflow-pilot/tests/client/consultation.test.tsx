@@ -11,7 +11,7 @@ const patient = { id: "patient-42", hn: "DEMO-000042", displayName: "ผู้�
 const visit = { id: "visit-42", status: "CONSULTING" as const, revision: 8, arrivedAt: "2026-08-03T01:00:00.000Z", startedAt: "2026-08-03T01:15:00.000Z" };
 const workspace = {
   visit, patient,
-  intake: { id: "intake-42", chiefComplaint: "มีไข้และไอ", vitals: { weightKg: null, heightCm: null, temperatureC: 38.2, systolicMmhg: 120, diastolicMmhg: 80, heartRateBpm: 90, spo2Percent: 98 }, recordedAt: "2026-08-03T01:02:00.000Z", recordedBy: { id: "assistant-1", displayName: "ผู้ช่วยทดสอบ" } },
+  intake: { id: "intake-42", chiefComplaint: "มีไข้และไอ", vitals: { weightKg: 64.5, heightCm: 168, temperatureC: 38.2, systolicMmhg: 120, diastolicMmhg: 80, heartRateBpm: 90, spo2Percent: 98 }, recordedAt: "2026-08-03T01:02:00.000Z", recordedBy: { id: "assistant-1", displayName: "ผู้ช่วยทดสอบ" } },
   patientSnapshot: { allergy: { id: null, revision: 0, state: "UNKNOWN" as const, items: [], sourceText: null, reason: null, reviewedBy: null, reviewedAt: null }, activeProblems: { state: "UNKNOWN" as const, value: null, source: null }, currentMedicationContext: { state: "UNKNOWN" as const, value: null, source: null }, latestRelevantPlan: { state: "UNKNOWN" as const, value: null, source: null }, pendingFollowUp: { state: "UNKNOWN" as const, value: null, source: null }, recentVisits: [] },
   consultationDraft: { note: null, medicationDecision: null }, signedClinicalNote: null, amendments: [], medicationDecision: null,
   allowedActions: ["SAVE_DRAFT", "FINALIZE_CONSULTATION", "REVIEW_ALLERGY"] as const,
@@ -38,6 +38,17 @@ describe("Doctor consultation authoring", () => {
     expect(screen.getByLabelText("Objective (ผลตรวจ)")).toBeInTheDocument();
     expect(screen.getByLabelText("Assessment (การประเมิน)")).toBeInTheDocument();
     expect(screen.getByLabelText("Plan (แผนการดูแล)")).toBeInTheDocument();
+  });
+
+  it("keeps every recorded intake vital visible to the doctor", async () => {
+    renderRoute();
+    const visitPanel = await screen.findByRole("region", { name: "ข้อมูล Visit ปัจจุบัน" });
+    expect(visitPanel).toHaveTextContent("อุณหภูมิ 38.2 °C");
+    expect(visitPanel).toHaveTextContent("ความดัน 120/80");
+    expect(visitPanel).toHaveTextContent("ชีพจร 90 ครั้ง/นาที");
+    expect(visitPanel).toHaveTextContent("SpO₂ 98%");
+    expect(visitPanel).toHaveTextContent("น้ำหนัก 64.5 กก.");
+    expect(visitPanel).toHaveTextContent("ส่วนสูง 168 ซม.");
   });
 
   it("requires an explicit medication decision and saves a selected catalog order", async () => {
