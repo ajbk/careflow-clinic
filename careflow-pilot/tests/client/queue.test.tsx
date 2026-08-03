@@ -210,6 +210,32 @@ describe("connected shared queue workflow", () => {
     expect(startRequests).toBe(1);
   });
 
+  it("keeps the conflict block fail-closed when the latest queue reload fails", async () => {
+    const user = userEvent.setup();
+    let queueRequests = 0;
+    server.use(
+      http.get("/api/queue", () => {
+        queueRequests += 1;
+        if (queueRequests === 1 || queueRequests === 4) return HttpResponse.json({ data: [waitingItem] });
+        return jsonError("INTERNAL_ERROR", "ระบบคิวไม่พร้อมใช้งาน", 503);
+      }),
+      http.post("/api/visits/visit-42/start-consultation", () => jsonError("REVISION_CONFLICT", "ข้อมูลคิวเปลี่ยนแปลงแล้ว", 409)),
+    );
+    renderRoute("/queue");
+    await user.click(await screen.findByRole("button", { name: /เริ่มการตรวจ/ }));
+    await waitFor(() => expect(screen.getByText("ข้อมูลคิวเปลี่ยนแปลงแล้ว")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: /โหลดข้อมูลล่าสุด/ }));
+    await waitFor(() => expect(queueRequests).toBeGreaterThanOrEqual(3));
+    expect((await screen.findAllByText("ระบบคิวไม่พร้อมใช้งาน")).length).toBeGreaterThan(0);
+    expect(screen.getByText("ข้อมูลคิวเปลี่ยนแปลง")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /โหลดข้อมูลล่าสุด/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /โหลดข้อมูลล่าสุด/ }));
+    await waitFor(() => expect(queueRequests).toBe(4));
+    expect(screen.queryByText("ข้อมูลคิวเปลี่ยนแปลงแล้ว")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /เริ่มการตรวจ/ })).toBeEnabled();
+  });
+
   it("renders a committed Consultation snapshot with milestone copy and no writable clinical controls", async () => {
     renderRoute("/consultations/visit-42");
     expect(await screen.findByText(patient.displayName)).toBeInTheDocument();
@@ -220,6 +246,14 @@ describe("connected shared queue workflow", () => {
     expect(screen.queryByRole("button", { name: /ลงนาม|เพิ่มยา|ส่งห้องยา/ })).not.toBeInTheDocument();
   });
 
+  it("shows arrival and consultation start times for each queue state", async () => {
+    server.use(http.get("/api/queue", () => HttpResponse.json({ data: [consultingItem] })));
+    renderRoute("/queue");
+    const row = await screen.findByRole("article", { name: /DEMO-000042/ });
+    expect(within(row).getByText(/มาถึง/)).toBeInTheDocument();
+    expect(within(row).getByText(/เริ่มตรวจ/)).toBeInTheDocument();
+  });
+
   it("shows live Overview counts and marks unsupported medication, payment, and stock cards unavailable", async () => {
     renderRoute("/");
     expect(await screen.findByRole("heading", { name: "ภาพรวมคลินิก" })).toBeInTheDocument();
@@ -227,6 +261,43 @@ describe("connected shared queue workflow", () => {
     expect((await screen.findAllByText("กำลังตรวจ")).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/ยังไม่พร้อมใน Pilot/).length).toBeGreaterThanOrEqual(3);
     expect(screen.queryByText(/฿|บาท|คงเหลือ/)).not.toBeInTheDocument();
+  });
+
+  it("keeps Overview intake unavailable while the queue read is pending", async () => {
+    let resolveQueue!: (response: Response) => void;
+    server.use(http.get("/api/queue", () => new Promise((resolve) => { resolveQueue = resolve; })));
+    renderRoute("/");
+    expect(await screen.findByRole("heading", { name: "ภาพรวมคลินิก" })).toBeInTheDocument();
+    expect(await screen.findByText("กำลังโหลดคิวผู้ป่วย")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /รับผู้ป่วย/ })).not.toBeInTheDocument();
+    resolveQueue(HttpResponse.json({ data: [waitingItem] }));
+    await waitFor(() => expect(screen.getByText(patient.displayName)).toBeInTheDocument());
+  });
+
+  it("surfaces a committed start-command 503 instead of swallowing the error", async () => {
+    const user = userEvent.setup();
+    server.use(http.post("/api/visits/visit-42/start-consultation", () => jsonError("INTERNAL_ERROR", "ระบบเริ่มห้องตรวจไม่พร้อมใช้งาน", 503)));
+    renderRoute("/queue");
+    const startButton = await screen.findByRole("button", { name: /เริ่มการตรวจ/ });
+    await user.click(startButton);
+    expect(await screen.findByText("ระบบเริ่มห้องตรวจไม่พร้อมใช้งาน")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /เริ่มการตรวจ/ })).toBeEnabled();
+  });
+
+  it("surfaces a network start-command error instead of swallowing the error", async () => {
+    const user = userEvent.setup();
+    server.use(http.post("/api/visits/visit-42/start-consultation", () => HttpResponse.error()));
+    renderRoute("/queue");
+    await user.click(await screen.findByRole("button", { name: /เริ่มการตรวจ/ }));
+    expect(await screen.findByText("ไม่สามารถเชื่อมต่อระบบได้ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /เริ่มการตรวจ/ })).toBeEnabled();
+  });
+
+  it("renders an explicit permission-denied state when Overview dashboard access is forbidden", async () => {
+    server.use(http.get("/api/dashboard/today", () => jsonError("FORBIDDEN", "ไม่มีสิทธิ์ดูภาพรวม", 403)));
+    renderRoute("/");
+    expect(await screen.findByText("ไม่มีสิทธิ์ดูภาพรวม")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("บัญชีนี้ไม่มีสิทธิ์เข้าถึงข้อมูลคิวของคลินิก");
   });
 
   it("renders explicit empty and unavailable Queue states", async () => {

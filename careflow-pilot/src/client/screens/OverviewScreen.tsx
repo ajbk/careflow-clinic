@@ -54,11 +54,14 @@ export function OverviewScreen(): ReactElement {
       </div>
     );
   }
-  if (dashboard.error || !dashboard.data) return <div className="operations-page overview-page"><PageHeader eyebrow="CARE FOR THE COMMUNITY" title="ภาพรวมคลินิก" /><div className="care-card"><QueryState title="ระบบภาพรวมไม่พร้อมใช้งาน" message={dashboard.error ? (isApiError(dashboard.error) ? dashboard.error.messageTh : "ไม่สามารถเชื่อมต่อระบบได้") : "ยังไม่มีข้อมูลจากระบบ"} /></div></div>;
+  if (dashboard.error || !dashboard.data) {
+    return <div className="operations-page overview-page"><PageHeader eyebrow="CARE FOR THE COMMUNITY" title="ภาพรวมคลินิก" /><div className="care-card">{dashboard.error ? errorState(dashboard.error) : <QueryState title="ระบบภาพรวมไม่พร้อมใช้งาน" message="ยังไม่มีข้อมูลจากระบบ" />}</div></div>;
+  }
 
   const metrics = dashboard.data;
   const activeRows = queue.data?.slice(0, 6) ?? [];
   const queueError = queue.error ? errorState(queue.error) : null;
+  const queueLoading = queue.isPending && !queue.data && !queue.error;
 
   return (
     <div className="operations-page overview-page">
@@ -66,7 +69,7 @@ export function OverviewScreen(): ReactElement {
         eyebrow="CARE FOR THE COMMUNITY"
         title="ภาพรวมคลินิก"
         description={`สถานะสดจากระบบคิว · อัปเดตล่าสุด ${formatThaiDateTime(metrics.updatedAt)}`}
-        actions={<Link className="care-button care-button-primary" to="/intake"><ClipboardPlus aria-hidden="true" size={18} />รับผู้ป่วย</Link>}
+        actions={queueLoading ? undefined : <Link className="care-button care-button-primary" to="/intake"><ClipboardPlus aria-hidden="true" size={18} />รับผู้ป่วย</Link>}
       />
 
       <section className="metric-grid" aria-label="สรุปสถานะคลินิก">
@@ -79,7 +82,7 @@ export function OverviewScreen(): ReactElement {
       <div className="overview-grid">
         <Card className="journey-card">
           <SectionHeading icon={UsersRound} title="เส้นทางผู้ป่วยวันนี้" description="สถานะแบบสดจากระบบคิว" action={<Link className="text-link" to="/queue">ดูคิวทั้งหมด <ArrowRight aria-hidden="true" size={16} /></Link>} />
-          {queueError ? queueError : activeRows.length > 0 ? (
+          {queueLoading ? <div className="overview-queue-loading" role="status"><span className="queue-skeleton" /><strong>กำลังโหลดคิวผู้ป่วย</strong><p>กำลังดึงข้อมูลล่าสุดจากระบบคิว</p></div> : queueError ? queueError : activeRows.length > 0 ? (
             <div className="journey-list">
               {activeRows.map((item) => {
                 const status = item.visit.status === "CONSULTING" ? { label: "กำลังตรวจ", tone: "active" as const } : { label: "รอตรวจ", tone: "waiting" as const };
@@ -95,7 +98,7 @@ export function OverviewScreen(): ReactElement {
           ) : (
             <EmptyState icon={UsersRound} title="ยังไม่มีผู้ป่วยในคิว" detail="เริ่มงานด้วยการรับผู้ป่วยสังเคราะห์เข้าคิว" />
           )}
-          {activeRows.length === 0 && !queueError ? <Link className="care-button care-button-secondary overview-intake-link" to="/intake"><ClipboardPlus aria-hidden="true" size={18} />รับผู้ป่วยเข้าคิว</Link> : null}
+          {!queueLoading && activeRows.length === 0 && !queueError ? <Link className="care-button care-button-secondary overview-intake-link" to="/intake"><ClipboardPlus aria-hidden="true" size={18} />รับผู้ป่วยเข้าคิว</Link> : null}
         </Card>
 
         <Card className="quick-actions-card">
