@@ -17,6 +17,11 @@ export interface DatabaseHandle {
   close: () => void;
 }
 
+/** Flush all committed WAL frames before a host is stopped or a file is copied. */
+export function checkpointWal(database: DatabaseHandle): void {
+  database.sqlite.pragma("wal_checkpoint(TRUNCATE)");
+}
+
 interface MigrationRecord {
   hash: string;
   created_at: number;
@@ -132,6 +137,7 @@ export function openDatabase(inputPath: string): DatabaseHandle {
       close: () => {
         if (closed) return;
         try {
+          checkpointWal({ sqlite: sqlite as Database.Database, db, close: () => undefined });
           sqlite?.close();
           secureDatabaseArtifacts(lock.databasePath);
         } finally {

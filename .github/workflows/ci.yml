@@ -1,0 +1,74 @@
+name: CareFlow CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  demo-ubuntu:
+    name: Frozen demo (Ubuntu)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: careflow-webapp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: careflow-webapp/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+
+  pilot-ubuntu:
+    name: Local Pilot (Ubuntu + Chromium)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: careflow-pilot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: careflow-pilot/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test
+      - run: npm run build
+      - run: npm run test:e2e
+      - name: Upload browser artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: careflow-pilot-browser-artifacts
+          path: |
+            careflow-pilot/test-results/
+            careflow-pilot/playwright-report/
+          if-no-files-found: ignore
+
+  pilot-windows:
+    name: Local Pilot (native Windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: careflow-pilot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: careflow-pilot/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:server
+      - run: npm run build

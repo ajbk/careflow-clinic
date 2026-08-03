@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -73,6 +73,58 @@ describe("SQLite boundary", () => {
 });
 
 describe("Fastify boundary", () => {
+  it("serves known client assets and safely falls back to the SPA for deep links", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "careflow-client-assets-"));
+    writeFileSync(join(directory, "index.html"), "<!doctype html><div id=\"root\">pilot</div>");
+    writeFileSync(join(directory, "app.js"), "console.log('pilot');");
+    const harness = await createTestApp({ serveStatic: true, clientAssetsRoot: directory });
+    cleanups.push(async () => {
+      await harness.cleanup();
+      rmSync(directory, { recursive: true, force: true });
+    });
+
+    const root = await harness.app.inject({ method: "GET", url: "/" });
+    const deepLink = await harness.app.inject({ method: "GET", url: "/consultations/visit-123" });
+    const asset = await harness.app.inject({ method: "GET", url: "/app.js" });
+    const missingApi = await harness.app.inject({ method: "GET", url: "/api/missing" });
+
+    expect(root.statusCode).toBe(200);
+    expect(root.headers["content-type"]).toContain("text/html");
+    expect(root.body).toContain('id="root"');
+    expect(deepLink.statusCode).toBe(200);
+    expect(deepLink.body).toContain('id="root"');
+    expect(asset.statusCode).toBe(200);
+    expect(asset.body).toContain("console.log");
+    expect(missingApi.statusCode).toBe(404);
+    expect(missingApi.headers["content-type"]).toContain("application/json");
+    expect(missingApi.body).not.toContain("<div");
+  });
+
+  it("fails clearly when production client assets are missing", async () => {
+    const harness = await createTestApp();
+    cleanups.push(harness.cleanup);
+
+    await expect(
+      import("../../src/server/app.js").then(({ buildApp }) =>
+        buildApp({
+          db: harness.database,
+          config: {
+            host: "127.0.0.1",
+            port: 3001,
+            databasePath: harness.databasePath,
+            cookieSecure: false,
+            sessionIdleMinutes: 15,
+            sessionAbsoluteHours: 8,
+            clientDistPath: join(tmpdir(), "careflow-client-missing"),
+          },
+          clock: () => new Date("2026-08-03T00:00:00.000Z"),
+          idFactory: () => "missing-assets-request",
+          serveStatic: true,
+        }),
+      ),
+    ).rejects.toThrow("CareFlow client assets directory is missing");
+  });
+
   it("returns a non-secret health response", async () => {
     const harness = await createTestApp();
     cleanups.push(harness.cleanup);

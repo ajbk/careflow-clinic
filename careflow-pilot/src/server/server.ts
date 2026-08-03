@@ -12,7 +12,7 @@ async function main(): Promise<void> {
     config,
     clock: () => new Date(),
     idFactory: randomUUID,
-    buildApplication: buildApp,
+    buildApplication: (options) => buildApp({ ...options, serveStatic: true }),
   });
 }
 

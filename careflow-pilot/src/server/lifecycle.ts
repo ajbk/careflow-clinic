@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { BuildAppOptions } from "./app.js";
 import type { AppConfig } from "./config.js";
 import type { DatabaseHandle } from "./db/client.js";
+import { checkpointWal } from "./db/client.js";
 
 export interface SignalSource {
   once(event: "SIGINT" | "SIGTERM", listener: () => void): unknown;
@@ -32,8 +33,12 @@ export async function runClinicHost(options: RunClinicHostOptions): Promise<void
       try {
         await app?.close();
       } finally {
-        options.database.close();
-        detachSignalHandlers();
+        try {
+          checkpointWal(options.database);
+        } finally {
+          options.database.close();
+          detachSignalHandlers();
+        }
       }
     })();
     return shutdownPromise;

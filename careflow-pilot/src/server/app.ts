@@ -15,6 +15,7 @@ import {
 import { createSessionService } from "./modules/platform/index.js";
 import { createPatientService, registerPatientRoutes } from "./modules/patient/index.js";
 import { createVisitService, registerVisitRoutes } from "./modules/visit/index.js";
+import { isApiPath, registerClientAssets } from "./static.js";
 
 export interface BuildAppOptions {
   db: DatabaseHandle;
@@ -24,6 +25,10 @@ export interface BuildAppOptions {
   passwordVerifier?: PasswordVerifier;
   passwordHasher?: PasswordHasher;
   sessionTokenFactory?: () => string;
+  /** Enable production SPA asset serving. Tests keep this disabled by default. */
+  serveStatic?: boolean;
+  /** Override the configured client dist root for an injectable test fixture. */
+  clientAssetsRoot?: string;
 }
 
 function zodFieldErrors(error: ZodError): Record<string, string> {
@@ -65,6 +70,12 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   await app.register(helmet);
   await app.register(cookie);
+
+  const clientAssets = options.serveStatic
+    ? await registerClientAssets(app, {
+        root: options.clientAssetsRoot ?? options.config.clientDistPath,
+      })
+    : undefined;
 
   const sessionService = createSessionService({
     database: options.db,
@@ -115,6 +126,13 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   });
 
   app.setNotFoundHandler(async (request, reply) => {
+    if (
+      clientAssets &&
+      !isApiPath(request) &&
+      (request.method === "GET" || request.method === "HEAD")
+    ) {
+      return clientAssets.sendIndex(reply);
+    }
     const body: ApiErrorBody = {
       error: {
         code: "NOT_FOUND",
