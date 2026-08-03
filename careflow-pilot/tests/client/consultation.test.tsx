@@ -57,7 +57,7 @@ describe("Doctor consultation authoring", () => {
       patientSnapshot: {
         allergy: {
           id: "allergy-1", revision: 2, state: "PRESENT" as const,
-          items: [{ substance: "เพนิซิลลิน", reaction: "ผื่น", severity: "MILD" as const, note: null }],
+          items: [{ substance: "เพนิซิลลิน", reaction: "ผื่น", severity: "MILD" as const, note: "พกบัตรแพ้ยา" }],
           sourceText: "ผู้ป่วยแจ้งประวัติ", reason: "ทบทวนก่อนตรวจ",
           reviewedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, reviewedAt: "2026-08-03T01:30:00.000Z",
         },
@@ -75,6 +75,12 @@ describe("Doctor consultation authoring", () => {
     const snapshot = await screen.findByRole("region", { name: "Patient Snapshot" });
     expect(snapshot).toHaveTextContent("ประวัติแพ้ยา");
     expect(snapshot).toHaveTextContent("เพนิซิลลิน");
+    expect(snapshot).toHaveTextContent("ความรุนแรง MILD");
+    expect(snapshot).toHaveTextContent("หมายเหตุ พกบัตรแพ้ยา");
+    expect(snapshot).toHaveTextContent("ผู้ให้ข้อมูล ผู้ป่วยแจ้งประวัติ");
+    expect(snapshot).toHaveTextContent("เหตุผล ทบทวนก่อนตรวจ");
+    expect(snapshot).toHaveTextContent("ผู้ทบทวน พญ. ทดสอบ");
+    expect(snapshot).toHaveTextContent("ALLERGY_REVIEW · ID allergy-1");
     expect(snapshot).toHaveTextContent("ปัญหาสำคัญ");
     expect(snapshot).toHaveTextContent("ไข้หวัด");
     expect(snapshot).toHaveTextContent("บริบทยาปัจจุบัน");
@@ -84,9 +90,12 @@ describe("Doctor consultation authoring", () => {
     expect(snapshot).toHaveTextContent("ติดตามต่อไป");
     expect(snapshot).toHaveTextContent("UNKNOWN");
     expect(snapshot).toHaveTextContent("CLINICAL_NOTE");
+    expect(snapshot).toHaveTextContent("note-previous");
     expect(snapshot).toHaveTextContent("MEDICATION_DECISION");
+    expect(snapshot).toHaveTextContent("decision-previous");
     expect(snapshot).toHaveTextContent("2 สิงหาคม 2569 เวลา 15:00");
     expect(snapshot).toHaveTextContent("Visit visit-previous");
+    expect(snapshot).toHaveTextContent("Clinical Note source");
   });
 
   it("requires an explicit medication decision and saves a selected catalog order", async () => {

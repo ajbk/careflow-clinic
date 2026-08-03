@@ -30,9 +30,9 @@ function formValue(data: VisitWorkspaceDto): ConsultationFormValue {
 function decisionValid(value: MedicationDecisionDraftInput) { return value.kind === "ORDER" ? value.items.length > 0 && value.items.every((item) => item.quantity >= 1 && item.directionsTh.trim().length > 0) : value.kind === "NO_MEDICATION" && value.noMedicationReason.trim().length > 0; }
 function message(error: unknown) { return isApiError(error) ? error.messageTh : "ไม่สามารถเชื่อมต่อระบบได้ กรุณาลองใหม่อีกครั้ง"; }
 function vital(value: number | null, suffix = "") { return value === null ? "—" : `${value}${suffix}`; }
-function sourceBadge(source: SnapshotSource | null): ReactElement | null {
+function sourceBadge(source: SnapshotSource | null, label = "แหล่งข้อมูล"): ReactElement | null {
   if (!source) return null;
-  return <div className="snapshot-source"><span>แหล่งข้อมูล {source.type}</span><time dateTime={source.occurredAt}>{formatThaiDateTime(source.occurredAt)}</time></div>;
+  return <div className="snapshot-source"><span>{label} {source.type} · ID {source.id}</span><time dateTime={source.occurredAt}>{formatThaiDateTime(source.occurredAt)}</time></div>;
 }
 function snapshotValue(values: string[]) {
   return values.length > 0 ? <ul>{values.map((item) => <li key={item}>{item}</li>)}</ul> : <span>ไม่มีข้อมูล</span>;
@@ -44,8 +44,9 @@ function allergySource(snapshot: PatientSnapshotDto): SnapshotSource | null {
 function PatientSnapshot({ snapshot }: { snapshot: PatientSnapshotDto }): ReactElement {
   const allergy = snapshot.allergy;
   const allergyDetails = allergy.state === "PRESENT"
-    ? <ul>{allergy.items.map((item) => <li key={`${item.substance}-${item.reaction}`}>{item.substance} · {item.reaction}</li>)}</ul>
+    ? <ul>{allergy.items.map((item) => <li key={`${item.substance}-${item.reaction}`}><strong>{item.substance} · {item.reaction}</strong><span>ความรุนแรง {item.severity}</span>{item.note ? <span>หมายเหตุ {item.note}</span> : null}</li>)}</ul>
     : allergy.state === "NONE_KNOWN" ? <span>ไม่พบประวัติแพ้ที่ยืนยัน</span> : <span>ยังไม่ทราบข้อมูล</span>;
+  const allergyProvenance = allergy.revision > 0 ? <div className="snapshot-allergy-provenance"><span>ผู้ให้ข้อมูล {allergy.sourceText ?? "ยังไม่ทราบข้อมูล"}</span><span>เหตุผล {allergy.reason ?? "ยังไม่ทราบข้อมูล"}</span>{allergy.reviewedBy ? <span>ผู้ทบทวน {allergy.reviewedBy.displayName}</span> : null}{allergy.reviewedAt ? <time dateTime={allergy.reviewedAt}>ทบทวนเมื่อ {formatThaiDateTime(allergy.reviewedAt)}</time> : null}</div> : null;
   const facts = [
     { label: "ปัญหาสำคัญ", fact: snapshot.activeProblems },
     { label: "บริบทยาปัจจุบัน", fact: snapshot.currentMedicationContext },
@@ -54,9 +55,9 @@ function PatientSnapshot({ snapshot }: { snapshot: PatientSnapshotDto }): ReactE
   ] as const;
   return <section className="patient-snapshot care-card" aria-label="Patient Snapshot">
     <div className="snapshot-heading"><div><p className="page-eyebrow">PATIENT CONTEXT</p><h2>Patient Snapshot</h2></div><span>ข้อมูลอ้างอิง</span></div>
-    <article className="snapshot-fact"><div className="snapshot-fact-header"><span>ประวัติแพ้ยา</span><StatusBadge tone={allergy.state === "UNKNOWN" ? "waiting" : allergy.state === "PRESENT" ? "error" : "success"}>{allergy.state}</StatusBadge></div><div className="snapshot-fact-value">{allergyDetails}</div>{sourceBadge(allergySource(snapshot))}</article>
+    <article className="snapshot-fact"><div className="snapshot-fact-header"><span>ประวัติแพ้ยา</span><StatusBadge tone={allergy.state === "UNKNOWN" ? "waiting" : allergy.state === "PRESENT" ? "error" : "success"}>{allergy.state}</StatusBadge></div><div className="snapshot-fact-value">{allergyDetails}</div>{allergyProvenance}{sourceBadge(allergySource(snapshot))}</article>
     {facts.map(({ label, fact }) => <article className="snapshot-fact" key={label}><div className="snapshot-fact-header"><span>{label}</span><StatusBadge tone={fact.state === "UNKNOWN" ? "waiting" : "info"}>{fact.state}</StatusBadge></div><div className="snapshot-fact-value">{fact.state === "UNKNOWN" ? <span>ยังไม่ทราบข้อมูล</span> : Array.isArray(fact.value) ? snapshotValue(fact.value) : <p>{fact.value}</p>}</div>{sourceBadge(fact.source)}</article>)}
-    <article className="snapshot-fact snapshot-visits"><div className="snapshot-fact-header"><span>ประวัติ Visit ล่าสุด</span><StatusBadge tone={snapshot.recentVisits.length > 0 ? "info" : "waiting"}>{snapshot.recentVisits.length > 0 ? `${snapshot.recentVisits.length} รายการ` : "UNKNOWN"}</StatusBadge></div>{snapshot.recentVisits.length > 0 ? <ul>{snapshot.recentVisits.map((recent) => <li key={recent.visitId}><strong>Visit {recent.visitId}</strong><span>{recent.diagnoses.join(", ")}</span><span>{recent.plan}</span><time dateTime={recent.signedAt}>{formatThaiDateTime(recent.signedAt)}</time></li>)}</ul> : <span>ยังไม่ทราบข้อมูล</span>}</article>
+    <article className="snapshot-fact snapshot-visits"><div className="snapshot-fact-header"><span>ประวัติ Visit ล่าสุด</span><StatusBadge tone={snapshot.recentVisits.length > 0 ? "info" : "waiting"}>{snapshot.recentVisits.length > 0 ? `${snapshot.recentVisits.length} รายการ` : "UNKNOWN"}</StatusBadge></div>{snapshot.recentVisits.length > 0 ? <ul>{snapshot.recentVisits.map((recent) => <li key={recent.visitId}><strong>Visit {recent.visitId}</strong><span>Clinical Note source</span><span>{recent.diagnoses.join(", ")}</span><span>{recent.plan}</span>{sourceBadge({ type: "CLINICAL_NOTE", id: recent.noteId, occurredAt: recent.signedAt })}</li>)}</ul> : <span>ยังไม่ทราบข้อมูล</span>}</article>
   </section>;
 }
 

@@ -449,6 +449,10 @@
 .snapshot-fact-value { color: var(--on-surface); font-size: 12px; line-height: 1.5; }
 .snapshot-fact-value p { margin: 0; }
 .snapshot-fact-value ul, .snapshot-visits ul { display: grid; gap: 4px; margin: 0; padding-left: 18px; }
+.snapshot-fact-value li { display: grid; gap: 1px; }
+.snapshot-fact-value li strong { color: var(--primary); }
+.snapshot-fact-value li span { color: var(--on-surface-variant); font-size: 10px; }
+.snapshot-allergy-provenance { display: grid; gap: 2px; color: var(--on-surface-variant); font-size: 10px; }
 .snapshot-source { display: flex; flex-wrap: wrap; gap: 5px 8px; color: var(--on-surface-variant); font-size: 10px; }
 .snapshot-source span { color: var(--primary); font-weight: 700; }
 .snapshot-visits li { display: grid; gap: 1px; }
