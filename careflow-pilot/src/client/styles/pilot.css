@@ -257,6 +257,11 @@
   background: var(--surface-container-low);
 }
 
+.patient-search-result:disabled {
+  cursor: wait;
+  opacity: 0.56;
+}
+
 .patient-search-result-main {
   display: grid;
   gap: 2px;

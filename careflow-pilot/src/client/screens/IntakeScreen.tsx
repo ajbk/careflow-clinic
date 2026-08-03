@@ -67,15 +67,18 @@ function describeError(error: unknown): ApiError {
 function SyntheticSearchResult({
   patient,
   onSelect,
+  disabled = false,
 }: {
   patient: PatientDto;
   onSelect: (patient: PatientDto) => void;
+  disabled?: boolean;
 }): ReactElement {
   return (
     <button
       className="patient-search-result"
       type="button"
       onClick={() => onSelect(patient)}
+      disabled={disabled}
       aria-label={`เลือกผู้ป่วย ${patient.displayName}`}
     >
       <span className="patient-search-result-main">
@@ -98,6 +101,8 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
   const [activeVisit, setActiveVisit] = useState(false);
   const [generateAttempt, setGenerateAttempt] = useState<SyntheticPatientAttempt | null>(null);
   const [submitAttempt, setSubmitAttempt] = useState<IntakeAttempt | null>(null);
+  const [retryAttempt, setRetryAttempt] = useState<IntakeAttempt | null>(null);
+  const generateAttemptRef = useRef<SyntheticPatientAttempt | null>(null);
   const fieldRefs = useRef<Record<string, HTMLInputElement | HTMLTextAreaElement | null>>({});
 
   useEffect(() => {
@@ -108,11 +113,17 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
   const patientSearch = usePatientSearch(debouncedSearch, apiClient);
   const generateMutation = useMutation({
     mutationFn: (attempt: SyntheticPatientAttempt) => createSyntheticPatient(apiClient, attempt),
-    onSuccess: (result) => {
+    onSuccess: (result, attempt) => {
+      if (generateAttemptRef.current !== attempt) return;
       setSelectedPatient(result.data);
       setSearchText("");
       setDebouncedSearch("");
       setGenerateAttempt(null);
+      generateAttemptRef.current = null;
+      setSubmitAttempt(null);
+      setRetryAttempt(null);
+      setFieldErrors({});
+      setActiveVisit(false);
       setSummaryError(null);
     },
   });
@@ -148,12 +159,15 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
 
   const setDraftValue = (key: keyof IntakeDraft, value: string) => {
     setDraft((current) => ({ ...current, [key]: value }));
+    setSubmitAttempt(null);
+    setRetryAttempt(null);
     if (fieldErrors[key]) setFieldErrors((current) => ({ ...current, [key]: "" }));
     setSummaryError(null);
     setActiveVisit(false);
   };
 
   function choosePatient(patient: PatientDto): void {
+    if (submitPending || generationPending) return;
     if (selectedPatient?.id === patient.id) return;
     if (hasDraftValues(draft) && selectedPatient && typeof window !== "undefined") {
       const confirmed = window.confirm("เปลี่ยนผู้ป่วยและล้างความพยายามสร้างผู้ป่วยสังเคราะห์หรือไม่");
@@ -161,7 +175,9 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
     }
     setSelectedPatient(patient);
     setGenerateAttempt(null);
+    generateAttemptRef.current = null;
     setSubmitAttempt(null);
+    setRetryAttempt(null);
     setFieldErrors({});
     setSummaryError(null);
     setActiveVisit(false);
@@ -170,13 +186,21 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
   }
 
   function createPatient(): void {
-    if (!generateAttempt && selectedPatient && hasDraftValues(draft) && typeof window !== "undefined") {
+    const creatingNewAttempt = !generateAttempt;
+    if (creatingNewAttempt && selectedPatient && hasDraftValues(draft) && typeof window !== "undefined") {
       const confirmed = window.confirm("สร้างผู้ป่วยใหม่และล้างความพยายามส่ง Intake เดิมหรือไม่");
       if (!confirmed) return;
-      setSubmitAttempt(null);
     }
     const attempt = generateAttempt ?? createCommandAttempt<Record<string, never>, Record<string, never>>({}, {});
-    if (!generateAttempt) setGenerateAttempt(attempt);
+    if (creatingNewAttempt) {
+      setGenerateAttempt(attempt);
+      generateAttemptRef.current = attempt;
+      setSubmitAttempt(null);
+      setRetryAttempt(null);
+      setFieldErrors({});
+      setActiveVisit(false);
+      setSummaryError(null);
+    }
     generateMutation.mutate(attempt);
   }
 
@@ -191,7 +215,12 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
     }
     const attempt = submitAttempt ?? createIntakeAttempt(selectedPatient, draft);
     if (!submitAttempt) setSubmitAttempt(attempt);
-    submitMutation.mutate(attempt, { onError: handleSubmitError });
+    submitMutation.mutate(attempt, {
+      onError: (error) => {
+        setRetryAttempt(attempt);
+        handleSubmitError(error);
+      },
+    });
   }
 
   const error = describeError(submitMutation.error);
@@ -213,8 +242,13 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
           <strong>{activeVisit ? "ผู้ป่วยมีคิวที่กำลังดำเนินการ" : error.status === 0 || error.status >= 500 ? "ยังบันทึกไม่ได้" : "กรุณาตรวจสอบข้อมูล"}</strong>
           <span>{summaryError}</span>
           {activeVisit ? <Link className="queue-recovery-link" to="/queue">โหลดคิวล่าสุด</Link> : null}
-          {submitAttempt && (error.status === 0 || error.status >= 500) ? (
-            <button className="inline-retry-button" type="button" onClick={() => submitMutation.mutate(submitAttempt, { onError: handleSubmitError })} disabled={submitPending}>
+          {retryAttempt && (error.status === 0 || error.status >= 500) ? (
+            <button className="inline-retry-button" type="button" onClick={() => submitMutation.mutate(retryAttempt, {
+              onError: (nextError) => {
+                setRetryAttempt(retryAttempt);
+                handleSubmitError(nextError);
+              },
+            })} disabled={submitPending}>
               {submitPending ? "กำลังลองใหม่…" : "ลองบันทึกอีกครั้ง"}
             </button>
           ) : null}
@@ -237,6 +271,7 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
                   placeholder="ค้นหา HN หรือชื่อผู้ป่วยทดสอบ"
                   autoComplete="off"
                   spellCheck={false}
+                  disabled={generationPending || submitPending}
                 />
               </span>
               <span className="field-hint">เริ่มค้นหาเมื่อพิมพ์อย่างน้อย 2 ตัวอักษร</span>
@@ -256,7 +291,7 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
 
           {searchResults.length > 0 ? (
             <div className="patient-search-results" aria-label="ผลการค้นหาผู้ป่วย">
-              {searchResults.map((result) => <SyntheticSearchResult key={result.id} patient={result} onSelect={choosePatient} />)}
+              {searchResults.map((result) => <SyntheticSearchResult key={result.id} patient={result} onSelect={choosePatient} disabled={generationPending || submitPending} />)}
             </div>
           ) : debouncedSearch.length >= 2 && !patientSearch.isFetching && !patientSearch.error ? (
             <p className="patient-search-empty">ไม่พบผู้ป่วยสังเคราะห์ที่ตรงกับคำค้นหา</p>

@@ -29,6 +29,14 @@ const patient = {
   createdAt: "2026-08-03T00:00:00.000Z",
 };
 
+const secondPatient = {
+  ...patient,
+  id: "patient-2",
+  hn: "DEMO-000124",
+  displayName: "ผู้ป่วยทดสอบ 000124",
+  phone: "0000000124",
+};
+
 const intakeResponse = {
   data: {
     visit: {
@@ -181,6 +189,116 @@ describe("connected Intake journey", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/queue"));
     expect(keys).toHaveLength(2);
     expect(keys[0]).toBe(keys[1]);
+  });
+
+  it("creates a fresh Intake attempt when the draft is edited, while explicit retry keeps the old attempt", async () => {
+    const user = userEvent.setup();
+    const bodies: unknown[] = [];
+    const keys: string[] = [];
+    let attempts = 0;
+    server.use(
+      http.post("/api/patients/synthetic", () => HttpResponse.json({ data: patient, replayed: false }, { status: 201 })),
+      http.post("/api/visits/intake", async ({ request }) => {
+        attempts += 1;
+        bodies.push(await request.json());
+        keys.push(request.headers.get("Idempotency-Key") ?? "");
+        return attempts === 1
+          ? jsonError("INTERNAL_ERROR", "ระบบไม่พร้อมใช้งาน", 503)
+          : HttpResponse.json(intakeResponse, { status: 201 });
+      }),
+    );
+    const router = renderIntake();
+    await user.click(await screen.findByRole("button", { name: /สร้างผู้ป่วยสังเคราะห์/ }));
+    await waitFor(() => expect(screen.getByText(patient.displayName)).toBeInTheDocument());
+    const complaint = await screen.findByRole("textbox", { name: /อาการสำคัญ/ });
+    await user.type(complaint, "ไอ");
+    await user.click(screen.getByRole("button", { name: /ส่งพบแพทย์/ }));
+    await waitFor(() => expect(screen.getByText("ยังบันทึกไม่ได้")).toBeInTheDocument());
+
+    await user.clear(complaint);
+    await user.type(complaint, "ไข้");
+    await user.click(screen.getByRole("button", { name: /ส่งพบแพทย์/ }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/queue"));
+    expect((bodies[0] as { payload: { chiefComplaint: string } }).payload.chiefComplaint).toBe("ไอ");
+    expect((bodies[1] as { payload: { chiefComplaint: string } }).payload.chiefComplaint).toBe("ไข้");
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  it("clears an old Intake attempt and errors when generating another Patient with an empty draft", async () => {
+    const user = userEvent.setup();
+    const bodies: unknown[] = [];
+    const keys: string[] = [];
+    let generationCount = 0;
+    server.use(
+      http.post("/api/patients/synthetic", () => {
+        generationCount += 1;
+        return HttpResponse.json({ data: generationCount === 1 ? patient : secondPatient, replayed: false }, { status: 201 });
+      }),
+      http.post("/api/visits/intake", async ({ request }) => {
+        bodies.push(await request.json());
+        keys.push(request.headers.get("Idempotency-Key") ?? "");
+        return bodies.length === 1
+          ? jsonError("VALIDATION_FAILED", "กรุณาตรวจสอบข้อมูล", 422, {
+            fieldErrors: { "payload.chiefComplaint": "กรุณาระบุอาการสำคัญ" },
+          })
+          : HttpResponse.json(intakeResponse, { status: 201 });
+      }),
+    );
+    const router = renderIntake();
+    const generate = await screen.findByRole("button", { name: /สร้างผู้ป่วยสังเคราะห์/ });
+    await user.click(generate);
+    await waitFor(() => expect(screen.getByText(patient.displayName)).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: /ส่งพบแพทย์/ }));
+    await waitFor(() => expect(screen.getByText("กรุณาระบุอาการสำคัญ")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: /สร้างผู้ป่วยสังเคราะห์/ }));
+    await waitFor(() => expect(screen.getByText(secondPatient.displayName)).toBeInTheDocument());
+    expect(screen.queryByText("กรุณาระบุอาการสำคัญ")).not.toBeInTheDocument();
+    const complaint = await screen.findByRole("textbox", { name: /อาการสำคัญ/ });
+    await user.type(complaint, "ไข้");
+    await user.click(screen.getByRole("button", { name: /ส่งพบแพทย์/ }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/queue"));
+    expect((bodies[1] as { payload: { patientId: string; chiefComplaint: string } }).payload).toMatchObject({
+      patientId: secondPatient.id,
+      chiefComplaint: "ไข้",
+    });
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  it("locks Patient selection while synthetic generation is pending", async () => {
+    const user = userEvent.setup();
+    let resolveGeneration!: (response: Response) => void;
+    server.use(
+      validPatientSearch(),
+      http.post("/api/patients/synthetic", () => new Promise((resolve) => { resolveGeneration = resolve; })),
+    );
+    renderIntake();
+    const search = await screen.findByRole("textbox", { name: /ค้นหา|ผู้ป่วย/ });
+    await user.type(search, "000123");
+    await waitFor(() => expect(screen.getByText(patient.displayName)).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: /เลือกผู้ป่วย/ }));
+    await user.click(screen.getByRole("button", { name: /สร้างผู้ป่วยสังเคราะห์/ }));
+    expect(search).toBeDisabled();
+    resolveGeneration(new Response(JSON.stringify({ data: secondPatient, replayed: false }), { status: 201 }));
+    await waitFor(() => expect(screen.getByText(secondPatient.displayName)).toBeInTheDocument());
+  });
+
+  it("locks Patient selection while Intake is pending", async () => {
+    const user = userEvent.setup();
+    let resolveIntake!: (response: Response) => void;
+    server.use(
+      validPatientSearch(),
+      http.post("/api/visits/intake", () => new Promise((resolve) => { resolveIntake = resolve; })),
+    );
+    renderIntake();
+    const search = await screen.findByRole("textbox", { name: /ค้นหา|ผู้ป่วย/ });
+    await user.type(search, "000123");
+    await waitFor(() => expect(screen.getByText(patient.displayName)).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: /เลือกผู้ป่วย/ }));
+    await user.type(await screen.findByRole("textbox", { name: /อาการสำคัญ/ }), "ไอ");
+    await user.click(screen.getByRole("button", { name: /ส่งพบแพทย์/ }));
+    expect(search).toBeDisabled();
+    resolveIntake(new Response(JSON.stringify(intakeResponse), { status: 201 }));
   });
 
   it("shows 422 field and summary errors, focuses the first invalid field, and preserves the route", async () => {

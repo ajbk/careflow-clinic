@@ -20,3 +20,9 @@
 - `npm run build` — pass
 - `git diff --exit-code -- careflow-webapp` — pass
 
+## Fix follow-up
+
+- Draft edits now invalidate the main Intake attempt and clear the explicit retry control, so a corrected form creates a new payload/key while an untouched retry replays the original attempt.
+- Generating a different synthetic Patient clears stale Intake attempts and validation state, including when the prior draft was empty.
+- Patient search/selection is locked during synthetic generation and Intake submission to prevent late responses from overwriting an intentional selection.
+- Focused Intake coverage now includes these attempt-boundary and pending-mutation races (10/10 focused tests).
