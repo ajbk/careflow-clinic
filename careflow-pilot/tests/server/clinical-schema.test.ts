@@ -209,6 +209,10 @@ describe("clinical evidence schema", () => {
       const sql = tableSql(value, table);
       for (const check of checks) expect(sql).toContain(check);
     }
+    expect(tableSql(value, "clinical_notes"))
+      .toContain("`signed_by_display_name` text DEFAULT 'legacy signer snapshot unavailable' NOT NULL");
+    expect(tableSql(value, "medication_decisions"))
+      .toContain("`signed_by_display_name` text DEFAULT 'legacy signer snapshot unavailable' NOT NULL");
 
     const expectedForeignKeys: Record<string, Array<Record<string, string>>> = {
       patient_allergy_revisions: [
@@ -319,12 +323,18 @@ describe("clinical evidence schema", () => {
       INSERT INTO patient_allergy_items VALUES ('allergy-item-001', 'allergy-revision-001', 0, 'substance', 'reaction', 'MILD', NULL);
       INSERT INTO clinical_note_drafts VALUES ('note-draft-001', 'visit-001', 1, '', '', '', '', 'doctor-001', 'doctor-001', '${now}', '${now}');
       INSERT INTO clinical_note_draft_diagnoses VALUES ('note-draft-diagnosis-001', 'note-draft-001', 0, 'draft diagnosis');
-      INSERT INTO clinical_notes VALUES ('note-001', 'visit-001', 1, 'subjective', 'objective', 'assessment', 'plan', 1, 'doctor-001', '${now}', '${hash}');
+      INSERT INTO clinical_notes (
+        id, visit_id, version, subjective, objective, assessment, plan, source_draft_revision,
+        signed_by, signed_at, content_hash, signed_by_display_name
+      ) VALUES ('note-001', 'visit-001', 1, 'subjective', 'objective', 'assessment', 'plan', 1, 'doctor-001', '${now}', '${hash}', 'พญ. ทดสอบ');
       INSERT INTO clinical_note_diagnoses VALUES ('note-diagnosis-001', 'note-001', 0, 'diagnosis');
       INSERT INTO clinical_note_amendments VALUES ('note-amendment-001', 'note-001', 1, 'amendment', 'reason', 'doctor-001', '${now}', '${hash}');
       INSERT INTO medication_decision_drafts VALUES ('decision-draft-001', 'visit-001', 1, 'ORDER', NULL, 'doctor-001', 'doctor-001', '${now}', '${now}');
       INSERT INTO medication_order_draft_items VALUES ('order-draft-item-001', 'decision-draft-001', 0, 'DEMO-MED-001', 1, 1, 'ทดสอบ');
-      INSERT INTO medication_decisions VALUES ('decision-001', 'visit-001', 1, 'ORDER', NULL, NULL, NULL, 'doctor-001', '${now}', '${hash}');
+      INSERT INTO medication_decisions (
+        id, visit_id, version, kind, no_medication_reason, revision_reason, supersedes_id,
+        signed_by, signed_at, content_hash, signed_by_display_name
+      ) VALUES ('decision-001', 'visit-001', 1, 'ORDER', NULL, NULL, NULL, 'doctor-001', '${now}', '${hash}', 'พญ. ทดสอบ');
       INSERT INTO medication_order_items VALUES ('order-item-001', 'decision-001', 0, 'DEMO-MED-001', 1, '[DEMO] ยาทดสอบชนิด A', '500 หน่วยทดสอบ', 'เม็ดทดสอบ', 'เม็ด', 1, 'ทดสอบ');
     `);
 

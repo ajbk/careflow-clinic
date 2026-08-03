@@ -57,6 +57,7 @@ export const clinicalNotes = sqliteTable(
     plan: text("plan").notNull(),
     sourceDraftRevision: integer("source_draft_revision").notNull(),
     signedBy: text("signed_by").notNull().references(() => staffAccounts.id),
+    signedByDisplayName: text("signed_by_display_name").notNull().default("legacy signer snapshot unavailable"),
     signedAt: text("signed_at").notNull(),
     contentHash: text("content_hash").notNull(),
   },

@@ -100,9 +100,6 @@ export function createNoteService(options: NoteServiceOptions): NoteService {
       const note = options.database.db.select().from(clinicalNotes)
         .where(eq(clinicalNotes.visitId, visitId)).get();
       if (!note) return null;
-      const signedBy = options.database.db.select({ id: staffAccounts.id, displayName: staffAccounts.displayName })
-        .from(staffAccounts).where(eq(staffAccounts.id, note.signedBy)).get();
-      if (!signedBy) throw new Error("Clinical note signer is missing");
       const diagnoses = options.database.db.select({ diagnosisText: clinicalNoteDiagnoses.diagnosisText })
         .from(clinicalNoteDiagnoses).where(eq(clinicalNoteDiagnoses.clinicalNoteId, note.id))
         .orderBy(asc(clinicalNoteDiagnoses.position)).all().map((row) => row.diagnosisText);
@@ -110,7 +107,8 @@ export function createNoteService(options: NoteServiceOptions): NoteService {
         id: note.id, visitId: note.visitId, version: note.version,
         subjective: note.subjective, objective: note.objective, assessment: note.assessment, plan: note.plan,
         diagnoses, sourceDraftRevision: note.sourceDraftRevision, revisionReason: null, supersedesId: null,
-        signedBy, signedAt: note.signedAt, contentHash: note.contentHash,
+        signedBy: { id: note.signedBy, displayName: note.signedByDisplayName },
+        signedAt: note.signedAt, contentHash: note.contentHash,
       };
     },
 
@@ -219,6 +217,7 @@ export function createNoteService(options: NoteServiceOptions): NoteService {
         plan: signed.plan,
         sourceDraftRevision: signed.sourceDraftRevision,
         signedBy: actor.id,
+        signedByDisplayName: actor.displayName,
         signedAt: signed.signedAt,
         contentHash: signed.contentHash,
       }).run();

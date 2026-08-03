@@ -93,12 +93,18 @@ function seedClinicalEvidence(databasePath: string): void {
       INSERT INTO patient_allergy_items VALUES ('reset-allergy-item', 'reset-allergy-revision', 0, 'substance', 'reaction', 'MILD', NULL);
       INSERT INTO clinical_note_drafts VALUES ('reset-note-draft', '${visitId}', 1, '', '', '', '', 'reset-assistant-001', 'reset-assistant-001', '${now}', '${now}');
       INSERT INTO clinical_note_draft_diagnoses VALUES ('reset-note-draft-diagnosis', 'reset-note-draft', 0, 'diagnosis');
-      INSERT INTO clinical_notes VALUES ('reset-note', '${visitId}', 1, 'subjective', 'objective', 'assessment', 'plan', 1, 'reset-assistant-001', '${now}', '${hash}');
+      INSERT INTO clinical_notes (
+        id, visit_id, version, subjective, objective, assessment, plan, source_draft_revision,
+        signed_by, signed_at, content_hash, signed_by_display_name
+      ) VALUES ('reset-note', '${visitId}', 1, 'subjective', 'objective', 'assessment', 'plan', 1, 'reset-assistant-001', '${now}', '${hash}', 'ผู้ช่วยรีเซ็ต');
       INSERT INTO clinical_note_diagnoses VALUES ('reset-note-diagnosis', 'reset-note', 0, 'diagnosis');
       INSERT INTO clinical_note_amendments VALUES ('reset-note-amendment', 'reset-note', 1, 'content', 'reason', 'reset-assistant-001', '${now}', '${hash}');
       INSERT INTO medication_decision_drafts VALUES ('reset-decision-draft', '${visitId}', 1, 'ORDER', NULL, 'reset-assistant-001', 'reset-assistant-001', '${now}', '${now}');
       INSERT INTO medication_order_draft_items VALUES ('reset-order-draft-item', 'reset-decision-draft', 0, 'DEMO-MED-001', 1, 1, 'ทดสอบ');
-      INSERT INTO medication_decisions VALUES ('reset-decision', '${visitId}', 1, 'ORDER', NULL, NULL, NULL, 'reset-assistant-001', '${now}', '${hash}');
+      INSERT INTO medication_decisions (
+        id, visit_id, version, kind, no_medication_reason, revision_reason, supersedes_id,
+        signed_by, signed_at, content_hash, signed_by_display_name
+      ) VALUES ('reset-decision', '${visitId}', 1, 'ORDER', NULL, NULL, NULL, 'reset-assistant-001', '${now}', '${hash}', 'ผู้ช่วยรีเซ็ต');
       INSERT INTO medication_order_items VALUES ('reset-order-item', 'reset-decision', 0, 'DEMO-MED-001', 1, '[DEMO] ยาทดสอบชนิด A', '500 หน่วยทดสอบ', 'เม็ดทดสอบ', 'เม็ด', 1, 'ทดสอบ');
     `);
   } finally {

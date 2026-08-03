@@ -9,7 +9,7 @@ import {
 } from "../../src/server/modules/medication/index.js";
 import { clinicalNoteDrafts, clinicalNotes, createNoteService } from "../../src/server/modules/note/index.js";
 import { createPatientService } from "../../src/server/modules/patient/index.js";
-import { auditEvents, executeIdempotent, idempotencyRecords } from "../../src/server/modules/platform/index.js";
+import { auditEvents, executeIdempotent, hashEvidence, idempotencyRecords } from "../../src/server/modules/platform/index.js";
 import { visits } from "../../src/server/modules/visit/index.js";
 import { createVisitService } from "../../src/server/modules/visit/index.js";
 import { createClinicalWorkflow } from "../../src/server/workflows/clinical.js";
@@ -480,6 +480,29 @@ describe("consultation finalization", () => {
     expect(collision.json().error.code).toBe("IDEMPOTENCY_CONFLICT");
     expect(stored?.responseJson).not.toContain("อาการทดสอบ");
     expect(stored?.responseJson).not.toContain("คำแนะนำทดสอบ");
+  });
+
+  it("replays signed evidence with its signer display-name snapshot after account mutation", async () => {
+    const test = await fixture();
+    const visitId = await createConsultingVisit(test);
+    await saveCompleteDraft(test, visitId);
+    const first = await finalize(test, visitId);
+    const initial = first.json().data;
+    test.database.sqlite.prepare("UPDATE staff_accounts SET display_name=? WHERE id=?")
+      .run("ชื่อผู้ลงนามที่เปลี่ยนแล้ว", test.doctor.actor.id);
+
+    const replay = await finalize(test, visitId);
+    const replayed = replay.json().data;
+    const { contentHash: noteHash, ...noteEvidence } = replayed.clinicalNote;
+    const { contentHash: decisionHash, ...decisionEvidence } = replayed.medicationDecision;
+
+    expect(replay.statusCode).toBe(200);
+    expect(replayed.clinicalNote.signedBy).toEqual(initial.clinicalNote.signedBy);
+    expect(replayed.medicationDecision.signedBy).toEqual(initial.medicationDecision.signedBy);
+    expect(noteHash).toBe(initial.clinicalNote.contentHash);
+    expect(decisionHash).toBe(initial.medicationDecision.contentHash);
+    expect(hashEvidence(noteEvidence)).toBe(noteHash);
+    expect(hashEvidence(decisionEvidence)).toBe(decisionHash);
   });
 
   it.each(["after Note", "after decision", "before Visit transition"] as const)(

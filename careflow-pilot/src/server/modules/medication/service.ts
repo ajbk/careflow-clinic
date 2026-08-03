@@ -200,13 +200,11 @@ export function createMedicationService(input: MedicationServiceOptions): Medica
       const decision = input.database.db.select().from(medicationDecisions)
         .where(eq(medicationDecisions.visitId, visitId)).get();
       if (!decision) return null;
-      const signedBy = input.database.db.select({ id: staffAccounts.id, displayName: staffAccounts.displayName })
-        .from(staffAccounts).where(eq(staffAccounts.id, decision.signedBy)).get();
-      if (!signedBy) throw new Error("Medication decision signer is missing");
       const base = {
         id: decision.id, visitId: decision.visitId, version: decision.version,
         revisionReason: decision.revisionReason, supersedesId: decision.supersedesId,
-        signedBy, signedAt: decision.signedAt, contentHash: decision.contentHash,
+        signedBy: { id: decision.signedBy, displayName: decision.signedByDisplayName },
+        signedAt: decision.signedAt, contentHash: decision.contentHash,
       };
       if (decision.kind === "NO_MEDICATION") {
         return {
@@ -318,7 +316,8 @@ export function createMedicationService(input: MedicationServiceOptions): Medica
         tx.insert(medicationDecisions).values({
           id: signed.id, visitId: signed.visitId, version: signed.version, kind: signed.kind,
           noMedicationReason: signed.noMedicationReason, revisionReason: null, supersedesId: null,
-          signedBy: actor.id, signedAt: signed.signedAt, contentHash: signed.contentHash,
+          signedBy: actor.id, signedByDisplayName: actor.displayName,
+          signedAt: signed.signedAt, contentHash: signed.contentHash,
         }).run();
         appendAuditEvent({
           tx, actor, id: idFactory(), action: "medication.decision-signed", entityType: "medication_decision",
@@ -352,7 +351,8 @@ export function createMedicationService(input: MedicationServiceOptions): Medica
       tx.insert(medicationDecisions).values({
         id: signed.id, visitId: signed.visitId, version: signed.version, kind: signed.kind,
         noMedicationReason: null, revisionReason: null, supersedesId: null,
-        signedBy: actor.id, signedAt: signed.signedAt, contentHash: signed.contentHash,
+        signedBy: actor.id, signedByDisplayName: actor.displayName,
+        signedAt: signed.signedAt, contentHash: signed.contentHash,
       }).run();
       tx.insert(medicationOrderItems).values(signed.items.map((item, position) => ({
         id: idFactory(), medicationDecisionId: signed.id, position,
