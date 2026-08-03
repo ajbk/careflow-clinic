@@ -62,6 +62,13 @@ for (const viewport of viewports) {
       await expectVisibleControlsAtLeast48Px(assistantPage);
       await expect(assistantPage.getByText(/รีเซ็ตข้อมูล|Reset synthetic|ล้างข้อมูล/i)).toHaveCount(0);
 
+      const reviewAllergy = assistantPage.getByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" });
+      await reviewAllergy.focus();
+      await assistantPage.keyboard.press("Space");
+      const allergyDialog = assistantPage.getByRole("dialog", { name: "ทบทวนประวัติแพ้ยา" });
+      await expect(allergyDialog).toBeVisible();
+      await allergyDialog.getByRole("button", { name: "ยกเลิก" }).click();
+
       await loginAndAcknowledge(doctorPage, server.baseURL, "doctor");
       await expect(doctorPage).toHaveURL(/\/queue$/);
       await expect(doctorPage.locator(".queue-card")).toContainText(hn);
@@ -69,12 +76,34 @@ for (const viewport of viewports) {
       await expectNoHorizontalOverflow(doctorPage);
       await expectVisibleControlsAtLeast48Px(doctorPage);
 
-      await doctorPage.getByRole("button", { name: "เริ่มการตรวจ" }).click();
+      const startConsultation = doctorPage.getByRole("button", { name: "เริ่มการตรวจ" });
+      await startConsultation.focus();
+      await doctorPage.keyboard.press("Enter");
       await expect(doctorPage).toHaveURL(/\/consultations\/[^/]+$/);
       const consultationPath = new URL(doctorPage.url()).pathname;
       await expect(doctorPage.getByRole("heading", { name: "ห้องตรวจผู้ป่วย" })).toBeVisible();
       await expect(doctorPage.locator(".consultation-patient-rail")).toContainText(hn);
       await expect(doctorPage.locator(".consultation-clinical-content")).toBeVisible();
+      await expect(doctorPage.getByRole("button", { name: "ทบทวนประวัติแพ้" })).toBeVisible();
+      await expect(doctorPage.getByLabel("Clinical Note editor")).toBeVisible();
+      await expect(doctorPage.getByLabel("Medication decision")).toBeVisible();
+      const signAction = doctorPage.getByRole("button", { name: "ลงนามและส่งต่อ" });
+      await signAction.scrollIntoViewIfNeeded();
+      await expect(signAction).toBeVisible();
+      expect(await signAction.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(48);
+      await expect.poll(() => signAction.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return bounds.top >= 0 && bounds.bottom <= window.innerHeight;
+      })).toBe(true);
+      if (viewport.name === "phone") {
+        const rail = doctorPage.locator(".consultation-patient-rail");
+        const clinicalContent = doctorPage.locator(".consultation-clinical-content");
+        const railBox = await rail.boundingBox();
+        const contentBox = await clinicalContent.boundingBox();
+        expect(railBox).not.toBeNull();
+        expect(contentBox).not.toBeNull();
+        expect((railBox?.y ?? 0) + (railBox?.height ?? 0)).toBeLessThanOrEqual(contentBox?.y ?? 0);
+      }
       await expectSinglePilotBanner(doctorPage);
       await expectNoHorizontalOverflow(doctorPage);
       await expectVisibleControlsAtLeast48Px(doctorPage);

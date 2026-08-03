@@ -2,7 +2,9 @@
 
 > **PILOT — ข้อมูลสังเคราะห์เท่านั้น ห้ามกรอกข้อมูลผู้ป่วยจริง**
 
-This is a runnable local, single-host pilot for the CareFlow rural-clinic workflow. It is deliberately limited to synthetic Patient generation, Intake, Queue, and the read-only Consultation workspace. Clinical Note, medication decisions, inventory, finance/payment, backup, HTTPS/Caddy, and real Patient data are **not enabled** in this milestone.
+This is a runnable local, single-host pilot for the CareFlow rural-clinic workflow. It is deliberately limited to synthetic Patient generation, Intake, a shared Queue, and the Doctor Consultation workspace. The enabled clinical slice records an append-only Allergy review, a SOAP Note and diagnosis draft, then an immutable signed clinical Note and exactly one synthetic medication decision: `ORDER` from the four repository-seeded `[DEMO]` medicines, or `NO_MEDICATION` with a reason.
+
+Signing an `ORDER` moves the Visit to `รอจัดยา`; signing `NO_MEDICATION` moves it to `รอคิดเงิน`. These are deliberately pending states only: this pilot does not prepare, dispense, charge, or close a Visit. Signed hashes, revisions, and Queue/dashboard status survive a restart because they are stored in the local SQLite file.
 
 ## Quick start (Node 22)
 
@@ -31,9 +33,13 @@ npm start
 
 ## Two-browser rehearsal
 
-1. In Browser A, sign in as `assistant`, acknowledge the pilot rules, generate a synthetic Patient, complete the chief complaint, and send the Visit to Queue.
-2. In Browser B (a separate private window/context), sign in as `doctor`, acknowledge the rules, reload Queue, and start the Consultation.
-3. Reload Browser A and confirm that the same HN/Visit is `กำลังตรวจ`. The browser is not an authority for Patient or Visit state; the server database is.
+1. In Browser A, sign in as `assistant`, acknowledge the pilot rules, generate a synthetic Patient, complete the chief complaint, send the Visit to Queue, and review Allergy as `NONE_KNOWN` or `UNKNOWN` with the visible form.
+2. In Browser B (a separate private window/context), sign in as `doctor`, acknowledge the rules, reload Queue, start the Consultation, complete all SOAP fields and a diagnosis, then choose one path:
+   - `ORDER`: select `[DEMO] ยาทดสอบชนิด A`, set a synthetic quantity and directions, save the draft, then sign.
+   - `NO_MEDICATION`: enter a synthetic reason, save the draft, then sign.
+3. Reload Browser B and confirm the signed hash and decision version remain. Reload Browser A and confirm the same HN/Visit is `รอจัดยา` for `ORDER`, or `รอคิดเงิน` for `NO_MEDICATION`. Assistant must not open the Doctor Consultation URL; the server returns `403` before clinical data is read.
+
+The browser is not an authority for Patient or Visit state; the server database is. Never enter real clinical prose, real medication directions, or real Patient identity in this rehearsal.
 
 ## Explicit synthetic reset
 
@@ -66,3 +72,7 @@ npm run test:e2e
 ```
 
 The E2E fixture creates a temporary synthetic-only SQLite file and two isolated browser contexts; it never reads credentials from `.env`.
+
+## Explicitly unavailable
+
+Inventory, stock reservation, preparation, labeling, dispensing, Finance/payment, Visit close, backup/restore, deployment, HTTPS/Caddy, external integrations, analytics, and real Patient data are **disabled** for this local pilot. The database reset command is a synthetic-data maintenance tool, not a backup or deployment mechanism.
