@@ -14,6 +14,7 @@ CREATE TABLE `patients` (
 	CONSTRAINT "patients_display_name_check" CHECK("patients"."display_name" = 'ผู้ป่วยทดสอบ ' || substr("patients"."hn", 6)),
 	CONSTRAINT "patients_phone_check" CHECK(length("patients"."phone") = 10 AND "patients"."phone" GLOB '000000[0-9][0-9][0-9][0-9]'),
 	CONSTRAINT "patients_phone_hn_check" CHECK("patients"."phone" = '000000' || substr("patients"."hn", -4)),
+	CONSTRAINT "patients_sex_check" CHECK("patients"."sex" IN ('female', 'male', 'unknown')),
 	CONSTRAINT "patients_demographics_check" CHECK("patients"."birth_date" = '1990-01-01' AND "patients"."sex" = 'unknown'),
 	CONSTRAINT "patients_revision_check" CHECK("patients"."revision" >= 1)
 );

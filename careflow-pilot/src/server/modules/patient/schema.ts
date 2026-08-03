@@ -37,6 +37,10 @@ export const patients = sqliteTable(
       sql`${table.phone} = '000000' || substr(${table.hn}, -4)`,
     ),
     check(
+      "patients_sex_check",
+      sql`${table.sex} IN ('female', 'male', 'unknown')`,
+    ),
+    check(
       "patients_demographics_check",
       sql`${table.birthDate} = '1990-01-01' AND ${table.sex} = 'unknown'`,
     ),

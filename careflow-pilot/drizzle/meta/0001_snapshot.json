@@ -687,6 +687,10 @@
           "name": "patients_phone_hn_check",
           "value": "\"patients\".\"phone\" = '000000' || substr(\"patients\".\"hn\", -4)"
         },
+        "patients_sex_check": {
+          "name": "patients_sex_check",
+          "value": "\"patients\".\"sex\" IN ('female', 'male', 'unknown')"
+        },
         "patients_demographics_check": {
           "name": "patients_demographics_check",
           "value": "\"patients\".\"birth_date\" = '1990-01-01' AND \"patients\".\"sex\" = 'unknown'"
