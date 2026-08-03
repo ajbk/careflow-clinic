@@ -7,15 +7,22 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "npm run dev:client",
+    "dev": "concurrently -k -s first npm:dev:server npm:dev:client",
+    "dev:server": "node --env-file-if-exists=.env --watch --import tsx src/server/server.ts",
     "dev:client": "vite --host 127.0.0.1 --port 5173",
     "clean": "rimraf dist",
-    "build": "npm run clean && npm run build:client",
+    "build": "npm run clean && npm run build:client && npm run build:server",
     "build:client": "vite build",
-    "test": "npm run test:client",
+    "build:server": "tsup",
+    "start": "node --env-file-if-exists=.env dist/server/server.js",
+    "test": "npm run test:client && npm run test:server",
     "test:client": "vitest run --config vitest.client.config.ts",
     "test:server": "vitest run --config vitest.server.config.ts",
-    "typecheck": "tsc -p tsconfig.client.json --noEmit",
+    "typecheck": "npm run typecheck:client && npm run typecheck:server",
+    "typecheck:client": "tsc -p tsconfig.client.json --noEmit",
+    "typecheck:server": "tsc -p tsconfig.server.json --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "node --env-file-if-exists=.env --import tsx scripts/migrate.ts",
     "lint": "eslint ."
   },
   "dependencies": {
