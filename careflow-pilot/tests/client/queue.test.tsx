@@ -70,6 +70,12 @@ const workspace = {
   allowedActions: [] as const,
 };
 
+const waitingWorkspace = {
+  ...workspace,
+  visit: waitingItem.visit,
+  allowedActions: waitingItem.allowedActions,
+};
+
 const server = setupServer();
 
 function session(role: "assistant" | "doctor") {
@@ -266,6 +272,20 @@ describe("connected shared queue workflow", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /ลงนาม|เพิ่มยา|บันทึกร่าง|ส่งห้องยา/ })).not.toBeInTheDocument();
+  });
+
+  it("directs the Doctor back to Queue when the workspace Visit is still waiting", async () => {
+    server.use(
+      http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: waitingWorkspace })),
+    );
+    renderRoute("/consultations/visit-42");
+
+    expect(await screen.findByRole("region", { name: "Clinical Note" })).toHaveTextContent(
+      "ยังไม่ได้เริ่มตรวจ — กลับไปที่คิวผู้ป่วยเพื่อเริ่มการตรวจ",
+    );
+    expect(screen.getAllByText("รอตรวจ").length).toBeGreaterThan(0);
+    expect(screen.getByText("ยังไม่เริ่ม")).toBeInTheDocument();
+    expect(screen.queryByText(/เริ่มตรวจแล้ว/)).not.toBeInTheDocument();
   });
 
   it("shows arrival and consultation start times for each queue state", async () => {

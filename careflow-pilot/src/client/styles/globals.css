@@ -195,7 +195,7 @@ button {
 }
 
 .clinical-workspace-main {
-  width: min(100%, 1440px);
+  width: min(100%, calc(var(--content-max) + 80px));
   margin: 0 auto;
   padding: 28px clamp(16px, 3vw, 40px) 64px;
 }

@@ -37,3 +37,20 @@ for (const viewport of viewports) {
     }
   });
 }
+
+test("bounds the Doctor clinical page by the shared desktop content width", async ({ browser }) => {
+  const server = await startPilotServer();
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+  try {
+    await loginAndAcknowledge(page, server.baseURL, "doctor");
+    await page.goto(`${server.baseURL}/consultations/unknown-visit`);
+
+    const consultationPage = page.locator(".consultation-page");
+    await expect(consultationPage).toBeVisible();
+    expect(await consultationPage.evaluate((element) => element.getBoundingClientRect().width)).toBeLessThanOrEqual(1120);
+  } finally {
+    await context.close();
+    await server.close();
+  }
+});

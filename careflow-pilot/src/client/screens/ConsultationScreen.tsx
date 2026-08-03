@@ -28,6 +28,7 @@ export function ConsultationScreen(): ReactElement {
 
   const data = workspace.data;
   const status = data.visit.status === "CONSULTING" ? { label: "กำลังตรวจ", tone: "active" as const } : { label: "รอตรวจ", tone: "waiting" as const };
+  const consultationStarted = data.visit.status === "CONSULTING" && data.visit.startedAt !== null;
   const vital = (value: number | null, suffix = "") => value === null ? "—" : `${value}${suffix}`;
 
   return (
@@ -72,7 +73,12 @@ export function ConsultationScreen(): ReactElement {
               <div><strong>Assessment</strong><span>ยังไม่มีการวินิจฉัยหรือการตัดสินใจทางคลินิก</span></div>
               <div><strong>Plan</strong><span>ยังไม่มีคำสั่งยา การรักษา หรือการส่งต่อ</span></div>
             </div>
-            <div className="signed-note milestone-next-copy"><LockKeyhole aria-hidden="true" size={17} />เริ่มตรวจแล้ว — การบันทึกและลงนาม Clinical Note จะเปิดใน Milestone ถัดไป</div>
+            <div className="signed-note milestone-next-copy">
+              <LockKeyhole aria-hidden="true" size={17} />
+              {consultationStarted
+                ? "เริ่มตรวจแล้ว — การบันทึกและลงนาม Clinical Note จะเปิดใน Milestone ถัดไป"
+                : "ยังไม่ได้เริ่มตรวจ — กลับไปที่คิวผู้ป่วยเพื่อเริ่มการตรวจ"}
+            </div>
           </section>
         </div>
       </div>

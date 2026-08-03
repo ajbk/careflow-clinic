@@ -423,7 +423,7 @@
 .consultation-readonly p { margin: 0; color: var(--on-surface-variant); font-size: 11px; }
 .consultation-skeleton { height: 90px; margin: 22px; border-radius: 14px; background: var(--surface-container); animation: pilot-skeleton 1.2s ease-in-out infinite alternate; }
 .consultation-skeleton-large { height: 300px; margin-top: 0; }
-.app-shell-clinical .consultation-page { max-width: 1360px; }
+.app-shell-clinical .consultation-page { max-width: var(--content-max); }
 .clinical-workspace-grid { display: grid; grid-template-columns: minmax(240px, 252px) minmax(0, 1fr); align-items: start; gap: 24px; }
 .consultation-patient-rail { position: sticky; top: 96px; display: grid; overflow: hidden; }
 .consultation-patient-rail .patient-header { align-items: flex-start; flex-direction: column; padding: 20px; }
