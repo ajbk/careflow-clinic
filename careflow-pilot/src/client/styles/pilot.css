@@ -389,6 +389,7 @@
 .quick-action-unavailable small { color: var(--on-surface-variant); font-size: 11px; }
 .queue-vitals { font-size: 11px !important; }
 .queue-page .queue-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.overview-page .metric-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .queue-time { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
 .queue-time > svg { flex: 0 0 auto; }
 .queue-start-time { color: var(--on-surface-variant); }
@@ -463,6 +464,7 @@
 @keyframes pilot-skeleton { from { opacity: .55; } to { opacity: 1; } }
 
 @media (max-width: 767px) {
+  .overview-page .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .clinical-workspace-grid { grid-template-columns: 1fr; }
   .consultation-patient-rail { position: static; }
   .consultation-patient-rail .patient-header { align-items: center; flex-direction: row; }

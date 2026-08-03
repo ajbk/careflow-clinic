@@ -7,16 +7,20 @@ import { createCommandAttempt, type CommandAttempt } from "../lib/idempotency";
 
 const responseSchema = z.strictObject({ data: allergyReviewResultSchema, replayed: z.boolean() });
 export type ReviewAllergyAttempt = CommandAttempt<ReviewAllergyBody["payload"], ReviewAllergyBody["expectedRevisions"]>;
+export type AllergyReviewContext = {
+  patient: Pick<VisitWorkspaceDto["patient"], "id" | "revision">;
+  visit: Pick<VisitWorkspaceDto["visit"], "id" | "revision">;
+};
 
-export function createReviewAllergyAttempt(workspace: VisitWorkspaceDto, payload: ReviewAllergyBody["payload"]): ReviewAllergyAttempt {
-  return createCommandAttempt({ patient: workspace.patient.revision, visit: workspace.visit.revision }, payload);
+export function createReviewAllergyAttempt(context: AllergyReviewContext, payload: ReviewAllergyBody["payload"]): ReviewAllergyAttempt {
+  return createCommandAttempt({ patient: context.patient.revision, visit: context.visit.revision }, payload);
 }
 
 export function useReviewAllergy(client: ApiClient = defaultApiClient) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ workspace, attempt }: { workspace: VisitWorkspaceDto; attempt: ReviewAllergyAttempt }) => client.command(`/api/patients/${encodeURIComponent(workspace.patient.id)}/allergy-revisions`, attempt, responseSchema),
+    mutationFn: ({ context, attempt }: { context: AllergyReviewContext; attempt: ReviewAllergyAttempt }) => client.command(`/api/patients/${encodeURIComponent(context.patient.id)}/allergy-revisions`, attempt, responseSchema),
     retry: false,
-    onSuccess: async (_data, { workspace }) => { await Promise.all([queryClient.invalidateQueries({ queryKey: queryKeys.visit(workspace.visit.id) }), queryClient.invalidateQueries({ queryKey: queryKeys.queue }), queryClient.invalidateQueries({ queryKey: queryKeys.dashboard })]); },
+    onSuccess: async (_data, { context }) => { await Promise.all([queryClient.invalidateQueries({ queryKey: queryKeys.visit(context.visit.id) }), queryClient.invalidateQueries({ queryKey: queryKeys.queue }), queryClient.invalidateQueries({ queryKey: queryKeys.dashboard })]); },
   });
 }

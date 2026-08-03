@@ -1,4 +1,4 @@
-import { ArrowRight, ClipboardPlus, LockKeyhole, Stethoscope, UsersRound } from "lucide-react";
+import { ArrowRight, ClipboardPlus, LockKeyhole, UsersRound } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { ReactElement } from "react";
 import { useAuth } from "../auth/AuthProvider";
@@ -50,6 +50,22 @@ function MetricSkeleton({ label }: { label: string }) {
   );
 }
 
+const pendingMetrics = [
+  { key: "waiting", label: "รอพบแพทย์", detail: "รอตรวจ" },
+  { key: "consulting", label: "กำลังตรวจ", detail: "อยู่ในห้องตรวจ" },
+  { key: "awaitingOrderRevision", label: "รอทบทวนคำสั่งยา", detail: "รอแพทย์ทบทวน" },
+  { key: "awaitingPreparation", label: "รอจัดยา", detail: "รอขั้นตอนจัดยา" },
+  { key: "awaitingCharge", label: "รอคิดเงิน", detail: "รอขั้นตอนคิดเงิน" },
+] as const;
+
+function queueStatus(status: string): { label: string; tone: "waiting" | "active" } {
+  if (status === "CONSULTING") return { label: "กำลังตรวจ", tone: "active" };
+  return {
+    label: ({ WAITING: "รอพบแพทย์", AWAITING_ORDER_REVISION: "รอทบทวนคำสั่งยา", AWAITING_PREPARATION: "รอจัดยา", AWAITING_CHARGE: "รอคิดเงิน" } as Record<string, string>)[status] ?? status,
+    tone: "waiting",
+  };
+}
+
 export function OverviewScreen(): ReactElement {
   const auth = useAuth();
   const dashboard = useDashboardToday();
@@ -60,10 +76,7 @@ export function OverviewScreen(): ReactElement {
       <div className="operations-page overview-page">
         <PageHeader eyebrow="CARE FOR THE COMMUNITY" title="ภาพรวมคลินิก" description="สถานะสดจากระบบคิวของคลินิก" />
         <section className="metric-grid" aria-label="กำลังโหลดสรุปสถานะคลินิก">
-          <MetricSkeleton label="กำลังโหลดผู้ป่วยในระบบวันนี้" />
-          <MetricSkeleton label="กำลังโหลดคิวรอตรวจ" />
-          <MetricSkeleton label="กำลังโหลดห้องตรวจ" />
-          <MetricSkeleton label="กำลังโหลดเวลาอัปเดต" />
+          {pendingMetrics.map((metric) => <MetricSkeleton key={metric.key} label={`กำลังโหลด${metric.label}`} />)}
         </section>
       </div>
     );
@@ -111,10 +124,7 @@ export function OverviewScreen(): ReactElement {
       />
 
       <section className="metric-grid" aria-label="สรุปสถานะคลินิก">
-        <Card className="metric-card metric-card-mint"><div className="metric-value-group"><span className="metric-label">ผู้ป่วยในระบบวันนี้</span><strong>{metrics.waiting + metrics.consulting}</strong><small>อยู่ในเส้นทางการดูแล</small></div></Card>
-        <Card className="metric-card metric-card-blue"><div className="metric-value-group"><span className="metric-label">รอตรวจ</span><strong>{metrics.waiting}</strong><small>รอเรียกพบแพทย์</small></div></Card>
-        <Card className="metric-card metric-card-warm"><div className="metric-value-group"><span className="metric-label">กำลังตรวจ</span><strong>{metrics.consulting}</strong><small>อยู่ในห้องตรวจ</small></div></Card>
-        <Card className="metric-card metric-card-neutral"><div className="metric-value-group"><span className="metric-label">ข้อมูลอัปเดต</span><strong className="metric-time">{formatThaiDateTime(metrics.updatedAt)}</strong><small>เวลาจากระบบคิว</small></div></Card>
+        {pendingMetrics.map((metric, index) => <Card className={`metric-card metric-card-${["mint", "blue", "warm", "neutral", "mint"][index]}`} key={metric.key}><div className="metric-value-group"><span className="metric-label">{metric.label}</span><strong>{metrics[metric.key]}</strong><small>{metric.detail}</small></div></Card>)}
       </section>
 
       <div className="overview-grid">
@@ -126,7 +136,7 @@ export function OverviewScreen(): ReactElement {
               {activeRows.length > 0 ? (
             <div className="journey-list">
               {activeRows.map((item) => {
-                const status = item.visit.status === "CONSULTING" ? { label: "กำลังตรวจ", tone: "active" as const } : { label: "รอตรวจ", tone: "waiting" as const };
+                const status = queueStatus(item.visit.status);
                 return (
                   <article className="journey-row" key={item.visit.id}>
                     <span className="journey-time">{formatThaiDateTime(item.visit.arrivedAt)}</span>
@@ -144,16 +154,6 @@ export function OverviewScreen(): ReactElement {
           {!queueLoading && activeRows.length === 0 && !queueError ? <Link className="care-button care-button-secondary overview-intake-link" to={roleAction.empty.to}><EmptyActionIcon aria-hidden="true" size={18} />{roleAction.empty.label}</Link> : null}
         </Card>
 
-        <Card className="quick-actions-card">
-          <SectionHeading icon={Stethoscope} title="สถานะ Milestone" description="ส่วนที่ยังไม่เปิดใช้งานใน Pilot" />
-          <div className="quick-actions pilot-unavailable-actions">
-            {[
-              ["การจัดยา", "ยังไม่พร้อมใน Pilot"],
-              ["การชำระเงิน", "ยังไม่พร้อมใน Pilot"],
-              ["คลังยา", "ยังไม่พร้อมใน Pilot"],
-            ].map(([label, detail]) => <div className="quick-action-unavailable" key={label}><span className="quick-action-icon"><LockKeyhole aria-hidden="true" size={20} /></span><span><strong>{label}</strong><small>{detail}</small></span></div>)}
-          </div>
-        </Card>
       </div>
     </div>
   );

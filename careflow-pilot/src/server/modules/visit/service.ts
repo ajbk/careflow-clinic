@@ -137,6 +137,7 @@ function toQueuePatient(patient: PatientDto): QueueItemDto["patient"] {
     displayName: patient.displayName,
     birthDate: patient.birthDate,
     sex: patient.sex,
+    revision: patient.revision,
   };
 }
 

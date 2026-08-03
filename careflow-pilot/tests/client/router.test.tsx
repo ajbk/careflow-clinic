@@ -30,7 +30,7 @@ function renderRoleApp(path: string, role: "assistant" | "doctor") {
     if (requestPath === "/api/auth/session") return new Response(JSON.stringify(completeSession(role)), { status: 200 });
     if (requestPath === "/api/queue") return new Response(JSON.stringify({ data: [] }), { status: 200 });
     if (requestPath === "/api/dashboard/today") {
-      return new Response(JSON.stringify({ data: { waiting: 0, consulting: 0, updatedAt: "2026-08-03T01:00:00.000Z" } }), { status: 200 });
+      return new Response(JSON.stringify({ data: { waiting: 0, consulting: 0, awaitingOrderRevision: 0, awaitingPreparation: 0, awaitingCharge: 0, updatedAt: "2026-08-03T01:00:00.000Z" } }), { status: 200 });
     }
     throw new Error(`Unexpected request: ${requestPath}`);
   }));
@@ -102,6 +102,20 @@ describe("pilot router", () => {
     renderRoleApp(path, role);
     expect(await screen.findAllByText(expectedIdentity)).toHaveLength(2);
     expect(screen.queryByText(otherIdentity)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["assistant", "รับผู้ป่วย", "/intake"],
+    ["doctor", "ไปยังคิวตรวจ", "/queue"],
+  ] as const)("shows all five pending-work counts with the %s primary action", async (role, action, path) => {
+    renderRoleApp("/overview", role);
+    expect(await screen.findByText("รอพบแพทย์")).toBeInTheDocument();
+    expect(screen.getByText("กำลังตรวจ")).toBeInTheDocument();
+    expect(screen.getByText("รอทบทวนคำสั่งยา")).toBeInTheDocument();
+    expect(screen.getByText("รอจัดยา")).toBeInTheDocument();
+    expect(screen.getByText("รอคิดเงิน")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: action })).toHaveAttribute("href", path);
+    expect(screen.queryByText(/฿|บาท|คงเหลือ|แนวโน้ม|รายเดือน/)).not.toBeInTheDocument();
   });
 
   it("gives Intake one focused job without global navigation", async () => {

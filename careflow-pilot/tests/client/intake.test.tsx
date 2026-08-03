@@ -52,7 +52,9 @@ const intakeResponse = {
       displayName: patient.displayName,
       birthDate: patient.birthDate,
       sex: patient.sex,
+      revision: patient.revision,
     },
+    allergy: { id: null, revision: 0, state: "UNKNOWN" as const, items: [], sourceText: null, reason: null, reviewedBy: null, reviewedAt: null },
     chiefComplaint: "ไอ",
     vitals: {
       weightKg: null,

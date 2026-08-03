@@ -309,6 +309,7 @@ const queuePatientSchema = patientSchema.pick({
   displayName: true,
   birthDate: true,
   sex: true,
+  revision: true,
 });
 
 export const queueItemSchema = z.strictObject({

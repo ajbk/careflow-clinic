@@ -32,6 +32,7 @@ const waitingItem = {
     displayName: patient.displayName,
     birthDate: patient.birthDate,
     sex: patient.sex,
+    revision: patient.revision,
   },
   allergy: { id: null, revision: 0, state: "UNKNOWN" as const, items: [], sourceText: null, reason: null, reviewedBy: null, reviewedAt: null },
   chiefComplaint: "มีไข้และไอ",
@@ -44,7 +45,7 @@ const waitingItem = {
     heartRateBpm: 90,
     spo2Percent: 98,
   },
-  allowedActions: ["START_CONSULTATION"] as const,
+  allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"] as const,
 };
 
 const consultingItem = {
@@ -57,6 +58,26 @@ const consultingItem = {
   },
   allowedActions: ["OPEN_CONSULTATION"] as const,
 };
+
+const pendingItems = [
+  waitingItem,
+  { ...consultingItem, visit: { ...consultingItem.visit, id: "visit-consulting" } },
+  {
+    ...consultingItem,
+    visit: { ...consultingItem.visit, id: "visit-order", status: "AWAITING_ORDER_REVISION" as const, revision: 9 },
+    allowedActions: ["OPEN_CONSULTATION"] as const,
+  },
+  {
+    ...consultingItem,
+    visit: { ...consultingItem.visit, id: "visit-preparation", status: "AWAITING_PREPARATION" as const, revision: 10 },
+    allowedActions: ["OPEN_CONSULTATION"] as const,
+  },
+  {
+    ...consultingItem,
+    visit: { ...consultingItem.visit, id: "visit-charge", status: "AWAITING_CHARGE" as const, revision: 11 },
+    allowedActions: ["OPEN_CONSULTATION"] as const,
+  },
+];
 
 const workspace = {
   visit: consultingItem.visit,
@@ -143,6 +164,123 @@ afterEach(() => {
 afterAll(() => server.close());
 
 describe("connected shared queue workflow", () => {
+  it("lets Assistant review WAITING Allergy without a clinical link", async () => {
+    server.use(http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))));
+    renderRoute("/queue");
+    const row = within(await screen.findByRole("article", { name: /DEMO-000042/ }));
+    expect(row.getByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" })).toBeInTheDocument();
+    expect(row.queryByRole("link", { name: "เปิดห้องตรวจ" })).not.toBeInTheDocument();
+  });
+
+  it("keeps Assistant Queue clinical-link free across all five server states", async () => {
+    server.use(
+      http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))),
+      http.get("/api/queue", () => HttpResponse.json({ data: pendingItems.map((item) => ({ ...item, allowedActions: item.visit.status === "WAITING" ? ["REVIEW_ALLERGY"] : [] })) })),
+    );
+    renderRoute("/queue");
+
+    await screen.findByRole("article", { name: /visit-charge/ });
+    expect(screen.getByRole("heading", { name: "รอพบแพทย์" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "กำลังตรวจ" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "รอทบทวนคำสั่งยา" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "รอจัดยา" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "รอคิดเงิน" })).toBeInTheDocument();
+    for (const item of pendingItems) {
+      expect(within(screen.getByRole("article", { name: new RegExp(item.visit.id) })).queryByRole("link", { name: "เปิดห้องตรวจ" })).not.toBeInTheDocument();
+    }
+  });
+
+  it("uses the Queue revisions and one idempotent attempt for Assistant Allergy review", async () => {
+    const user = userEvent.setup();
+    const bodies: unknown[] = [];
+    const keys: string[] = [];
+    server.use(
+      http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))),
+      http.post("/api/patients/patient-42/allergy-revisions", async ({ request }) => {
+        bodies.push(await request.json());
+        keys.push(request.headers.get("Idempotency-Key") ?? "");
+        return bodies.length === 1 ? HttpResponse.error() : HttpResponse.json({ data: { patient, allergy: waitingItem.allergy, visit: waitingItem.visit }, replayed: true });
+      }),
+    );
+    renderRoute("/queue");
+    await user.click(await screen.findByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" }));
+    await user.click(screen.getByRole("button", { name: "บันทึกการทบทวน" }));
+    expect(await screen.findByText("ไม่สามารถเชื่อมต่อระบบได้ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "ทบทวนประวัติแพ้ยา" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "บันทึกการทบทวน" }));
+    await waitFor(() => expect(bodies).toHaveLength(2));
+    expect(bodies[0]).toEqual({ expectedRevisions: { patient: 3, visit: 7 }, payload: { visitId: "visit-42", state: "UNKNOWN", items: [], sourceText: "ทบทวนข้อมูลแพ้ยา", reason: "ทบทวนก่อนการรักษา" } });
+    expect(keys[0]).toMatch(/\S/);
+    expect(keys[1]).toBe(keys[0]);
+  });
+
+  it("retains Assistant Allergy values but blocks resubmission until a conflict reload", async () => {
+    const user = userEvent.setup();
+    let queueRequests = 0;
+    const refreshed = { ...waitingItem, visit: { ...waitingItem.visit, revision: 8 }, patient: { ...waitingItem.patient, revision: 4 } };
+    server.use(
+      http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))),
+      http.get("/api/queue", () => {
+        queueRequests += 1;
+        return HttpResponse.json({ data: [queueRequests === 1 ? waitingItem : refreshed] });
+      }),
+      http.post("/api/patients/patient-42/allergy-revisions", () => jsonError("REVISION_CONFLICT", "ข้อมูลประวัติแพ้ยาเปลี่ยนแปลงแล้ว", 409)),
+    );
+    renderRoute("/queue");
+    await user.click(await screen.findByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" }));
+    const source = screen.getByLabelText("แหล่งข้อมูล");
+    await user.clear(source);
+    await user.type(source, "ผู้ช่วยทบทวนจากบัตรแพ้ยา");
+    await user.click(screen.getByRole("button", { name: "บันทึกการทบทวน" }));
+    expect((await screen.findAllByText("ข้อมูลประวัติแพ้ยาเปลี่ยนแปลงแล้ว")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "บันทึกการทบทวน" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "โหลดข้อมูลล่าสุด" }));
+    await waitFor(() => expect(queueRequests).toBeGreaterThanOrEqual(2));
+    expect(screen.getByLabelText("แหล่งข้อมูล")).toHaveValue("ผู้ช่วยทบทวนจากบัตรแพ้ยา");
+    expect(screen.getByRole("button", { name: "บันทึกการทบทวน" })).toBeEnabled();
+  });
+
+  it("invalidates Queue after a successful Assistant Allergy review without fetching Doctor workspace", async () => {
+    const user = userEvent.setup();
+    let queueRequests = 0;
+    let workspaceRequests = 0;
+    server.use(
+      http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))),
+      http.get("/api/queue", () => { queueRequests += 1; return HttpResponse.json({ data: [waitingItem] }); }),
+      http.get("/api/visits/:visitId/workspace", () => { workspaceRequests += 1; return HttpResponse.json({ data: workspace }); }),
+      http.post("/api/patients/patient-42/allergy-revisions", () => HttpResponse.json({ data: { patient, allergy: waitingItem.allergy, visit: waitingItem.visit }, replayed: false })),
+    );
+    renderRoute("/queue");
+    await user.click(await screen.findByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" }));
+    await user.click(screen.getByRole("button", { name: "บันทึกการทบทวน" }));
+    await waitFor(() => expect(queueRequests).toBeGreaterThanOrEqual(2));
+    expect(workspaceRequests).toBe(0);
+  });
+
+  it("opens every post-finalize pending state only when Doctor receives OPEN_CONSULTATION", async () => {
+    server.use(http.get("/api/queue", () => HttpResponse.json({ data: pendingItems })));
+    renderRoute("/queue");
+    for (const item of pendingItems.filter((item) => item.visit.status !== "WAITING")) {
+      expect(within(await screen.findByRole("article", { name: new RegExp(item.visit.id) })).getByRole("link", { name: "เปิดห้องตรวจ" })).toHaveAttribute("href", `/consultations/${item.visit.id}`);
+    }
+  });
+
+  it("disables Assistant Allergy review while cached Queue data is stale", async () => {
+    let queueRequests = 0;
+    server.use(
+      http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))),
+      http.get("/api/queue", () => {
+        queueRequests += 1;
+        return queueRequests === 1 ? HttpResponse.json({ data: [waitingItem] }) : jsonError("INTERNAL_ERROR", "ระบบคิวไม่พร้อมใช้งาน", 503);
+      }),
+    );
+    renderRoute("/queue");
+    await screen.findByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" });
+    window.dispatchEvent(new Event("focus"));
+    expect(await screen.findByText("กำลังแสดงข้อมูลคิวล่าสุดที่บันทึกไว้", {}, { timeout: 3_000 })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" })).toBeDisabled();
+  });
+
   it("renders the same server row for Assistant and Doctor, but only Doctor gets Start Consultation", async () => {
     server.use(http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))));
     renderRoute("/queue");
@@ -333,7 +471,7 @@ describe("connected shared queue workflow", () => {
     expect(await screen.findByRole("heading", { name: "ภาพรวมคลินิก" })).toBeInTheDocument();
     expect((await screen.findAllByText("รอตรวจ")).length).toBeGreaterThan(0);
     expect((await screen.findAllByText("กำลังตรวจ")).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/ยังไม่พร้อมใน Pilot/).length).toBeGreaterThanOrEqual(3);
+    expect(screen.queryByText(/ยังไม่พร้อมใน Pilot/)).not.toBeInTheDocument();
     expect(screen.queryByText(/฿|บาท|คงเหลือ/)).not.toBeInTheDocument();
   });
 
