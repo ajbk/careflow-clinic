@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import type { QueueItemDto, QueueResponse } from "../../shared/contracts";
 import { queueResponseSchema } from "../../shared/contracts";
 import { queryKeys } from "../app/query-client";
@@ -18,11 +18,6 @@ export function getQueue(client: ApiClient = defaultApiClient, signal?: AbortSig
 
 export function useQueue(client: ApiClient = defaultApiClient) {
   const queryClient = useQueryClient();
-  const [ready, setReady] = useState(false);
-  useEffect(() => {
-    const timer = window.setTimeout(() => setReady(true), 0);
-    return () => window.clearTimeout(timer);
-  }, []);
   useEffect(() => {
     const handleFocus = () => {
       if (typeof document === "undefined" || document.hidden) return;
@@ -33,7 +28,6 @@ export function useQueue(client: ApiClient = defaultApiClient) {
   }, [queryClient]);
   return useQuery({
     queryKey: queryKeys.queue,
-    enabled: ready,
     queryFn: async ({ signal }) => {
       try {
         if (typeof document !== "undefined" && document.hidden) {

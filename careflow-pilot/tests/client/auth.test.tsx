@@ -116,6 +116,7 @@ describe("auth boundary", () => {
     const fetchImpl = vi
       .fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(session), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: { code: "AUTH_REQUIRED", messageTh: "กรุณาเข้าสู่ระบบ", requestId: "expired" } }), { status: 401 }));
     const { router, client } = renderApp("/queue", fetchImpl);
     await waitFor(() => expect(screen.getByText("พญ. ทดสอบ")).toBeInTheDocument());
