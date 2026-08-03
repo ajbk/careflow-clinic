@@ -1,10 +1,18 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, rmdirSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import Database from "better-sqlite3";
-import { resolveDatabaseTarget } from "../host-lock.js";
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import { migrate } from "drizzle-orm/better-sqlite3/migrator";
+import { assertKnownPilotDatabase, migrationFolder } from "../db/client.js";
+import * as schema from "../db/schema.js";
+import {
+  MAINTENANCE_LOCK_SUFFIX,
+  maintenanceLockPath,
+  resolveDatabaseTarget,
+} from "../host-lock.js";
 
 export const RESET_CONFIRMATION = "RESET-SYNTHETIC-PILOT";
-export const MAINTENANCE_LOCK_SUFFIX = ".careflow-maintenance";
+export { MAINTENANCE_LOCK_SUFFIX };
 
 const expectedTables = new Set([
   "__drizzle_migrations",
@@ -72,7 +80,7 @@ function assertExistingRegularDatabase(inputPath: string): void {
 }
 
 function acquireMaintenanceLock(databasePath: string): MaintenanceLock {
-  const path = `${databasePath}${MAINTENANCE_LOCK_SUFFIX}`;
+  const path = maintenanceLockPath(databasePath);
   try {
     mkdirSync(path, { mode: 0o700 });
     if (process.platform !== "win32") chmodSync(path, 0o700);
@@ -106,17 +114,40 @@ function listApplicationTables(sqlite: Database.Database): string[] {
     .all() as string[];
 }
 
-function assertPilotIdentity(sqlite: Database.Database): void {
-  const applicationId = sqlite.pragma("application_id", { simple: true });
-  if (applicationId !== 0x43464c57) fail("Existing database is not a CareFlow Pilot database");
-  const productId = sqlite
-    .prepare("SELECT value FROM platform_metadata WHERE key = 'product_id'")
-    .pluck()
-    .get();
-  const migrationCount = sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get();
-  if (productId !== "careflow-pilot" || Number(migrationCount) !== 3) {
-    fail("Existing database is not a CareFlow Pilot database");
+interface SchemaObject {
+  type: string;
+  name: string;
+  tbl_name: string;
+  sql: string;
+}
+
+function schemaObjects(sqlite: Database.Database): SchemaObject[] {
+  return sqlite
+    .prepare(
+      "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE type IN ('table', 'index', 'trigger') AND name NOT LIKE 'sqlite_%' ORDER BY type, name",
+    )
+    .all()
+    .map((row) => {
+      const value = row as { type: string; name: string; tbl_name: string; sql: string | null };
+      return { type: value.type, name: value.name, tbl_name: value.tbl_name, sql: value.sql ?? "" };
+    });
+}
+
+function assertCanonicalSchema(sqlite: Database.Database): void {
+  const canonical = new Database(":memory:");
+  try {
+    migrate(drizzle(canonical, { schema }), { migrationsFolder: migrationFolder() });
+    if (JSON.stringify(schemaObjects(sqlite)) !== JSON.stringify(schemaObjects(canonical))) {
+      fail("CareFlow database schema does not match the Pilot migrations");
+    }
+  } finally {
+    canonical.close();
   }
+}
+
+function assertPilotIdentity(sqlite: Database.Database): void {
+  assertKnownPilotDatabase(sqlite);
+  assertCanonicalSchema(sqlite);
   const tables = listApplicationTables(sqlite);
   if (tables.some((name) => !expectedTables.has(name)) || tables.length !== expectedTables.size) {
     fail("Database contains unknown application tables");

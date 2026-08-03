@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { openDatabase } from "../../src/server/db/client.js";
@@ -87,6 +88,7 @@ describe("Fastify boundary", () => {
     const deepLink = await harness.app.inject({ method: "GET", url: "/consultations/visit-123" });
     const asset = await harness.app.inject({ method: "GET", url: "/app.js" });
     const missingApi = await harness.app.inject({ method: "GET", url: "/api/missing" });
+    const missingApiWithQuery = await harness.app.inject({ method: "GET", url: "/api?from=smoke" });
 
     expect(root.statusCode).toBe(200);
     expect(root.headers["content-type"]).toContain("text/html");
@@ -98,6 +100,8 @@ describe("Fastify boundary", () => {
     expect(missingApi.statusCode).toBe(404);
     expect(missingApi.headers["content-type"]).toContain("application/json");
     expect(missingApi.body).not.toContain("<div");
+    expect(missingApiWithQuery.statusCode).toBe(404);
+    expect(missingApiWithQuery.headers["content-type"]).toContain("application/json");
   });
 
   it("fails clearly when production client assets are missing", async () => {
@@ -123,6 +127,28 @@ describe("Fastify boundary", () => {
         }),
       ),
     ).rejects.toThrow("CareFlow client assets directory is missing");
+  });
+
+  it("surfaces a sanitized production startup error when the client build is absent", () => {
+    const directory = mkdtempSync(join(tmpdir(), "careflow-startup-assets-"));
+    const result = spawnSync(process.execPath, ["--import", "tsx", "src/server/server.ts"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        NODE_ENV: "production",
+        CAREFLOW_HOST: "127.0.0.1",
+        CAREFLOW_PORT: "1",
+        CAREFLOW_DB_PATH: join(directory, "careflow.sqlite"),
+        CAREFLOW_CLIENT_DIST: join(directory, "missing-client"),
+      },
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    rmSync(directory, { recursive: true, force: true });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("CareFlow server failed to start: CareFlow client assets directory is missing");
+    expect(result.stderr).not.toContain(directory);
   });
 
   it("returns a non-secret health response", async () => {

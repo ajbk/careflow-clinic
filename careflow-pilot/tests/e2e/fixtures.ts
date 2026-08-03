@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import argon2 from "argon2";
@@ -20,6 +20,13 @@ interface PilotServer {
 export async function startPilotServer(): Promise<PilotServer> {
   const directory = mkdtempSync(join(tmpdir(), "careflow-e2e-"));
   const databasePath = join(directory, "careflow.sqlite");
+  const clientDistPath = join(directory, "client");
+  const builtClientPath = resolve(process.cwd(), "dist/client");
+  if (!existsSync(builtClientPath)) {
+    rmSync(directory, { recursive: true, force: true });
+    throw new Error("CareFlow E2E requires a built client; run npm run build first");
+  }
+  cpSync(builtClientPath, clientDistPath, { recursive: true });
   const database = openDatabase(databasePath);
   const now = new Date().toISOString();
   const passwordHash = await argon2.hash(E2E_PASSWORD, {
@@ -48,7 +55,7 @@ export async function startPilotServer(): Promise<PilotServer> {
       cookieSecure: false,
       sessionIdleMinutes: 15,
       sessionAbsoluteHours: 8,
-      clientDistPath: resolve(process.cwd(), "dist/client"),
+      clientDistPath,
     },
     clock: () => new Date(),
     idFactory: (() => {
@@ -56,6 +63,7 @@ export async function startPilotServer(): Promise<PilotServer> {
       return () => `e2e-${++index}`;
     })(),
     serveStatic: true,
+    clientAssetsRoot: clientDistPath,
   });
   const address = await app.listen({ host: "127.0.0.1", port: 0 });
   return {

@@ -11,7 +11,8 @@ cd careflow-pilot
 nvm use 22                         # or install Node >=22.13
 npm ci
 cp .env.example .env
-mkdir -p data
+install -d -m 700 data
+export CAREFLOW_DB_PATH="$PWD/data/careflow.sqlite"
 npm run db:migrate -- "$PWD/data/careflow.sqlite"
 npm run users -- create --username assistant --display-name "ผู้ช่วยคลินิก" --role assistant
 npm run users -- create --username doctor --display-name "แพทย์คลินิก" --role doctor

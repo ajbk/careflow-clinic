@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  existsSync,
   lstatSync,
   mkdirSync,
   realpathSync,
@@ -12,6 +13,12 @@ export interface HostLock {
   databasePath: string;
   lockPath: string;
   release: () => void;
+}
+
+export const MAINTENANCE_LOCK_SUFFIX = ".careflow-maintenance";
+
+export function maintenanceLockPath(databasePath: string): string {
+  return `${databasePath}${MAINTENANCE_LOCK_SUFFIX}`;
 }
 
 function pathKind(path: string): "missing" | "symlink" | "directory" | "file" {
@@ -81,6 +88,9 @@ export function resolveDatabaseTarget(inputPath: string): { databasePath: string
 
 export function acquireHostLock(inputPath: string): HostLock {
   const target = resolveDatabaseTarget(inputPath);
+  if (existsSync(maintenanceLockPath(target.databasePath))) {
+    throw new Error("CareFlow synthetic maintenance is running");
+  }
   try {
     mkdirSync(target.lockPath, { mode: 0o700 });
     if (process.platform !== "win32") chmodSync(target.lockPath, 0o700);

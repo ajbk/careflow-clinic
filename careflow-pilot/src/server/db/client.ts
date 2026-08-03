@@ -27,7 +27,7 @@ interface MigrationRecord {
   created_at: number;
 }
 
-function migrationFolder(): string {
+export function migrationFolder(): string {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
   const candidates = [
     resolve(process.cwd(), "drizzle"),
@@ -71,6 +71,14 @@ function assertKnownIdentity(
   } catch {
     throw new Error("Existing database is not a CareFlow Pilot database");
   }
+}
+
+/** Validate a read-only file against the exact CareFlow migration sequence. */
+export function assertKnownPilotDatabase(
+  sqlite: Database.Database,
+  allowPendingMigrations = false,
+): void {
+  assertKnownIdentity(sqlite, migrationFolder(), allowPendingMigrations);
 }
 
 function validateExistingFileReadOnly(databasePath: string, migrationsPath: string): void {

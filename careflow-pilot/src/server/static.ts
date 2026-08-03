@@ -10,17 +10,18 @@ export interface ClientAssetsOptions {
 function assertClientAssets(root: string): string {
   const absoluteRoot = resolve(root);
   if (!existsSync(absoluteRoot) || !lstatSync(absoluteRoot).isDirectory()) {
-    throw new Error(`CareFlow client assets directory is missing: ${absoluteRoot}`);
+    throw new Error("CareFlow client assets directory is missing");
   }
   const indexPath = resolve(absoluteRoot, "index.html");
   if (!existsSync(indexPath) || !lstatSync(indexPath).isFile()) {
-    throw new Error(`CareFlow client entrypoint is missing: ${indexPath}`);
+    throw new Error("CareFlow client entrypoint is missing");
   }
   return absoluteRoot;
 }
 
 function isApiPath(request: FastifyRequest): boolean {
-  return request.url === "/api" || request.url.startsWith("/api/");
+  const pathname = request.url.split("?", 1)[0] ?? request.url;
+  return pathname === "/api" || pathname.startsWith("/api/");
 }
 
 function sendIndex(root: string, reply: FastifyReply): FastifyReply {

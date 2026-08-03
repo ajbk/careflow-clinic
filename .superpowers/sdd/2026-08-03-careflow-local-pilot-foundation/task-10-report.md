@@ -6,6 +6,7 @@
 - Added WAL checkpointing to deterministic database close and Clinic Host signal shutdown.
 - Added a real-file close/reopen integration test proving Patient, Intake, Visit, revisions, raw sessions, and audit IDs survive restart.
 - Added a fail-closed `reset:synthetic` CLI with explicit absolute database + confirmation flags, identity/table/marker/lock guards, maintenance lock, exclusive transaction, ordered deletion, secure deletion, VACUUM/checkpoint verification, and account preservation.
+- Reset validation reuses the exact migration hashes/folder timestamps and compares canonical SQLite schema/index/trigger definitions before any writable handle or destructive transaction; the host refuses to start while the maintenance lock exists.
 - Added Playwright Chromium fixtures for two independent browser contexts sharing one Visit, plus 375×812, 768×1024, and 1440×900 responsive guardrails.
 - Added pilot quick-start/rehearsal/reset/permissions documentation, root prototype-vs-pilot orientation, `.env.example` warning, and Ubuntu/Windows CI jobs.
 
@@ -20,13 +21,13 @@ From `careflow-pilot/`:
 
 | Command | Result |
 | --- | --- |
-| `npm run test:server -- tests/server/restart.test.ts tests/server/health.test.ts tests/server/reset-synthetic-data.test.ts` | 11 passed |
+| `npm run test:server -- tests/server/restart.test.ts tests/server/health.test.ts tests/server/reset-synthetic-data.test.ts` | 12 passed |
 | `npm run test:client` | passed (existing client suite) |
-| `npm run test:server` | 108 passed across 12 files |
+| `npm run test:server` | 110 passed across 12 files |
 | `npm run typecheck` | passed |
 | `npm run lint` | passed |
 | `npm run build` | passed (Vite client + tsup server) |
-| `npm run test:e2e` | 4 passed (Chromium installed with `npx playwright install chromium`) |
+| `npm run test:e2e` | 4 passed (build + Chromium installed with `npx playwright install chromium`) |
 
 Manual production smoke: built `dist/server/server.js` started on `127.0.0.1:3001` against a unique temp SQLite file; `/api/health`, `/`, and `/consultations/demo` returned 200; SIGTERM removed the exact `.careflow-running` lock and checkpointed the WAL.
 

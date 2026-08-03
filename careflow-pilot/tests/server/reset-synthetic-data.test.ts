@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmdirSync } from "node:fs";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { runResetSyntheticData, RESET_CONFIRMATION } from "../../src/server/maintenance/reset-synthetic.js";
+import { maintenanceLockPath } from "../../src/server/host-lock.js";
+import { openDatabase } from "../../src/server/db/client.js";
 import { cookieFrom, login, seedAccount } from "./helpers/auth.js";
 import { createTestApp } from "./helpers/database.js";
 
@@ -137,5 +139,33 @@ describe("guarded synthetic reset", () => {
     const after = createHash("sha256").update(readFileSync(fixture.databasePath)).digest("hex");
     expect(result.code).toBe(1);
     expect(after).toBe(before);
+  });
+
+  it("rejects a tampered migration record before opening a writable reset transaction", async () => {
+    const fixture = await createTestApp();
+    cleanups.push(fixture.cleanup);
+    fixture.database.close();
+    const tampered = new Database(fixture.databasePath);
+    tampered.prepare("UPDATE __drizzle_migrations SET hash = 'evil' WHERE created_at = (SELECT MIN(created_at) FROM __drizzle_migrations)").run();
+    tampered.close();
+    const before = createHash("sha256").update(readFileSync(fixture.databasePath)).digest("hex");
+
+    const result = reset(fixture.databasePath);
+    const after = createHash("sha256").update(readFileSync(fixture.databasePath)).digest("hex");
+    expect(result.code).toBe(1);
+    expect(after).toBe(before);
+  });
+
+  it("prevents a Clinic Host from starting while the maintenance lock is held", async () => {
+    const fixture = await createTestApp();
+    cleanups.push(fixture.cleanup);
+    fixture.database.close();
+    const lockPath = maintenanceLockPath(fixture.databasePath);
+    mkdirSync(lockPath, { mode: 0o700 });
+    try {
+      expect(() => openDatabase(fixture.databasePath)).toThrow("synthetic maintenance");
+    } finally {
+      rmdirSync(lockPath);
+    }
   });
 });

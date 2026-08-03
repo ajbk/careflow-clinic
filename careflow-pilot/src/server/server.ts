@@ -16,7 +16,8 @@ async function main(): Promise<void> {
   });
 }
 
-void main().catch(() => {
-  process.stderr.write("CareFlow server failed to start\n");
+void main().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : "unknown startup error";
+  process.stderr.write(`CareFlow server failed to start: ${message}\n`);
   process.exitCode = 1;
 });
