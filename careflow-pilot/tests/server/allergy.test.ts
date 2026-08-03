@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createPatientService, patientAllergyItems, patientAllergyRevisions } from "../../src/server/modules/patient/index.js";
-import { auditEvents } from "../../src/server/modules/platform/index.js";
+import { auditEvents, idempotencyRecords } from "../../src/server/modules/platform/index.js";
 import { visits } from "../../src/server/modules/visit/index.js";
 import { cookieFrom, login, seedAccount } from "./helpers/auth.js";
 import { createTestApp } from "./helpers/database.js";
@@ -205,8 +205,16 @@ describe("versioned allergy review", () => {
   it("replays identical commands and rejects an idempotency collision", async () => {
     const test = await fixture();
     const { patientId, visitId } = await createPatientAndVisit(test);
-    const first = await review(test, { patientId, visitId });
-    const replay = await review(test, { patientId, visitId });
+    const input = {
+      patientId,
+      visitId,
+      state: "PRESENT" as const,
+      items: [{ substance: "ยาทดสอบสำหรับรีเพลย์", reaction: "ผื่นสำหรับรีเพลย์", severity: "MILD" as const, note: "ติดตามสำหรับรีเพลย์" }],
+      sourceText: "ข้อมูลต้นทางสำหรับรีเพลย์",
+      reason: "เหตุผลสำหรับรีเพลย์",
+    };
+    const first = await review(test, input);
+    const replay = await review(test, input);
     const collision = await review(test, {
       patientId,
       visitId,
@@ -217,6 +225,13 @@ describe("versioned allergy review", () => {
     expect(collision.statusCode).toBe(409);
     expect(collision.json().error.code).toBe("IDEMPOTENCY_CONFLICT");
     expect(test.database.db.select().from(patientAllergyRevisions).all()).toHaveLength(1);
+    const stored = test.database.db.select().from(idempotencyRecords).all()
+      .find((record) => record.actorId === test.assistant.actor.id && record.key === "allergy-review-001");
+    expect(stored?.responseJson).not.toContain(input.sourceText);
+    expect(stored?.responseJson).not.toContain(input.reason);
+    expect(stored?.responseJson).not.toContain(input.items[0].substance);
+    expect(stored?.responseJson).not.toContain(input.items[0].reaction);
+    expect(stored?.responseJson).not.toContain(input.items[0].note ?? "");
   });
 
   it("rejects stale patient and visit revisions with no appended revision", async () => {

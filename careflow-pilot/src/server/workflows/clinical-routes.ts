@@ -27,6 +27,18 @@ export function registerClinicalRoutes(input: {
         statusCode: 201,
         data: input.clinical.reviewAllergy(tx, actor, patientId, body),
       }),
+      safeReplay: {
+        store: (data) => ({
+          patientId: data.patient.id,
+          patientRevision: data.patient.revision,
+          allergyRevision: data.allergy.revision,
+          allergyState: data.allergy.state,
+          visitId: data.visit.id,
+          visitRevision: data.visit.revision,
+          visitStatus: data.visit.status,
+        }),
+        rebuild: (_tx, reference) => input.clinical.replayAllergyReview(reference),
+      },
     });
     return reply.code(result.statusCode).send(result.body);
   });
@@ -48,6 +60,15 @@ export function registerClinicalRoutes(input: {
         statusCode: 200,
         data: input.clinical.saveConsultationDraft(tx, actor, visitId, body),
       }),
+      safeReplay: {
+        store: (data) => ({
+          visitId: data.note.visitId,
+          noteDraftRevision: data.note.revision,
+          medicationDraftRevision: data.medicationDecision.revision,
+          medicationDecisionKind: data.medicationDecision.kind,
+        }),
+        rebuild: (_tx, reference) => input.clinical.replayConsultationDraft(reference),
+      },
     });
     return reply.code(result.statusCode).send(result.body);
   });

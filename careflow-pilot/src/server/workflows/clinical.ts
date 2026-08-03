@@ -27,6 +27,21 @@ export interface ClinicalWorkflow {
     visitId: string,
     body: SaveConsultationDraftBody,
   ): { note: ClinicalNoteDraftDto; medicationDecision: MedicationDecisionDraftDto };
+  replayConsultationDraft(reference: {
+    visitId: string;
+    noteDraftRevision: number;
+    medicationDraftRevision: number;
+    medicationDecisionKind: MedicationDecisionDraftDto["kind"];
+  }): { note: ClinicalNoteDraftDto; medicationDecision: MedicationDecisionDraftDto };
+  replayAllergyReview(reference: {
+    patientId: string;
+    patientRevision: number;
+    allergyRevision: number;
+    allergyState: AllergyReviewResultDto["allergy"]["state"];
+    visitId: string;
+    visitRevision: number;
+    visitStatus: AllergyReviewResultDto["visit"]["status"];
+  }): AllergyReviewResultDto;
 }
 
 export function createClinicalWorkflow(input: {
@@ -79,6 +94,28 @@ export function createClinicalWorkflow(input: {
         occurredAt: clock().toISOString(),
       });
       return { note, medicationDecision };
+    },
+
+    replayConsultationDraft(reference) {
+      const note = input.notes.getDraft(reference.visitId);
+      const medicationDecision = input.medications.getDecisionDraft(reference.visitId);
+      if (!note || !medicationDecision) {
+        throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่พบข้อมูลร่างสำหรับการเรียกซ้ำ" });
+      }
+      return { note, medicationDecision };
+    },
+
+    replayAllergyReview(reference) {
+      const patient = input.patients.getPatientById(reference.patientId);
+      const visit = input.visits.getVisitSummary(reference.visitId);
+      if (!patient || !visit) {
+        throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่พบข้อมูลทบทวนสำหรับการเรียกซ้ำ" });
+      }
+      return {
+        patient,
+        allergy: input.patients.getAllergyAssessment(reference.patientId),
+        visit,
+      };
     },
   };
 }

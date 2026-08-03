@@ -9,7 +9,7 @@ import {
 } from "../../src/server/modules/medication/index.js";
 import { clinicalNoteDrafts, clinicalNotes, createNoteService } from "../../src/server/modules/note/index.js";
 import { createPatientService } from "../../src/server/modules/patient/index.js";
-import { auditEvents, executeIdempotent } from "../../src/server/modules/platform/index.js";
+import { auditEvents, executeIdempotent, idempotencyRecords } from "../../src/server/modules/platform/index.js";
 import { visits } from "../../src/server/modules/visit/index.js";
 import { createVisitService } from "../../src/server/modules/visit/index.js";
 import { createClinicalWorkflow } from "../../src/server/workflows/clinical.js";
@@ -205,6 +205,14 @@ describe("consultation draft workflow", () => {
 
     expect(replay.json()).toEqual({ data: first.json().data, replayed: true });
     expect(collision.json().error.code).toBe("IDEMPOTENCY_CONFLICT");
+    const stored = test.database.db.select().from(idempotencyRecords).all()
+      .find((record) => record.actorId === test.doctor.actor.id && record.key === "clinical-draft-001");
+    expect(stored?.responseJson).not.toContain("อาการทดสอบ");
+    expect(stored?.responseJson).not.toContain("ผลตรวจทดสอบ");
+    expect(stored?.responseJson).not.toContain("ประเมินทดสอบ");
+    expect(stored?.responseJson).not.toContain("แผนทดสอบ");
+    expect(stored?.responseJson).not.toContain("การวินิจฉัยทดสอบ");
+    expect(stored?.responseJson).not.toContain("คำแนะนำทดสอบ");
     expect(test.database.db.select().from(auditEvents).all().filter((event) => event.action === "note.draft-saved"))
       .toHaveLength(1);
   });

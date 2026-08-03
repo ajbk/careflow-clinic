@@ -58,7 +58,26 @@ function parseStoredEnvelope<T>(responseJson: string): IdempotentEnvelope<T> {
   return parsed as IdempotentEnvelope<T>;
 }
 
-export function executeIdempotent<T>(input: {
+function parseStoredReference<T>(responseJson: string): T {
+  const parsed: unknown = JSON.parse(responseJson);
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !("type" in parsed) ||
+    parsed.type !== "safe-replay-reference" ||
+    !("reference" in parsed)
+  ) {
+    throw new Error("Invalid stored idempotency replay reference");
+  }
+  return parsed.reference as T;
+}
+
+export interface SafeReplayStrategy<TResponse, TReference> {
+  store(response: TResponse): TReference;
+  rebuild(tx: AuditedTransaction, reference: TReference): TResponse;
+}
+
+export function executeIdempotent<T, TReference = never>(input: {
   db: AppDatabase;
   actor: Actor;
   key: string;
@@ -67,6 +86,8 @@ export function executeIdempotent<T>(input: {
   scope?: string;
   requestBody: CommandBody<unknown, Record<string, number>>;
   work: (tx: AuditedTransaction) => CommandWorkResult<T>;
+  /** Stores only a safe reference and rebuilds the response on replay. */
+  safeReplay?: SafeReplayStrategy<T, TReference>;
 }): CommandHttpResult<T> {
   assertValidIdempotencyKey(input.key);
   const hash = requestHash(input.operation, input.requestBody, input.scope);
@@ -94,15 +115,20 @@ export function executeIdempotent<T>(input: {
           });
         }
 
-        const stored = parseStoredEnvelope<T>(existing.responseJson);
+        const data = input.safeReplay
+          ? input.safeReplay.rebuild(tx, parseStoredReference<TReference>(existing.responseJson))
+          : parseStoredEnvelope<T>(existing.responseJson).data;
         return {
           statusCode: existing.responseStatus,
-          body: { data: stored.data, replayed: true },
+          body: { data, replayed: true },
         };
       }
 
       const result = input.work(tx);
       const body: IdempotentEnvelope<T> = { data: result.data, replayed: false };
+      const storedResponse = input.safeReplay
+        ? { type: "safe-replay-reference", reference: input.safeReplay.store(result.data) }
+        : body;
       tx.insert(idempotencyRecords)
         .values({
           clinicId: "clinic",
@@ -110,7 +136,7 @@ export function executeIdempotent<T>(input: {
           key: input.key,
           requestHash: hash,
           responseStatus: result.statusCode,
-          responseJson: stableStringify(body),
+          responseJson: stableStringify(storedResponse),
           createdAt: new Date().toISOString(),
         })
         .run();

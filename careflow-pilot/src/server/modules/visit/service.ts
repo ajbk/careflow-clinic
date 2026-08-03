@@ -43,6 +43,7 @@ export interface VisitService {
   submitIntake(tx: AuditedTransaction, actor: Actor, body: SubmitIntakeBody): QueueItemDto;
   listQueue(actor: Actor): QueueItemDto[];
   getDashboardToday(): { waiting: number; consulting: number; updatedAt: string };
+  getVisitSummary(visitId: string): VisitSummaryDto | null;
   getWorkspace(visitId: string, actor: Actor): VisitWorkspaceDto;
   startConsultation(
     tx: AuditedTransaction,
@@ -297,6 +298,20 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
         waiting: rows.filter((row) => row.status === "WAITING").length,
         consulting: rows.filter((row) => row.status === "CONSULTING").length,
         updatedAt: now.toISOString(),
+      };
+    },
+
+    getVisitSummary(visitId) {
+      const visit = input.database.db.select().from(visits)
+        .where(and(eq(visits.id, visitId), eq(visits.clinicId, "clinic")))
+        .get();
+      if (!visit) return null;
+      return {
+        id: visit.id,
+        status: visitStatusSchema.parse(visit.status),
+        revision: visit.revision,
+        arrivedAt: visit.arrivedAt,
+        startedAt: visit.startedAt,
       };
     },
 
