@@ -13,6 +13,7 @@ import type {
   SignMedicationDecisionRevisionBody,
   VisitSummaryDto,
 } from "../../shared/contracts.js";
+import { visitSummarySchema } from "../../shared/contracts.js";
 import { randomUUID } from "node:crypto";
 import { ApiError } from "../errors.js";
 import type { MedicationService } from "../modules/medication/index.js";
@@ -20,6 +21,58 @@ import type { NoteService } from "../modules/note/index.js";
 import type { PatientService } from "../modules/patient/index.js";
 import { appendAuditEvent, hasPermission, type AuditedTransaction } from "../modules/platform/index.js";
 import type { VisitService } from "../modules/visit/index.js";
+
+type CurrentFinalizationReplayReference = {
+  visit: VisitSummaryDto;
+  clinicalNoteId: string;
+  clinicalNoteVersion: number;
+  medicationDecisionId: string;
+  medicationDecisionVersion: number;
+};
+type CurrentDecisionRevisionReplayReference = {
+  visit: VisitSummaryDto;
+  medicationDecisionId: string;
+  medicationDecisionVersion: number;
+};
+type LegacyFinalizationReplayReference = {
+  visitId: string;
+  visitRevision: number;
+  clinicalNoteId: string;
+  clinicalNoteVersion?: number;
+  medicationDecisionId: string;
+  medicationDecisionVersion?: number;
+};
+type LegacyDecisionRevisionReplayReference = {
+  visitId: string;
+  visitRevision: number;
+  medicationDecisionId: string;
+  medicationDecisionVersion: number;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  return actual.length === keys.length && actual.every((key, index) => key === [...keys].sort()[index]);
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1;
+}
+
+function invalidReplayReference(): never {
+  throw new Error("Invalid clinical idempotency replay reference");
+}
 
 export interface ClinicalWorkflow {
   reviewAllergy(
@@ -73,13 +126,13 @@ export interface ClinicalWorkflow {
     clinicalNoteVersion: number;
     medicationDecisionId: string;
     medicationDecisionVersion: number;
-  }): FinalizeConsultationResultDto;
+  } | LegacyFinalizationReplayReference): FinalizeConsultationResultDto;
   replayAmendment(reference: { clinicalNoteId: string; amendmentId: string; amendmentVersion: number }): ClinicalNoteAmendmentDto;
   replayMedicationDecisionRevision(reference: {
     visit: VisitSummaryDto;
     medicationDecisionId: string;
     medicationDecisionVersion: number;
-  }): MedicationDecisionRevisionResultDto;
+  } | LegacyDecisionRevisionReplayReference): MedicationDecisionRevisionResultDto;
 }
 
 export function createClinicalWorkflow(input: {
@@ -98,6 +151,108 @@ export function createClinicalWorkflow(input: {
 }): ClinicalWorkflow {
   const clock = input.clock ?? (() => new Date());
   const idFactory = input.idFactory ?? randomUUID;
+  const normalizeFinalizedReference = (reference: unknown): CurrentFinalizationReplayReference => {
+    if (!isRecord(reference)) return invalidReplayReference();
+    if ("visit" in reference) {
+      if (!hasExactlyKeys(reference, [
+        "visit", "clinicalNoteId", "clinicalNoteVersion", "medicationDecisionId", "medicationDecisionVersion",
+      ])) return invalidReplayReference();
+      const visit = visitSummarySchema.safeParse(reference.visit);
+      if (
+        !visit.success ||
+        !isNonEmptyString(reference.clinicalNoteId) ||
+        !isPositiveInteger(reference.clinicalNoteVersion) ||
+        !isNonEmptyString(reference.medicationDecisionId) ||
+        !isPositiveInteger(reference.medicationDecisionVersion)
+      ) return invalidReplayReference();
+      return {
+        visit: visit.data,
+        clinicalNoteId: reference.clinicalNoteId,
+        clinicalNoteVersion: reference.clinicalNoteVersion,
+        medicationDecisionId: reference.medicationDecisionId,
+        medicationDecisionVersion: reference.medicationDecisionVersion,
+      };
+    }
+    if (!hasOnlyKeys(reference, [
+      "visitId", "visitRevision", "clinicalNoteId", "clinicalNoteVersion", "medicationDecisionId", "medicationDecisionVersion",
+    ]) ||
+      !isNonEmptyString(reference.visitId) ||
+      !isPositiveInteger(reference.visitRevision) ||
+      !isNonEmptyString(reference.clinicalNoteId) ||
+      !isNonEmptyString(reference.medicationDecisionId) ||
+      ("clinicalNoteVersion" in reference && !isPositiveInteger(reference.clinicalNoteVersion)) ||
+      ("medicationDecisionVersion" in reference && !isPositiveInteger(reference.medicationDecisionVersion))
+    ) return invalidReplayReference();
+    const visit = input.visits.getVisitSummary(reference.visitId);
+    const clinicalNote = input.notes.getSignedNoteById(reference.clinicalNoteId);
+    const medicationDecision = input.medications.getSignedDecisionById(reference.medicationDecisionId);
+    if (
+      !visit ||
+      !clinicalNote ||
+      !medicationDecision ||
+      clinicalNote.visitId !== reference.visitId ||
+      medicationDecision.visitId !== reference.visitId ||
+      ("clinicalNoteVersion" in reference && clinicalNote.version !== reference.clinicalNoteVersion) ||
+      ("medicationDecisionVersion" in reference && medicationDecision.version !== reference.medicationDecisionVersion)
+    ) return invalidReplayReference();
+    return {
+      visit: {
+        id: reference.visitId,
+        status: medicationDecision.kind === "ORDER" ? "AWAITING_PREPARATION" : "AWAITING_CHARGE",
+        revision: reference.visitRevision,
+        arrivedAt: visit.arrivedAt,
+        startedAt: visit.startedAt,
+      },
+      clinicalNoteId: clinicalNote.id,
+      clinicalNoteVersion: clinicalNote.version,
+      medicationDecisionId: medicationDecision.id,
+      medicationDecisionVersion: medicationDecision.version,
+    };
+  };
+  const normalizeDecisionRevisionReference = (reference: unknown): CurrentDecisionRevisionReplayReference => {
+    if (!isRecord(reference)) return invalidReplayReference();
+    if ("visit" in reference) {
+      if (!hasExactlyKeys(reference, ["visit", "medicationDecisionId", "medicationDecisionVersion"])) {
+        return invalidReplayReference();
+      }
+      const visit = visitSummarySchema.safeParse(reference.visit);
+      if (
+        !visit.success ||
+        !isNonEmptyString(reference.medicationDecisionId) ||
+        !isPositiveInteger(reference.medicationDecisionVersion)
+      ) return invalidReplayReference();
+      return {
+        visit: visit.data,
+        medicationDecisionId: reference.medicationDecisionId,
+        medicationDecisionVersion: reference.medicationDecisionVersion,
+      };
+    }
+    if (!hasExactlyKeys(reference, ["visitId", "visitRevision", "medicationDecisionId", "medicationDecisionVersion"]) ||
+      !isNonEmptyString(reference.visitId) ||
+      !isPositiveInteger(reference.visitRevision) ||
+      !isNonEmptyString(reference.medicationDecisionId) ||
+      !isPositiveInteger(reference.medicationDecisionVersion)
+    ) return invalidReplayReference();
+    const visit = input.visits.getVisitSummary(reference.visitId);
+    const medicationDecision = input.medications.getSignedDecisionById(reference.medicationDecisionId);
+    if (
+      !visit ||
+      !medicationDecision ||
+      medicationDecision.visitId !== reference.visitId ||
+      medicationDecision.version !== reference.medicationDecisionVersion
+    ) return invalidReplayReference();
+    return {
+      visit: {
+        id: reference.visitId,
+        status: medicationDecision.kind === "ORDER" ? "AWAITING_PREPARATION" : "AWAITING_CHARGE",
+        revision: reference.visitRevision,
+        arrivedAt: visit.arrivedAt,
+        startedAt: visit.startedAt,
+      },
+      medicationDecisionId: medicationDecision.id,
+      medicationDecisionVersion: medicationDecision.version,
+    };
+  };
   return {
     reviewAllergy(tx, actor, patientId, body) {
       const visit = input.visits.assertAllergyReviewVisit(tx, actor, patientId, body);
@@ -224,19 +379,20 @@ export function createClinicalWorkflow(input: {
     },
 
     replayFinalizedConsultation(reference) {
-      const clinicalNote = input.notes.getSignedNoteById(reference.clinicalNoteId);
-      const medicationDecision = input.medications.getSignedDecisionById(reference.medicationDecisionId);
+      const normalized = normalizeFinalizedReference(reference);
+      const clinicalNote = input.notes.getSignedNoteById(normalized.clinicalNoteId);
+      const medicationDecision = input.medications.getSignedDecisionById(normalized.medicationDecisionId);
       if (
         !clinicalNote ||
         !medicationDecision ||
-        clinicalNote.visitId !== reference.visit.id ||
-        clinicalNote.version !== reference.clinicalNoteVersion ||
-        medicationDecision.visitId !== reference.visit.id ||
-        medicationDecision.version !== reference.medicationDecisionVersion
+        clinicalNote.visitId !== normalized.visit.id ||
+        clinicalNote.version !== normalized.clinicalNoteVersion ||
+        medicationDecision.visitId !== normalized.visit.id ||
+        medicationDecision.version !== normalized.medicationDecisionVersion
       ) {
         throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่พบข้อมูลที่ลงนามสำหรับการเรียกซ้ำ" });
       }
-      return { visit: reference.visit, clinicalNote, medicationDecision };
+      return { visit: normalized.visit, clinicalNote, medicationDecision };
     },
 
     replayAmendment(reference) {
@@ -248,15 +404,16 @@ export function createClinicalWorkflow(input: {
     },
 
     replayMedicationDecisionRevision(reference) {
-      const medicationDecision = input.medications.getSignedDecisionById(reference.medicationDecisionId);
+      const normalized = normalizeDecisionRevisionReference(reference);
+      const medicationDecision = input.medications.getSignedDecisionById(normalized.medicationDecisionId);
       if (
         !medicationDecision ||
-        medicationDecision.visitId !== reference.visit.id ||
-        medicationDecision.version !== reference.medicationDecisionVersion
+        medicationDecision.visitId !== normalized.visit.id ||
+        medicationDecision.version !== normalized.medicationDecisionVersion
       ) {
         throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่พบคำสั่งยาที่แก้ไขสำหรับการเรียกซ้ำ" });
       }
-      return { visit: reference.visit, medicationDecision };
+      return { visit: normalized.visit, medicationDecision };
     },
   };
 }

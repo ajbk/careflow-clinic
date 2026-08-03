@@ -685,6 +685,46 @@ describe("signed evidence amendments and safety revisions", () => {
     expect(firstRevisionReplay.json()).toEqual({ data: firstRevision.json().data, replayed: true });
   });
 
+  it("normalizes pre-fix safe references after a later decision revision", async () => {
+    const test = await fixture();
+    const { visitId, finalized } = await finalizeOrder(test);
+    const firstRevision = await reviseDecision(test, visitId);
+    const firstRevisionData = firstRevision.json().data;
+    test.database.sqlite.prepare(
+      "UPDATE idempotency_records SET response_json=? WHERE actor_id=? AND key=?",
+    ).run(JSON.stringify({
+      type: "safe-replay-reference",
+      reference: {
+        visitId: finalized.visit.id,
+        visitRevision: finalized.visit.revision,
+        clinicalNoteId: finalized.clinicalNote.id,
+        medicationDecisionId: finalized.medicationDecision.id,
+      },
+    }), test.doctor.actor.id, "clinical-finalize-001");
+    test.database.sqlite.prepare(
+      "UPDATE idempotency_records SET response_json=? WHERE actor_id=? AND key=?",
+    ).run(JSON.stringify({
+      type: "safe-replay-reference",
+      reference: {
+        visitId: firstRevisionData.visit.id,
+        visitRevision: firstRevisionData.visit.revision,
+        medicationDecisionId: firstRevisionData.medicationDecision.id,
+        medicationDecisionVersion: firstRevisionData.medicationDecision.version,
+      },
+    }), test.doctor.actor.id, "clinical-decision-revision-001");
+    expect((await reviseDecision(test, visitId, {
+      visit: 4, decision: 2, kind: "ORDER", key: "clinical-legacy-reference-later",
+    })).statusCode).toBe(201);
+
+    const finalizedReplay = await finalize(test, visitId);
+    const firstRevisionReplay = await reviseDecision(test, visitId);
+
+    expect(finalizedReplay.statusCode).toBe(200);
+    expect(finalizedReplay.json()).toEqual({ data: finalized, replayed: true });
+    expect(firstRevisionReplay.statusCode).toBe(201);
+    expect(firstRevisionReplay.json()).toEqual({ data: firstRevisionData, replayed: true });
+  });
+
   it.each(["AWAITING_ORDER_REVISION", "AWAITING_PREPARATION", "AWAITING_CHARGE"] as const)(
     "accepts an ORDER decision revision only from %s",
     async (status) => {
