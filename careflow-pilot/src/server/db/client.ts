@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, statSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
@@ -80,10 +80,26 @@ function validateExistingFileReadOnly(databasePath: string, migrationsPath: stri
   }
 }
 
-function secureDatabaseArtifacts(databasePath: string): void {
-  if (process.platform === "win32") return;
+function existingSafeArtifacts(databasePath: string): string[] {
+  const existing: string[] = [];
   for (const artifact of [databasePath, `${databasePath}-wal`, `${databasePath}-shm`]) {
-    if (existsSync(artifact)) chmodSync(artifact, 0o600);
+    try {
+      const stat = lstatSync(artifact);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) {
+        throw new Error("Refusing unsafe SQLite artifact");
+      }
+      existing.push(artifact);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  return existing;
+}
+
+function secureDatabaseArtifacts(databasePath: string): void {
+  const artifacts = existingSafeArtifacts(databasePath);
+  if (process.platform !== "win32") {
+    for (const artifact of artifacts) chmodSync(artifact, 0o600);
   }
 }
 
@@ -96,6 +112,7 @@ export function openDatabase(inputPath: string): DatabaseHandle {
   try {
     if (existingNonEmpty) validateExistingFileReadOnly(lock.databasePath, migrationsPath);
 
+    secureDatabaseArtifacts(lock.databasePath);
     sqlite = new Database(lock.databasePath);
     secureDatabaseArtifacts(lock.databasePath);
     sqlite.pragma("foreign_keys = ON");
