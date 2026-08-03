@@ -17,10 +17,22 @@ export { MAINTENANCE_LOCK_SUFFIX };
 const expectedTables = new Set([
   "__drizzle_migrations",
   "audit_events",
+  "clinical_note_amendments",
+  "clinical_note_diagnoses",
+  "clinical_note_draft_diagnoses",
+  "clinical_note_drafts",
+  "clinical_notes",
   "clinic_config",
   "clinic_counters",
   "idempotency_records",
   "intake_observations",
+  "medication_decision_drafts",
+  "medication_decisions",
+  "medication_order_draft_items",
+  "medication_order_items",
+  "medications",
+  "patient_allergy_items",
+  "patient_allergy_revisions",
   "patients",
   "platform_metadata",
   "sessions",
@@ -28,18 +40,47 @@ const expectedTables = new Set([
   "visits",
 ]);
 
-const triggerSql = {
-  update: `CREATE TRIGGER audit_events_block_update
-BEFORE UPDATE ON audit_events
+const auditTriggerSql = {
+  update: `CREATE TRIGGER \`audit_events_block_update\`
+BEFORE UPDATE ON \`audit_events\`
 BEGIN
-  SELECT RAISE(ABORT, 'audit_events are append-only');
-END`,
-  delete: `CREATE TRIGGER audit_events_block_delete
-BEFORE DELETE ON audit_events
+\tSELECT RAISE(ABORT, 'audit_events are append-only');
+END;`,
+  delete: `CREATE TRIGGER \`audit_events_block_delete\`
+BEFORE DELETE ON \`audit_events\`
 BEGIN
-  SELECT RAISE(ABORT, 'audit_events are append-only');
-END`,
+\tSELECT RAISE(ABORT, 'audit_events are append-only');
+END;`,
 } as const;
+
+const appendOnlyTables = [
+  "clinical_notes",
+  "clinical_note_diagnoses",
+  "clinical_note_amendments",
+  "medication_decisions",
+  "medication_order_items",
+  "patient_allergy_revisions",
+  "patient_allergy_items",
+] as const;
+
+function appendOnlyTriggerSql(table: (typeof appendOnlyTables)[number], operation: "update" | "delete"): string {
+  return `CREATE TRIGGER \`${table}_block_${operation}\`
+BEFORE ${operation.toUpperCase()} ON \`${table}\`
+BEGIN
+\tSELECT RAISE(ABORT, '${table} are append-only');
+END;`;
+}
+
+const clinicalTriggerNames = appendOnlyTables.flatMap((table) => [
+  `${table}_block_update`,
+  `${table}_block_delete`,
+]);
+
+const knownAppendOnlyTriggerNames = [
+  "audit_events_block_update",
+  "audit_events_block_delete",
+  ...clinicalTriggerNames,
+] as const;
 
 export interface ResetSyntheticDependencies {
   argv: readonly string[];
@@ -166,15 +207,37 @@ function assertForeignKeys(sqlite: Database.Database): void {
 }
 
 function restoreAuditTriggers(sqlite: Database.Database): void {
-  sqlite.exec(triggerSql.update);
-  sqlite.exec(triggerSql.delete);
+  sqlite.exec(auditTriggerSql.update);
+  sqlite.exec(auditTriggerSql.delete);
+}
+
+function restoreClinicalTriggers(sqlite: Database.Database): void {
+  for (const table of appendOnlyTables) {
+    sqlite.exec(appendOnlyTriggerSql(table, "update"));
+    sqlite.exec(appendOnlyTriggerSql(table, "delete"));
+  }
+}
+
+function dropKnownAppendOnlyTriggers(sqlite: Database.Database): void {
+  sqlite.exec(knownAppendOnlyTriggerNames.map((name) => `DROP TRIGGER IF EXISTS ${name};`).join(" "));
 }
 
 function verifyReset(sqlite: Database.Database): void {
   const targets = [
     ["sessions", "count(*)"],
     ["idempotency_records", "count(*)"],
+    ["clinical_note_amendments", "count(*)"],
+    ["clinical_note_diagnoses", "count(*)"],
+    ["clinical_note_draft_diagnoses", "count(*)"],
+    ["clinical_note_drafts", "count(*)"],
+    ["clinical_notes", "count(*)"],
     ["intake_observations", "count(*)"],
+    ["medication_decision_drafts", "count(*)"],
+    ["medication_decisions", "count(*)"],
+    ["medication_order_draft_items", "count(*)"],
+    ["medication_order_items", "count(*)"],
+    ["patient_allergy_items", "count(*)"],
+    ["patient_allergy_revisions", "count(*)"],
     ["visits", "count(*)"],
     ["patients", "count(*)"],
   ] as const;
@@ -194,6 +257,27 @@ function verifyReset(sqlite: Database.Database): void {
   if (triggerNames.join(",") !== "audit_events_block_delete,audit_events_block_update") {
     fail("Audit append-only triggers were not restored");
   }
+  const clinicalTriggerNamesAfterReset = sqlite
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%_block_%' AND name <> 'audit_events_block_update' AND name <> 'audit_events_block_delete' ORDER BY name")
+    .pluck()
+    .all() as string[];
+  if (clinicalTriggerNamesAfterReset.join(",") !== [...clinicalTriggerNames].sort().join(",")) {
+    fail("Clinical append-only triggers were not restored");
+  }
+  const clinicalAuditCount = sqlite
+    .prepare("SELECT count(*) FROM audit_events WHERE action LIKE 'patient.%' OR action LIKE 'visit.%' OR action LIKE 'allergy.%' OR action LIKE 'note.%' OR action LIKE 'medication.%'")
+    .pluck()
+    .get();
+  if (Number(clinicalAuditCount) !== 0) fail("Synthetic reset left clinical Audit rows");
+  const catalog = sqlite
+    .prepare("SELECT id, display_name, active, revision FROM medications ORDER BY id")
+    .all();
+  if (JSON.stringify(catalog) !== JSON.stringify([
+    { id: "DEMO-MED-001", display_name: "[DEMO] ยาทดสอบชนิด A", active: 1, revision: 1 },
+    { id: "DEMO-MED-002", display_name: "[DEMO] ยาทดสอบชนิด B", active: 1, revision: 1 },
+    { id: "DEMO-MED-003", display_name: "[DEMO] ยาทดสอบชนิด C", active: 1, revision: 1 },
+    { id: "DEMO-MED-004", display_name: "[DEMO] ยาทดสอบชนิด D", active: 1, revision: 1 },
+  ])) fail("Synthetic medication catalog changed during reset");
   assertForeignKeys(sqlite);
   const freelist = Number(sqlite.pragma("freelist_count", { simple: true }));
   if (freelist !== 0) fail("SQLite VACUUM did not reclaim all free pages");
@@ -238,15 +322,27 @@ export function runResetSyntheticData(deps: ResetSyntheticDependencies): number 
     assertNoHostLock(target.lockPath);
     sqlite.exec("BEGIN EXCLUSIVE");
     transactionOpen = true;
-    sqlite.exec("DROP TRIGGER IF EXISTS audit_events_block_update; DROP TRIGGER IF EXISTS audit_events_block_delete;");
+    dropKnownAppendOnlyTriggers(sqlite);
     sqlite.exec("DELETE FROM sessions;");
     sqlite.exec("DELETE FROM idempotency_records;");
+    sqlite.exec("DELETE FROM medication_order_draft_items;");
+    sqlite.exec("DELETE FROM medication_decision_drafts;");
+    sqlite.exec("DELETE FROM medication_order_items;");
+    sqlite.exec("DELETE FROM medication_decisions;");
+    sqlite.exec("DELETE FROM clinical_note_draft_diagnoses;");
+    sqlite.exec("DELETE FROM clinical_note_drafts;");
+    sqlite.exec("DELETE FROM clinical_note_diagnoses;");
+    sqlite.exec("DELETE FROM clinical_note_amendments;");
+    sqlite.exec("DELETE FROM clinical_notes;");
+    sqlite.exec("DELETE FROM patient_allergy_items;");
+    sqlite.exec("DELETE FROM patient_allergy_revisions;");
     sqlite.exec("DELETE FROM intake_observations;");
     sqlite.exec("DELETE FROM visits;");
     sqlite.exec("DELETE FROM patients;");
-    sqlite.exec("DELETE FROM audit_events WHERE action LIKE 'patient.%' OR action LIKE 'visit.%';");
+    sqlite.exec("DELETE FROM audit_events WHERE action LIKE 'patient.%' OR action LIKE 'visit.%' OR action LIKE 'allergy.%' OR action LIKE 'note.%' OR action LIKE 'medication.%';");
     sqlite.exec("UPDATE clinic_counters SET value = 0 WHERE key = 'synthetic_patient';");
     restoreAuditTriggers(sqlite);
+    restoreClinicalTriggers(sqlite);
     sqlite.exec("COMMIT");
     transactionOpen = false;
 
@@ -284,4 +380,4 @@ export function runResetSyntheticData(deps: ResetSyntheticDependencies): number 
 }
 
 // Exported for tests/documentation without exposing mutable internals.
-export const syntheticResetTriggerSql = Object.freeze({ ...triggerSql });
+export const syntheticResetTriggerSql = Object.freeze({ ...auditTriggerSql });

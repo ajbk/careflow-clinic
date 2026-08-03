@@ -88,6 +88,32 @@ function appendTestAudit(
 }
 
 describe("role permissions", () => {
+  it("assigns the clinical permissions only to the roles authorized to perform them", () => {
+    expect(platform.permissionsByRole).toEqual({
+      assistant: [
+        "patient:read",
+        "patient:create-synthetic",
+        "visit:submit-intake",
+        "visit:read-queue",
+        "patient:update-allergy",
+      ],
+      doctor: [
+        "patient:read",
+        "patient:create-synthetic",
+        "visit:submit-intake",
+        "visit:read-queue",
+        "visit:start-consultation",
+        "patient:update-allergy",
+        "clinical:read",
+        "clinical:save-draft",
+        "clinical:sign",
+        "clinical:amend",
+        "medication:read-catalog",
+        "medication:sign-decision",
+      ],
+    });
+  });
+
   it.each([
     { role: "assistant" as const, allowed: false },
     { role: "doctor" as const, allowed: true },
@@ -338,6 +364,39 @@ describe("idempotent audited transactions", () => {
 });
 
 describe("append-only Audit Events", () => {
+  it.each([
+    ["note.draft-saved", null, false],
+    ["note.signed", null, false],
+    ["medication.decision-signed", null, false],
+    ["visit.consultation-finalized", null, false],
+    ["note.amendment-signed", null, true],
+    ["medication.decision-revised", null, true],
+    ["visit.allergy-safety-changed", null, true],
+  ] as const)("enforces the server-owned reason policy for %s", (action, reason, required) => {
+    const { database, actor } = databaseWithActor();
+    const append = () => runAuditedTransaction({
+      db: database.db,
+      actor,
+      work: (tx) => appendAuditEvent({
+        tx,
+        actor,
+        id: `audit-${action}`,
+        action,
+        entityType: "clinical-test",
+        entityId: action,
+        entityRevision: 1,
+        reason,
+        occurredAt,
+      } as Parameters<typeof appendAuditEvent>[0]),
+    });
+
+    if (required) {
+      expect(append).toThrow("Audit reason is required");
+    } else {
+      expect(append).not.toThrow();
+    }
+  });
+
   it("does not expose maintenance system capabilities from the HTTP-facing platform index", () => {
     expect(platform).not.toHaveProperty("runMaintenanceAuditedTransaction");
     expect(platform).not.toHaveProperty("appendMaintenanceAuditEvent");

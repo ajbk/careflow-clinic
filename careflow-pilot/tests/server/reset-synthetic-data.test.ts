@@ -81,9 +81,35 @@ function reset(databasePath: string, confirmation = RESET_CONFIRMATION): { code:
   return { code, output, errors };
 }
 
+function seedClinicalEvidence(databasePath: string): void {
+  const database = new Database(databasePath);
+  try {
+    const now = "2026-08-03T00:00:00.000Z";
+    const hash = "a".repeat(64);
+    const patientId = database.prepare("SELECT id FROM patients").pluck().get() as string;
+    const visitId = database.prepare("SELECT id FROM visits").pluck().get() as string;
+    database.exec(`
+      INSERT INTO patient_allergy_revisions VALUES ('reset-allergy-revision', '${patientId}', 1, 'NONE_KNOWN', 'source', 'reason', 'reset-assistant-001', '${now}');
+      INSERT INTO patient_allergy_items VALUES ('reset-allergy-item', 'reset-allergy-revision', 0, 'substance', 'reaction', 'MILD', NULL);
+      INSERT INTO clinical_note_drafts VALUES ('reset-note-draft', '${visitId}', 1, '', '', '', '', 'reset-assistant-001', 'reset-assistant-001', '${now}', '${now}');
+      INSERT INTO clinical_note_draft_diagnoses VALUES ('reset-note-draft-diagnosis', 'reset-note-draft', 0, 'diagnosis');
+      INSERT INTO clinical_notes VALUES ('reset-note', '${visitId}', 1, 'subjective', 'objective', 'assessment', 'plan', 1, 'reset-assistant-001', '${now}', '${hash}');
+      INSERT INTO clinical_note_diagnoses VALUES ('reset-note-diagnosis', 'reset-note', 0, 'diagnosis');
+      INSERT INTO clinical_note_amendments VALUES ('reset-note-amendment', 'reset-note', 1, 'content', 'reason', 'reset-assistant-001', '${now}', '${hash}');
+      INSERT INTO medication_decision_drafts VALUES ('reset-decision-draft', '${visitId}', 1, 'ORDER', NULL, 'reset-assistant-001', 'reset-assistant-001', '${now}', '${now}');
+      INSERT INTO medication_order_draft_items VALUES ('reset-order-draft-item', 'reset-decision-draft', 0, 'DEMO-MED-001', 1, 1, 'ทดสอบ');
+      INSERT INTO medication_decisions VALUES ('reset-decision', '${visitId}', 1, 'ORDER', NULL, NULL, NULL, 'reset-assistant-001', '${now}', '${hash}');
+      INSERT INTO medication_order_items VALUES ('reset-order-item', 'reset-decision', 0, 'DEMO-MED-001', 1, '[DEMO] ยาทดสอบชนิด A', '500 หน่วยทดสอบ', 'เม็ดทดสอบ', 'เม็ด', 1, 'ทดสอบ');
+    `);
+  } finally {
+    database.close();
+  }
+}
+
 describe("guarded synthetic reset", () => {
   it("deletes only synthetic workflow data and preserves accounts/account audit", async () => {
     const fixture = await populatedDatabase();
+    seedClinicalEvidence(fixture.databasePath);
     const result = reset(fixture.databasePath);
 
     expect(result.code).toBe(0);
@@ -96,16 +122,43 @@ describe("guarded synthetic reset", () => {
       expect(database.prepare("SELECT count(*) FROM intake_observations").pluck().get()).toBe(0);
       expect(database.prepare("SELECT count(*) FROM sessions").pluck().get()).toBe(0);
       expect(database.prepare("SELECT count(*) FROM idempotency_records").pluck().get()).toBe(0);
+      for (const table of [
+        "patient_allergy_items",
+        "patient_allergy_revisions",
+        "clinical_note_draft_diagnoses",
+        "clinical_note_drafts",
+        "clinical_note_diagnoses",
+        "clinical_note_amendments",
+        "clinical_notes",
+        "medication_order_draft_items",
+        "medication_decision_drafts",
+        "medication_order_items",
+        "medication_decisions",
+      ]) {
+        expect(database.prepare(`SELECT count(*) FROM ${table}`).pluck().get()).toBe(0);
+      }
+      expect(database.prepare("SELECT id, display_name, active, revision FROM medications ORDER BY id").all()).toEqual([
+        { id: "DEMO-MED-001", display_name: "[DEMO] ยาทดสอบชนิด A", active: 1, revision: 1 },
+        { id: "DEMO-MED-002", display_name: "[DEMO] ยาทดสอบชนิด B", active: 1, revision: 1 },
+        { id: "DEMO-MED-003", display_name: "[DEMO] ยาทดสอบชนิด C", active: 1, revision: 1 },
+        { id: "DEMO-MED-004", display_name: "[DEMO] ยาทดสอบชนิด D", active: 1, revision: 1 },
+      ]);
       expect(database.prepare("SELECT value FROM clinic_counters WHERE key = 'synthetic_patient'").pluck().get()).toBe(0);
       expect(database.prepare("SELECT count(*) FROM staff_accounts").pluck().get()).toBe(1);
       expect(database.prepare("SELECT count(*) FROM audit_events WHERE action LIKE 'account.%'").pluck().get()).toBe(fixture.accountAuditCount);
-      expect(database.prepare("SELECT count(*) FROM audit_events WHERE action LIKE 'patient.%' OR action LIKE 'visit.%'").pluck().get()).toBe(0);
+      expect(database.prepare("SELECT count(*) FROM audit_events WHERE action LIKE 'patient.%' OR action LIKE 'visit.%' OR action LIKE 'allergy.%' OR action LIKE 'note.%' OR action LIKE 'medication.%'").pluck().get()).toBe(0);
       expect(Number(fixture.accountAuditCount)).toBeGreaterThan(0);
       expect(() => database.prepare("DELETE FROM audit_events WHERE action LIKE 'account.%'").run()).toThrow("append-only");
       expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     } finally {
       database.close();
     }
+
+    expect(reset(fixture.databasePath)).toMatchObject({
+      code: 0,
+      output: ["Synthetic Pilot data reset complete"],
+      errors: [],
+    });
   });
 
   it("rejects a live host lock and wrong confirmation without changing bytes", async () => {

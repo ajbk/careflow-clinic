@@ -1,4 +1,4 @@
-export { patients } from "./schema.js";
+export { patientAllergyItems, patientAllergyRevisions, patients } from "./schema.js";
 export {
   createPatientService,
   type PatientService,

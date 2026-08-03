@@ -7,6 +7,7 @@ export const permissionsByRole = {
     "patient:create-synthetic",
     "visit:submit-intake",
     "visit:read-queue",
+    "patient:update-allergy",
   ],
   doctor: [
     "patient:read",
@@ -14,6 +15,13 @@ export const permissionsByRole = {
     "visit:submit-intake",
     "visit:read-queue",
     "visit:start-consultation",
+    "patient:update-allergy",
+    "clinical:read",
+    "clinical:save-draft",
+    "clinical:sign",
+    "clinical:amend",
+    "medication:read-catalog",
+    "medication:sign-decision",
   ],
 } as const satisfies Record<Actor["role"], readonly Permission[]>;
 

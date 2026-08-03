@@ -42,6 +42,13 @@ export const permissionSchema = z.enum([
   "visit:submit-intake",
   "visit:read-queue",
   "visit:start-consultation",
+  "patient:update-allergy",
+  "clinical:read",
+  "clinical:save-draft",
+  "clinical:sign",
+  "clinical:amend",
+  "medication:read-catalog",
+  "medication:sign-decision",
 ]);
 
 export const loginBodySchema = z.strictObject({
@@ -136,6 +143,13 @@ export const visitStatuses = [
 ] as const;
 
 export const visitStatusSchema = z.enum(visitStatuses);
+export type VisitStatus = z.infer<typeof visitStatusSchema>;
+
+export const allergyStateSchema = z.enum(["UNKNOWN", "NONE_KNOWN", "PRESENT"]);
+export const allergySeveritySchema = z.enum(["UNKNOWN", "MILD", "MODERATE", "SEVERE"]);
+export const medicationDecisionDraftKindSchema = z.enum(["UNDECIDED", "ORDER", "NO_MEDICATION"]);
+export const medicationDecisionKindSchema = z.enum(["ORDER", "NO_MEDICATION"]);
+export type AllergySeverity = z.infer<typeof allergySeveritySchema>;
 
 const intakeVitalsSchema = z.strictObject({
   weightKg: z.number().finite().min(1).max(350).nullable(),
