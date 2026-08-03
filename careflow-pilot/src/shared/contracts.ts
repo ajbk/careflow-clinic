@@ -372,6 +372,110 @@ export const startConsultationBodySchema = rejectOwnPrototypeKeys(
 );
 export type StartConsultationBody = z.infer<typeof startConsultationBodySchema>;
 
+const draftSoapTextSchema = z.string().refine(
+  (value) => Array.from(value).length <= 4000,
+  { message: "ข้อความต้องมีความยาวไม่เกิน 4000 ตัวอักษร" },
+);
+
+const draftDiagnosisSchema = z.string().trim().min(1).refine(
+  (value) => Array.from(value).length <= 300,
+  { message: "การวินิจฉัยต้องมี 1–300 ตัวอักษร" },
+);
+
+export const clinicalNoteDraftInputSchema = z.strictObject({
+  subjective: draftSoapTextSchema,
+  objective: draftSoapTextSchema,
+  assessment: draftSoapTextSchema,
+  plan: draftSoapTextSchema,
+  diagnoses: z.array(draftDiagnosisSchema).max(20),
+});
+export type ClinicalNoteDraftInput = z.infer<typeof clinicalNoteDraftInputSchema>;
+
+const medicationDecisionDraftItemInputSchema = z.strictObject({
+  medicationId: z.string().trim().min(1).max(120),
+  medicationRevision: z.number().int().min(1),
+  quantity: z.number().int().min(1).max(9999),
+  directionsTh: z.string().trim().min(1).refine(
+    (value) => Array.from(value).length <= 500,
+    { message: "คำแนะนำต้องมี 1–500 ตัวอักษร" },
+  ),
+});
+
+export const medicationDecisionDraftInputSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("UNDECIDED") }),
+  z.strictObject({ kind: z.literal("ORDER"), items: z.array(medicationDecisionDraftItemInputSchema).max(20) }),
+  z.strictObject({
+    kind: z.literal("NO_MEDICATION"),
+    noMedicationReason: z.string().refine(
+      (value) => Array.from(value).length <= 500,
+      { message: "เหตุผลต้องมีความยาวไม่เกิน 500 ตัวอักษร" },
+    ),
+  }),
+]);
+export type MedicationDecisionDraftInput = z.infer<typeof medicationDecisionDraftInputSchema>;
+
+const draftUpdatedBySchema = z.strictObject({
+  id: z.string().min(1),
+  displayName: z.string().min(1),
+});
+
+export const clinicalNoteDraftSchema = clinicalNoteDraftInputSchema.extend({
+  id: z.string().min(1),
+  visitId: z.string().min(1),
+  revision: z.number().int().min(1),
+  updatedBy: draftUpdatedBySchema,
+  updatedAt: z.string().datetime(),
+});
+export type ClinicalNoteDraftDto = z.infer<typeof clinicalNoteDraftSchema>;
+
+const medicationDecisionDraftBaseSchema = z.strictObject({
+  id: z.string().min(1),
+  visitId: z.string().min(1),
+  revision: z.number().int().min(1),
+  updatedBy: draftUpdatedBySchema,
+  updatedAt: z.string().datetime(),
+});
+
+export const medicationDecisionDraftSchema = z.discriminatedUnion("kind", [
+  medicationDecisionDraftBaseSchema.extend({
+    kind: z.literal("UNDECIDED"), noMedicationReason: z.null(), items: z.tuple([]),
+  }),
+  medicationDecisionDraftBaseSchema.extend({
+    kind: z.literal("ORDER"),
+    noMedicationReason: z.null(),
+    items: z.array(z.strictObject({
+      medication: medicationSchema,
+      quantity: z.number().int().min(1).max(9999),
+      directionsTh: z.string().min(1).max(500),
+    })),
+  }),
+  medicationDecisionDraftBaseSchema.extend({
+    kind: z.literal("NO_MEDICATION"), noMedicationReason: z.string().max(500), items: z.tuple([]),
+  }),
+]);
+export type MedicationDecisionDraftDto = z.infer<typeof medicationDecisionDraftSchema>;
+
+export const saveConsultationDraftBodySchema = rejectOwnPrototypeKeys(
+  z.strictObject({
+    expectedRevisions: z.strictObject({
+      visit: z.number().int().min(1),
+      noteDraft: z.number().int().min(0),
+      medicationDraft: z.number().int().min(0),
+    }),
+    payload: z.strictObject({
+      note: clinicalNoteDraftInputSchema,
+      medicationDecision: medicationDecisionDraftInputSchema,
+    }),
+  }),
+);
+export type SaveConsultationDraftBody = z.infer<typeof saveConsultationDraftBodySchema>;
+
+export const saveConsultationDraftResponseSchema = z.strictObject({
+  data: z.strictObject({ note: clinicalNoteDraftSchema, medicationDecision: medicationDecisionDraftSchema }),
+  replayed: z.boolean(),
+});
+export type SaveConsultationDraftResponse = z.infer<typeof saveConsultationDraftResponseSchema>;
+
 export type Permission = z.infer<typeof permissionSchema>;
 
 export interface IdempotentEnvelope<T> {

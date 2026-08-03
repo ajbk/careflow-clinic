@@ -56,6 +56,12 @@ export interface VisitService {
     patientId: string,
     body: ReviewAllergyBody,
   ): VisitSummaryDto;
+  assertConsultationDraftVisit(
+    tx: AuditedTransaction,
+    actor: Actor,
+    visitId: string,
+    expectedRevision: number,
+  ): VisitSummaryDto;
 }
 
 type VisitRow = typeof visits.$inferSelect;
@@ -399,6 +405,27 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
       const allowed = visit.status === "WAITING" || (visit.status === "CONSULTING" && actor.role === "doctor");
       if (!allowed) {
         throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่อนุญาตให้ทบทวนข้อมูลแพ้" });
+      }
+      return {
+        id: visit.id,
+        status: visitStatusSchema.parse(visit.status),
+        revision: visit.revision,
+        arrivedAt: visit.arrivedAt,
+        startedAt: visit.startedAt,
+      };
+    },
+
+    assertConsultationDraftVisit(tx, actor, visitId, expectedRevision) {
+      const visit = tx.select().from(visits)
+        .where(and(eq(visits.id, visitId), eq(visits.clinicId, "clinic")))
+        .get();
+      if (!visit) throw notFound("ไม่พบ Visit");
+      assertExpectedRevision(visit.revision, expectedRevision, "visit");
+      if (actor.role !== "doctor") {
+        throw new ApiError({ code: "FORBIDDEN", messageTh: "บัญชีนี้ไม่มีสิทธิ์ดำเนินการ" });
+      }
+      if (visit.status !== "CONSULTING") {
+        throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่อนุญาตให้บันทึกร่าง" });
       }
       return {
         id: visit.id,
