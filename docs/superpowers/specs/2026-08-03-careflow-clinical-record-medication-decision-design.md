@@ -151,7 +151,7 @@ Catalog entries are marked as demonstration data and contain no real Patient inf
 
 - `id`, `visit_id`, monotonic `version`
 - `kind`: `ORDER` or `NO_MEDICATION`
-- `reason`, `supersedes_id`, `signed_by`, `signed_at`, and `content_hash`
+- `no_medication_reason`, `revision_reason`, `supersedes_id`, `signed_by`, `signed_at`, and `content_hash`
 
 `medication_order_items` contains immutable snapshots for `ORDER` decisions:
 
@@ -159,7 +159,7 @@ Catalog entries are marked as demonstration data and contain no real Patient inf
 - display name, strength, dosage form, and canonical unit copied at signing
 - integer quantity and Thai directions copied from the accepted draft
 
-An `ORDER` requires at least one valid item and no `NO_MEDICATION` reason. `NO_MEDICATION` requires a reason and zero items. These constraints are enforced by the service transaction and covered by database checks where SQLite can express them safely.
+An `ORDER` requires at least one valid item and no `NO_MEDICATION` reason. `NO_MEDICATION` requires `no_medication_reason` and zero items. The first signed decision has `revision_reason = null`; every superseding decision requires `revision_reason`. These constraints are enforced by the service transaction and covered by database checks where SQLite can express them safely.
 
 ### 6.5 Storage immutability
 
@@ -232,7 +232,7 @@ The transition to `AWAITING_ORDER_REVISION` is the stable invalidation entry poi
 `POST /api/visits/:visitId/medication-decision-revisions`
 
 - Doctor only; allowed in exactly `AWAITING_ORDER_REVISION`, `AWAITING_PREPARATION`, or `AWAITING_CHARGE` before any downstream artifact or finalized Charge exists.
-- Requires a reason, current Visit/Patient/decision revisions, and exactly one new `ORDER` or `NO_MEDICATION` decision.
+- Requires `revision_reason`, current Visit/Patient/decision revisions, and exactly one new `ORDER` or `NO_MEDICATION` decision. A superseding `NO_MEDICATION` also carries its separate `no_medication_reason`.
 - Creates a new signed decision version with `supersedes_id`; the old decision remains immutable.
 - `ORDER` advances to `AWAITING_PREPARATION`; `NO_MEDICATION` advances to `AWAITING_CHARGE`.
 - The next milestone will attach atomic artifact invalidation/reservation release to this same command before preparation becomes available.
