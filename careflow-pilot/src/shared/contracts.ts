@@ -128,6 +128,34 @@ export const patientSearchResponseSchema = z.strictObject({
 });
 export type PatientSearchResponse = z.infer<typeof patientSearchResponseSchema>;
 
+export const medicationSchema = z.strictObject({
+  id: z.string().regex(/^DEMO-MED-\d{3}$/),
+  displayName: z.string().min(1).max(200),
+  strengthText: z.string().min(1).max(100),
+  dosageFormText: z.string().min(1).max(100),
+  canonicalUnit: z.string().min(1).max(100),
+  revision: z.number().int().min(1),
+});
+export type MedicationDto = z.infer<typeof medicationSchema>;
+
+export const medicationSearchQuerySchema = z.strictObject({
+  q: z.string()
+    .trim()
+    .refine(
+      (value) => {
+        const length = Array.from(value).length;
+        return length >= 2 && length <= 80;
+      },
+      { message: "คำค้นหาต้องมี 2–80 ตัวอักษร" },
+    ),
+});
+export type MedicationSearchQuery = z.infer<typeof medicationSearchQuerySchema>;
+
+export const medicationSearchResponseSchema = z.strictObject({
+  data: z.array(medicationSchema).max(20),
+});
+export type MedicationSearchResponse = z.infer<typeof medicationSearchResponseSchema>;
+
 export const visitStatuses = [
   "WAITING",
   "CONSULTING",

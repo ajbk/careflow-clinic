@@ -15,6 +15,7 @@ import {
 import { createSessionService } from "./modules/platform/index.js";
 import { createPatientService, registerPatientRoutes } from "./modules/patient/index.js";
 import { createVisitService, registerVisitRoutes } from "./modules/visit/index.js";
+import { createMedicationService, registerMedicationRoutes } from "./modules/medication/index.js";
 import { createClinicalWorkflow } from "./workflows/clinical.js";
 import { registerClinicalRoutes } from "./workflows/clinical-routes.js";
 import { isApiPath, registerClientAssets } from "./static.js";
@@ -104,6 +105,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     clock: options.clock,
   });
   registerVisitRoutes({ app, database: options.db, visits: visitService });
+  const medicationService = createMedicationService({ database: options.db });
+  registerMedicationRoutes({ app, medications: medicationService });
   const clinicalWorkflow = createClinicalWorkflow({ patients: patientService, visits: visitService });
   registerClinicalRoutes({ app, database: options.db, clinical: clinicalWorkflow });
 
