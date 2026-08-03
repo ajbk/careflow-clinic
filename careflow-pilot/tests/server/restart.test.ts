@@ -119,7 +119,7 @@ describe("real-file restart boundary", () => {
     const workspaceBefore = await firstApp.inject({
       method: "GET",
       url: `/api/visits/${visitId}/workspace`,
-      headers: { cookie: assistantCookie },
+      headers: { cookie: doctorCookie },
     });
     expect(workspaceBefore.statusCode).toBe(200);
     const intakeId = workspaceBefore.json().data.intake.id as string;
@@ -142,7 +142,7 @@ describe("real-file restart boundary", () => {
     const workspaceAfter = await secondApp.inject({
       method: "GET",
       url: `/api/visits/${visitId}/workspace`,
-      headers: { cookie: assistantCookie },
+      headers: { cookie: doctorCookie },
     });
     expect(workspaceAfter.statusCode).toBe(200);
     expect(workspaceAfter.json().data).toMatchObject({

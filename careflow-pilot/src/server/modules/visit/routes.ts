@@ -43,7 +43,7 @@ export function registerVisitRoutes(input: {
   });
 
   input.app.get("/api/visits/:visitId/workspace", async (request) => {
-    const actor = requireActor(request, "visit:read-queue");
+    const actor = requireActor(request, "visit:start-consultation");
     const params = request.params as { visitId?: string };
     return { data: input.visits.getWorkspace(params.visitId ?? "", actor) };
   });

@@ -543,10 +543,17 @@ describe("shared Intake, Queue, and consultation workflow", () => {
       },
       allowedActions: ["START_CONSULTATION"],
     });
+    const assistantWorkspace = await test.app.inject({
+      method: "GET",
+      url: `/api/visits/${visitId}/workspace`,
+      headers: { cookie: test.assistantCookie },
+    });
+    expect(assistantWorkspace.statusCode).toBe(403);
+    expect(assistantWorkspace.json().error.code).toBe("FORBIDDEN");
     const unknown = await test.app.inject({
       method: "GET",
       url: "/api/visits/unknown-visit/workspace",
-      headers: { cookie: test.assistantCookie },
+      headers: { cookie: test.doctorCookie },
     });
     expect(unknown.statusCode).toBe(404);
     expect(unknown.json().error.code).toBe("NOT_FOUND");
