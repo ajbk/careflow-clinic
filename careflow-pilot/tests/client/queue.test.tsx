@@ -141,6 +141,25 @@ describe("connected shared queue workflow", () => {
     expect(within(doctorRow).getByRole("button", { name: /เริ่มการตรวจ/ })).toBeInTheDocument();
   });
 
+  it("never exposes a consulting-room link to Assistant", async () => {
+    server.use(
+      http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))),
+      http.get("/api/queue", () => HttpResponse.json({ data: [consultingItem] })),
+    );
+    renderRoute("/queue");
+    const row = await screen.findByRole("article", { name: /DEMO-000042/ });
+    expect(within(row).queryByRole("link", { name: "เปิดห้องตรวจ" })).not.toBeInTheDocument();
+    expect(screen.getByText("ติดตามการส่งต่อผู้ป่วยให้แพทย์")).toBeInTheDocument();
+  });
+
+  it("offers the clinical room only to Doctor", async () => {
+    server.use(http.get("/api/queue", () => HttpResponse.json({ data: [consultingItem] })));
+    renderRoute("/queue");
+    expect(within(await screen.findByRole("article", { name: /DEMO-000042/ }))
+      .getByRole("link", { name: "เปิดห้องตรวจ" })).toBeInTheDocument();
+    expect(screen.getByText("เลือกผู้ป่วยเพื่อเริ่มหรือกลับเข้าห้องตรวจ")).toBeInTheDocument();
+  });
+
   it("refetches once after five seconds while visible, pauses hidden polling, and refetches on focus", async () => {
     vi.useFakeTimers();
     let queueRequests = 0;
@@ -261,6 +280,17 @@ describe("connected shared queue workflow", () => {
     expect((await screen.findAllByText("กำลังตรวจ")).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/ยังไม่พร้อมใน Pilot/).length).toBeGreaterThanOrEqual(3);
     expect(screen.queryByText(/฿|บาท|คงเหลือ/)).not.toBeInTheDocument();
+  });
+
+  it("links the Assistant Overview action to Intake", async () => {
+    server.use(http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))));
+    renderRoute("/overview");
+    expect(await screen.findByRole("link", { name: "รับผู้ป่วย" })).toHaveAttribute("href", "/intake");
+  });
+
+  it("links the Doctor Overview action to Queue", async () => {
+    renderRoute("/overview");
+    expect(await screen.findByRole("link", { name: "ไปยังคิวตรวจ" })).toHaveAttribute("href", "/queue");
   });
 
   it("keeps Overview intake unavailable while the queue read is pending", async () => {

@@ -1,6 +1,7 @@
 import { ArrowRight, ClipboardPlus, LockKeyhole, Stethoscope, UsersRound } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { ReactElement } from "react";
+import { useAuth } from "../auth/AuthProvider";
 import { Card, EmptyState, PageHeader, SectionHeading, StatusBadge } from "../components/careflow/ui";
 import { useDashboardToday } from "../features/dashboard";
 import { useQueue } from "../features/queue";
@@ -50,6 +51,7 @@ function MetricSkeleton({ label }: { label: string }) {
 }
 
 export function OverviewScreen(): ReactElement {
+  const auth = useAuth();
   const dashboard = useDashboardToday();
   const queue = useQueue();
 
@@ -76,6 +78,10 @@ export function OverviewScreen(): ReactElement {
   const queueLoading = queue.isPending && !queue.data && !queue.error;
   const hasCachedQueue = Array.isArray(queue.data);
   const queueStale = Boolean(queue.error && hasCachedQueue && !(isApiError(queue.error) && queue.error.status === 403));
+  const isDoctor = auth.session?.user.role === "doctor";
+  const primaryAction = isDoctor
+    ? { to: "/queue", label: "ไปยังคิวตรวจ" }
+    : { to: "/intake", label: "รับผู้ป่วย" };
 
   return (
     <div className="operations-page overview-page">
@@ -83,7 +89,7 @@ export function OverviewScreen(): ReactElement {
         eyebrow="CARE FOR THE COMMUNITY"
         title="ภาพรวมคลินิก"
         description={`สถานะสดจากระบบคิว · อัปเดตล่าสุด ${formatThaiDateTime(metrics.updatedAt)}`}
-        actions={queueLoading ? undefined : <Link className="care-button care-button-primary" to="/intake"><ClipboardPlus aria-hidden="true" size={18} />รับผู้ป่วย</Link>}
+        actions={queueLoading ? undefined : <Link className="care-button care-button-primary" to={primaryAction.to}><ClipboardPlus aria-hidden="true" size={18} />{primaryAction.label}</Link>}
       />
 
       <section className="metric-grid" aria-label="สรุปสถานะคลินิก">

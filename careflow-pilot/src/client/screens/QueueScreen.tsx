@@ -73,6 +73,7 @@ function StaleQueueBanner({
 function QueueCard({
   item,
   canStart,
+  canOpenClinical,
   pending,
   blocked,
   startError,
@@ -81,6 +82,7 @@ function QueueCard({
 }: {
   item: QueueItemDto;
   canStart: boolean;
+  canOpenClinical: boolean;
   pending: boolean;
   blocked?: ApiError;
   startError?: unknown;
@@ -101,7 +103,7 @@ function QueueCard({
       {startError ? <div className="queue-action-error" role="alert"><strong>เริ่มการตรวจไม่สำเร็จ</strong><span>{actionErrorMessage(startError)}</span></div> : null}
       {item.visit.status === "WAITING" && startAllowed ? <ActionButton className="queue-action" variant="secondary" onClick={() => onStart(item)} disabled={pending || Boolean(blocked)}>{pending ? "กำลังเริ่มห้องตรวจ…" : "เริ่มการตรวจ"}</ActionButton> : null}
       {item.visit.status === "WAITING" && !startAllowed && !blocked ? <span className="queue-waiting-action" aria-label={stale ? "ข้อมูลคิวต้องโหลดใหม่" : "รอแพทย์เริ่มการตรวจ"}>{stale ? "โหลดข้อมูลล่าสุดก่อนเริ่มการตรวจ" : "รอแพทย์เริ่มการตรวจ"}</span> : null}
-      {item.visit.status === "CONSULTING" ? <Link className="queue-link" to={`/consultations/${item.visit.id}`}>เปิดห้องตรวจ</Link> : null}
+      {item.visit.status === "CONSULTING" && canOpenClinical ? <Link className="queue-link" to={`/consultations/${item.visit.id}`}>เปิดห้องตรวจ</Link> : null}
     </article>
   );
 }
@@ -121,6 +123,18 @@ export function QueueScreen(): ReactElement {
   const waiting = rows.filter((item) => item.visit.status === "WAITING");
   const consulting = rows.filter((item) => item.visit.status === "CONSULTING");
   const canStart = auth.session?.permissions.includes("visit:start-consultation") ?? false;
+  const isDoctor = auth.session?.user.role === "doctor";
+  const queueWorkspace = isDoctor
+    ? {
+        eyebrow: "DOCTOR WORKSPACE · CLINICAL QUEUE",
+        description: "เลือกผู้ป่วยเพื่อเริ่มหรือกลับเข้าห้องตรวจ",
+        action: <Link className="care-button care-button-secondary" to="/overview">ดูภาพรวม</Link>,
+      }
+    : {
+        eyebrow: "ASSISTANT WORKSPACE · PATIENT HANDOFF",
+        description: "ติดตามการส่งต่อผู้ป่วยให้แพทย์",
+        action: <Link className="care-button care-button-primary" to="/intake">รับผู้ป่วยใหม่</Link>,
+      };
 
   function start(item: QueueItemDto): void {
     if (pendingVisitId || blocked[item.visit.id]) return;
@@ -173,28 +187,28 @@ export function QueueScreen(): ReactElement {
   const queueError = reloadError ?? queue.error;
 
   if (queue.isPending) {
-    return <div className="flow-page queue-page"><PageHeader eyebrow="LIVE QUEUE" title="คิวผู้ป่วย" description="ติดตามเส้นทางการดูแลผู้ป่วยในวันนี้" /><div className="queue-board queue-board-loading"><section className="queue-column"><div className="queue-skeleton" /><div className="queue-skeleton" /></section><section className="queue-column"><div className="queue-skeleton" /></section></div></div>;
+    return <div className="flow-page queue-page"><PageHeader eyebrow={queueWorkspace.eyebrow} title="คิวผู้ป่วย" description={queueWorkspace.description} /><div className="queue-board queue-board-loading"><section className="queue-column"><div className="queue-skeleton" /><div className="queue-skeleton" /></section><section className="queue-column"><div className="queue-skeleton" /></section></div></div>;
   }
   const hasQueueData = Array.isArray(queue.data);
   const staleQueue = Boolean(queueError && hasQueueData);
   const showStaleQueue = staleQueue && !(isApiError(queueError) && queueError.status === 403);
 
   if (queueError && !showStaleQueue) {
-    return <div className="flow-page queue-page"><PageHeader eyebrow="LIVE QUEUE" title="คิวผู้ป่วย" description="ติดตามเส้นทางการดูแลผู้ป่วยในวันนี้" actions={<Link className="care-button care-button-primary" to="/intake">รับผู้ป่วยใหม่</Link>} /><ConflictBanner visible={hasBlockedVisits} fetching={queue.isFetching} onReload={() => void reload()} /><Card><QueryState error={queueError} /></Card></div>;
+    return <div className="flow-page queue-page"><PageHeader eyebrow={queueWorkspace.eyebrow} title="คิวผู้ป่วย" description={queueWorkspace.description} actions={queueWorkspace.action} /><ConflictBanner visible={hasBlockedVisits} fetching={queue.isFetching} onReload={() => void reload()} /><Card><QueryState error={queueError} /></Card></div>;
   }
 
   const renderGroup = (title: string, detail: string, items: QueueItemDto[], tone: "waiting" | "active") => (
     <section className={`queue-column queue-column-${tone}`} key={title}>
       <header><div><h2>{title}</h2><p>{detail}</p></div><UsersRound aria-hidden="true" size={20} /></header>
       <div className="queue-stack">
-        {items.length > 0 ? items.map((item) => <QueueCard key={item.visit.id} item={item} canStart={canStart} pending={pendingVisitId === item.visit.id} blocked={blocked[item.visit.id]} startError={startErrors[item.visit.id]} stale={staleQueue} onStart={start} />) : <EmptyState icon={UsersRound} title="ยังไม่มีผู้ป่วย" detail="รายการใหม่จะแสดงที่นี่" />}
+        {items.length > 0 ? items.map((item) => <QueueCard key={item.visit.id} item={item} canStart={canStart} canOpenClinical={canStart} pending={pendingVisitId === item.visit.id} blocked={blocked[item.visit.id]} startError={startErrors[item.visit.id]} stale={staleQueue} onStart={start} />) : <EmptyState icon={UsersRound} title="ยังไม่มีผู้ป่วย" detail="รายการใหม่จะแสดงที่นี่" />}
       </div>
     </section>
   );
 
   return (
     <div className="flow-page queue-page">
-      <PageHeader eyebrow="LIVE QUEUE" title="คิวผู้ป่วย" description="ติดตามเส้นทางการดูแลผู้ป่วยในวันนี้" actions={<Link className="care-button care-button-primary" to="/intake">รับผู้ป่วยใหม่</Link>} />
+      <PageHeader eyebrow={queueWorkspace.eyebrow} title="คิวผู้ป่วย" description={queueWorkspace.description} actions={queueWorkspace.action} />
       <ConflictBanner visible={hasBlockedVisits} error={showStaleQueue ? queueError : undefined} fetching={queue.isFetching} onReload={() => void reload()} />
       {showStaleQueue && !hasBlockedVisits ? <StaleQueueBanner error={queueError} fetching={queue.isFetching} onReload={() => void reload()} /> : null}
       {rows.length === 0 ? <Card className="queue-empty-card"><EmptyState icon={UsersRound} title="ยังไม่มีผู้ป่วยในคิว" detail="เริ่มงานด้วยการรับผู้ป่วยสังเคราะห์เข้าคิว" /><Link className="care-button care-button-primary" to="/intake">ไปหน้ารับผู้ป่วย</Link></Card> : <div className="queue-board">{renderGroup("รอพบแพทย์", `${waiting.length} ราย`, waiting, "waiting")}{renderGroup("กำลังตรวจ", `${consulting.length} ราย`, consulting, "active")}</div>}
