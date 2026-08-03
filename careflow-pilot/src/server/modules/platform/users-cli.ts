@@ -77,6 +77,7 @@ export async function runUsersCli(deps: UsersCliDependencies): Promise<number> {
     if (!username || Array.from(username).length > 120) throw new Error("invalid username");
 
     let passwordHash: string | undefined;
+    let newPassword: string | undefined;
     if (command === "create") {
       const displayName = parsed.values["display-name"]?.trim() ?? "";
       const role = parsed.values.role;
@@ -91,7 +92,7 @@ export async function runUsersCli(deps: UsersCliDependencies): Promise<number> {
         throw new Error("unexpected options");
       }
       if (command === "reset-password") {
-        passwordHash = await argon2.hash(await promptNewPassword(deps, username), PASSWORD_HASH_OPTIONS);
+        newPassword = await promptNewPassword(deps, username);
       }
     }
 
@@ -141,6 +142,12 @@ export async function runUsersCli(deps: UsersCliDependencies): Promise<number> {
         .where(eq(staffAccounts.username, username))
         .get();
       if (!account) throw new Error("account unavailable");
+      if (command === "reset-password") {
+        if (!newPassword || (await argon2.verify(account.passwordHash, newPassword))) {
+          throw new Error("password reuse");
+        }
+        passwordHash = await argon2.hash(newPassword, PASSWORD_HASH_OPTIONS);
+      }
       const revision = account.revision + 1;
       runMaintenanceAuditedTransaction({
         db: database.db,

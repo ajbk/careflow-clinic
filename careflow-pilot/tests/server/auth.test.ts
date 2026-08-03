@@ -210,6 +210,71 @@ describe("named account sessions", () => {
     expect(fixture.database.db.select().from(auditEvents).get()).toMatchObject({ action: "account.password-changed", actorId: account.actor.id });
   });
 
+  it("allows only one concurrent password change from the same account revision", async () => {
+    let generatedId = 0;
+    let synchronizeChanges = false;
+    let blockedChanges = 0;
+    let releaseChanges = (): void => undefined;
+    const changesMayContinue = new Promise<void>((resolve) => {
+      releaseChanges = resolve;
+    });
+    const passwordVerifier = async (hash: string, password: string): Promise<boolean> => {
+      const verified = await argon2.verify(hash, password);
+      if (synchronizeChanges) {
+        blockedChanges += 1;
+        if (blockedChanges === 2) releaseChanges();
+        await changesMayContinue;
+      }
+      return verified;
+    };
+    const fixture = await createTestApp({
+      passwordVerifier,
+      idFactory: () => `concurrent-change-${++generatedId}`,
+    });
+    cleanups.push(fixture.cleanup);
+    const account = await seedAccount(fixture.database, { mustChangePassword: true });
+    const firstCookie = cookieFrom(await login(fixture.app, account.username, account.password));
+    const secondCookie = cookieFrom(await login(fixture.app, account.username, account.password));
+    synchronizeChanges = true;
+
+    const responses = await Promise.all([
+      fixture.app.inject({
+        method: "POST",
+        url: "/api/auth/change-password",
+        headers: { cookie: firstCookie },
+        payload: { currentPassword: account.password, newPassword: "รหัสผ่านใหม่พร้อมกัน-1111" },
+      }),
+      fixture.app.inject({
+        method: "POST",
+        url: "/api/auth/change-password",
+        headers: { cookie: secondCookie },
+        payload: { currentPassword: account.password, newPassword: "รหัสผ่านใหม่พร้อมกัน-2222" },
+      }),
+    ]);
+
+    expect(responses.map((response) => response.statusCode).sort()).toEqual([204, 409]);
+    const conflict = responses.find((response) => response.statusCode === 409);
+    const winner = responses.find((response) => response.statusCode === 204);
+    expect(conflict?.json().error).toMatchObject({
+      code: "REVISION_CONFLICT",
+      currentRevisions: { account: 2 },
+    });
+    expect(conflict?.headers["set-cookie"]).toBeUndefined();
+    expect(fixture.database.db.select().from(staffAccounts).get()).toMatchObject({ revision: 2 });
+    expect(fixture.database.db.select().from(auditEvents).all()).toEqual([
+      expect.objectContaining({ action: "account.password-changed", entityRevision: 2 }),
+    ]);
+    expect(fixture.database.db.select().from(sessions).all()).toHaveLength(1);
+    const replacementCookie = cookieFrom(winner!);
+    expect(
+      (await fixture.app.inject({
+        method: "GET",
+        url: "/api/auth/session",
+        headers: { cookie: replacementCookie },
+      })).statusCode,
+    ).toBe(200);
+  });
+
   it("revokes the current session and expires the cookie on logout", async () => {
     const fixture = await createTestApp();
     cleanups.push(fixture.cleanup);

@@ -1,5 +1,5 @@
 import argon2 from "argon2";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import {
   changePasswordBodySchema,
@@ -202,8 +202,8 @@ export function registerAuthRoutes(input: {
       db: input.database.db,
       actor: session.actor,
       work: (tx) => {
-        tx.delete(sessions).where(eq(sessions.staffId, account.id)).run();
-        tx.update(staffAccounts)
+        const changed = tx
+          .update(staffAccounts)
           .set({
             passwordHash,
             mustChangePassword: 0,
@@ -211,8 +211,28 @@ export function registerAuthRoutes(input: {
             lastPasswordChangedAt: now.toISOString(),
             updatedAt: now.toISOString(),
           })
-          .where(eq(staffAccounts.id, account.id))
+          .where(
+            and(
+              eq(staffAccounts.id, account.id),
+              eq(staffAccounts.active, 1),
+              eq(staffAccounts.revision, account.revision),
+              eq(staffAccounts.passwordHash, account.passwordHash),
+            ),
+          )
           .run();
+        if (changed.changes !== 1) {
+          const current = tx
+            .select({ revision: staffAccounts.revision })
+            .from(staffAccounts)
+            .where(eq(staffAccounts.id, account.id))
+            .get();
+          throw new ApiError({
+            code: "REVISION_CONFLICT",
+            messageTh: "ข้อมูลบัญชีถูกเปลี่ยนแปลงแล้ว กรุณาลองใหม่",
+            currentRevisions: { account: current?.revision ?? account.revision },
+          });
+        }
+        tx.delete(sessions).where(eq(sessions.staffId, account.id)).run();
         appendAuditEvent({
           tx,
           actor: session.actor,

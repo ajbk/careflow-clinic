@@ -62,6 +62,39 @@ describe("offline users CLI", () => {
     expect(readFileSync(path)).toEqual(before);
   });
 
+  it("rejects resetting an account to its current password without writes or secret output", async () => {
+    const source = createTestDatabase();
+    const directory = mkdtempSync(join(tmpdir(), "careflow-cli-reuse-"));
+    const path = join(directory, "careflow.sqlite");
+    source.close();
+    copyFileSync(source.databasePath, path);
+    source.cleanup();
+    cleanups.push(() => rmSync(directory, { recursive: true, force: true }));
+    const currentPassword = "วลีผ่านเดิมสำหรับคลินิก-1234";
+    const created = await run({
+      argv: ["create", "--username", "doctor", "--display-name", "พญ. อริสรา", "--role", "doctor"],
+      databasePath: path,
+      secrets: [currentPassword, currentPassword],
+      texts: ["SYNTHETIC-ONLY"],
+    });
+    expect(created.code).toBe(0);
+
+    const reset = await run({
+      argv: ["reset-password", "--username", "doctor"],
+      databasePath: path,
+      secrets: [currentPassword, currentPassword],
+    });
+
+    expect(reset.code).not.toBe(0);
+    expect(`${reset.stdout.join("\n")}\n${reset.stderr.join("\n")}`).not.toContain(currentPassword);
+    const check = openDatabase(path);
+    cleanups.push(check.close);
+    expect(check.sqlite.prepare("SELECT revision FROM staff_accounts").get()).toEqual({ revision: 1 });
+    expect(check.sqlite.prepare("SELECT action, entity_revision FROM audit_events").all()).toEqual([
+      { action: "account.created", entity_revision: 1 },
+    ]);
+  });
+
   it("creates, resets, and disables an account with atomic system Audit evidence", async () => {
     const source = createTestDatabase();
     const directory = mkdtempSync(join(tmpdir(), "careflow-cli-"));
