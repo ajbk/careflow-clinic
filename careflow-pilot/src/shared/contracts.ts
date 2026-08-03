@@ -476,6 +476,84 @@ export const saveConsultationDraftResponseSchema = z.strictObject({
 });
 export type SaveConsultationDraftResponse = z.infer<typeof saveConsultationDraftResponseSchema>;
 
+const signedBySchema = z.strictObject({
+  id: z.string().min(1),
+  displayName: z.string().min(1),
+});
+const contentHashSchema = z.string().regex(/^[a-f0-9]{64}$/);
+
+export const signedClinicalNoteSchema = z.strictObject({
+  id: z.string().min(1),
+  visitId: z.string().min(1),
+  version: z.number().int().min(1),
+  subjective: requiredClinicalText(4000),
+  objective: requiredClinicalText(4000),
+  assessment: requiredClinicalText(4000),
+  plan: requiredClinicalText(4000),
+  diagnoses: z.array(draftDiagnosisSchema).min(1).max(20),
+  sourceDraftRevision: z.number().int().min(1),
+  revisionReason: z.string().trim().min(1).max(500).nullable(),
+  supersedesId: z.string().min(1).nullable(),
+  signedBy: signedBySchema,
+  signedAt: z.string().datetime(),
+  contentHash: contentHashSchema,
+});
+export type SignedClinicalNoteDto = z.infer<typeof signedClinicalNoteSchema>;
+
+const signedMedicationDecisionBaseSchema = z.strictObject({
+  id: z.string().min(1),
+  visitId: z.string().min(1),
+  version: z.number().int().min(1),
+  revisionReason: z.string().trim().min(1).max(500).nullable(),
+  supersedesId: z.string().min(1).nullable(),
+  signedBy: signedBySchema,
+  signedAt: z.string().datetime(),
+  contentHash: contentHashSchema,
+});
+const signedMedicationItemSchema = medicationSchema.extend({
+  quantity: z.number().int().min(1).max(9999),
+  directionsTh: requiredClinicalText(500),
+});
+export const signedMedicationDecisionSchema = z.discriminatedUnion("kind", [
+  signedMedicationDecisionBaseSchema.extend({
+    kind: z.literal("ORDER"),
+    noMedicationReason: z.null(),
+    items: z.array(signedMedicationItemSchema).min(1).max(20),
+  }),
+  signedMedicationDecisionBaseSchema.extend({
+    kind: z.literal("NO_MEDICATION"),
+    noMedicationReason: requiredClinicalText(500),
+    items: z.tuple([]),
+  }),
+]);
+export type SignedMedicationDecisionDto = z.infer<typeof signedMedicationDecisionSchema>;
+
+export const finalizeConsultationBodySchema = rejectOwnPrototypeKeys(
+  z.strictObject({
+    expectedRevisions: z.strictObject({
+      visit: z.number().int().min(1),
+      patient: z.number().int().min(1),
+      noteDraft: z.number().int().min(1),
+      medicationDraft: z.number().int().min(1),
+    }),
+    payload: z.strictObject({}),
+  }),
+);
+export type FinalizeConsultationBody = z.infer<typeof finalizeConsultationBodySchema>;
+
+export const finalizeConsultationResultSchema = z.strictObject({
+  visit: visitSummarySchema,
+  clinicalNote: signedClinicalNoteSchema,
+  medicationDecision: signedMedicationDecisionSchema,
+});
+export type FinalizeConsultationResultDto = z.infer<typeof finalizeConsultationResultSchema>;
+
+export const finalizeConsultationResponseSchema = z.strictObject({
+  data: finalizeConsultationResultSchema,
+  replayed: z.boolean(),
+});
+export type FinalizeConsultationResponse = z.infer<typeof finalizeConsultationResponseSchema>;
+
 export type Permission = z.infer<typeof permissionSchema>;
 
 export interface IdempotentEnvelope<T> {

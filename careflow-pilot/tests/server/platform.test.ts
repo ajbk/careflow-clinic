@@ -9,6 +9,7 @@ import {
   clinicCounters,
   executeIdempotent,
   hasPermission,
+  hashEvidence,
   idempotencyRecords,
   requirePermission,
   runAuditedTransaction,
@@ -399,6 +400,12 @@ describe("idempotent audited transactions", () => {
     ).toHaveLength(0);
     expect(database.db.select().from(auditEvents).all()).toHaveLength(0);
     expect(database.db.select().from(idempotencyRecords).all()).toHaveLength(0);
+  });
+});
+
+describe("signed evidence hashing", () => {
+  it("hashes canonically stable JSON with SHA-256", () => {
+    expect(hashEvidence({ b: 2, a: 1 })).toBe("43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777");
   });
 });
 

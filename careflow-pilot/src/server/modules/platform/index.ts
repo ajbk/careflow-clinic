@@ -11,6 +11,7 @@ export type {
   AuditEventInput,
 } from "./audit.js";
 export * from "./idempotency.js";
+export * from "./evidence.js";
 export * from "./permissions.js";
 export * from "./revision.js";
 export * from "./schema.js";

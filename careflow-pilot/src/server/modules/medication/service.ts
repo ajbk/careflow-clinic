@@ -5,17 +5,26 @@ import type {
   MedicationDecisionDraftDto,
   MedicationDecisionDraftInput,
   MedicationDto,
+  SignedMedicationDecisionDto,
 } from "../../../shared/contracts.js";
 import type { DatabaseHandle } from "../../db/client.js";
 import { ApiError } from "../../errors.js";
 import {
+  appendAuditEvent,
   assertExpectedRevision,
+  hashEvidence,
   staffAccounts,
   type AppDatabase,
   type AppTransaction,
   type AuditedTransaction,
 } from "../platform/index.js";
-import { medicationDecisionDrafts, medicationOrderDraftItems, medications } from "./schema.js";
+import {
+  medicationDecisionDrafts,
+  medicationDecisions,
+  medicationOrderDraftItems,
+  medicationOrderItems,
+  medications,
+} from "./schema.js";
 
 const SEARCH_RESULT_LIMIT = 20;
 
@@ -27,6 +36,7 @@ export interface MedicationService {
     expectedRevision: number,
   ): MedicationDto;
   getDecisionDraft(visitId: string): MedicationDecisionDraftDto | null;
+  getSignedDecision(visitId: string): SignedMedicationDecisionDto | null;
   saveDecisionDraft(
     tx: AuditedTransaction,
     actor: Actor,
@@ -34,6 +44,12 @@ export interface MedicationService {
     expectedRevision: number,
     input: MedicationDecisionDraftInput,
   ): MedicationDecisionDraftDto;
+  signDecisionDraft(
+    tx: AuditedTransaction,
+    actor: Actor,
+    visitId: string,
+    expectedDraftRevision: number,
+  ): SignedMedicationDecisionDto;
 }
 
 export interface MedicationServiceOptions {
@@ -119,6 +135,18 @@ function toDecisionDraftDto(tx: MedicationTransaction, row: DecisionDraftRow): M
   return { ...base, kind: "ORDER", noMedicationReason: null, items };
 }
 
+function completeDecisionText(value: string | null, field: string): string {
+  const trimmed = value?.trim() ?? "";
+  if (trimmed.length === 0) {
+    throw new ApiError({
+      code: "VALIDATION_FAILED",
+      messageTh: "ร่างคำสั่งยายังไม่ครบถ้วน",
+      fieldErrors: { [field]: "ต้องระบุข้อมูลก่อนลงนาม" },
+    });
+  }
+  return trimmed;
+}
+
 export function createMedicationService(input: MedicationServiceOptions): MedicationService {
   const clock = input.clock ?? (() => new Date());
   const idFactory = input.idFactory ?? randomUUID;
@@ -166,6 +194,33 @@ export function createMedicationService(input: MedicationServiceOptions): Medica
         .where(eq(medicationDecisionDrafts.visitId, visitId))
         .get();
       return row ? toDecisionDraftDto(input.database.db, row) : null;
+    },
+
+    getSignedDecision(visitId) {
+      const decision = input.database.db.select().from(medicationDecisions)
+        .where(eq(medicationDecisions.visitId, visitId)).get();
+      if (!decision) return null;
+      const signedBy = input.database.db.select({ id: staffAccounts.id, displayName: staffAccounts.displayName })
+        .from(staffAccounts).where(eq(staffAccounts.id, decision.signedBy)).get();
+      if (!signedBy) throw new Error("Medication decision signer is missing");
+      const base = {
+        id: decision.id, visitId: decision.visitId, version: decision.version,
+        revisionReason: decision.revisionReason, supersedesId: decision.supersedesId,
+        signedBy, signedAt: decision.signedAt, contentHash: decision.contentHash,
+      };
+      if (decision.kind === "NO_MEDICATION") {
+        return {
+          ...base, kind: "NO_MEDICATION", noMedicationReason: decision.noMedicationReason ?? "", items: [],
+        };
+      }
+      const items = input.database.db.select().from(medicationOrderItems)
+        .where(eq(medicationOrderItems.medicationDecisionId, decision.id))
+        .orderBy(asc(medicationOrderItems.position)).all().map((item) => ({
+          id: item.medicationId, displayName: item.displayNameSnapshot, strengthText: item.strengthSnapshot,
+          dosageFormText: item.dosageFormSnapshot, canonicalUnit: item.unitSnapshot,
+          revision: item.medicationRevision, quantity: item.quantity, directionsTh: item.directionsTh,
+        }));
+      return { ...base, kind: "ORDER", noMedicationReason: null, items };
     },
 
     saveDecisionDraft(tx, actor, visitId, expectedRevision, decision) {
@@ -230,6 +285,87 @@ export function createMedicationService(input: MedicationServiceOptions): Medica
       const saved = tx.select().from(medicationDecisionDrafts).where(eq(medicationDecisionDrafts.id, id)).get();
       if (!saved) throw new Error("Medication decision draft save failed");
       return toDecisionDraftDto(tx, saved);
+    },
+
+    signDecisionDraft(tx, actor, visitId, expectedDraftRevision) {
+      const draft = tx.select().from(medicationDecisionDrafts)
+        .where(eq(medicationDecisionDrafts.visitId, visitId)).get();
+      assertExpectedRevision(draft?.revision ?? 0, expectedDraftRevision, "medicationDraft");
+      if (!draft) throw new Error("Medication draft revision assertion did not fail");
+      const prior = tx.select({ id: medicationDecisions.id }).from(medicationDecisions)
+        .where(eq(medicationDecisions.visitId, visitId)).get();
+      if (prior) throw new ApiError({ code: "INVALID_STATE", messageTh: "Visit นี้มีคำสั่งยาที่ลงนามแล้ว" });
+      const id = idFactory();
+      const signedAt = clock().toISOString();
+      if (draft.kind === "UNDECIDED") {
+        throw new ApiError({
+          code: "VALIDATION_FAILED",
+          messageTh: "ร่างคำสั่งยายังไม่ครบถ้วน",
+          fieldErrors: { "medicationDraft.kind": "ต้องเลือกการตัดสินใจเรื่องยาก่อนลงนาม" },
+        });
+      }
+      if (draft.kind === "NO_MEDICATION") {
+        const noMedicationReason = completeDecisionText(
+          draft.noMedicationReason,
+          "medicationDraft.noMedicationReason",
+        );
+        const evidence = {
+          id, visitId, version: 1, kind: "NO_MEDICATION" as const, noMedicationReason,
+          items: [] as [], revisionReason: null, supersedesId: null,
+          signedBy: { id: actor.id, displayName: actor.displayName }, signedAt,
+        };
+        const signed: SignedMedicationDecisionDto = { ...evidence, contentHash: hashEvidence(evidence) };
+        tx.insert(medicationDecisions).values({
+          id: signed.id, visitId: signed.visitId, version: signed.version, kind: signed.kind,
+          noMedicationReason: signed.noMedicationReason, revisionReason: null, supersedesId: null,
+          signedBy: actor.id, signedAt: signed.signedAt, contentHash: signed.contentHash,
+        }).run();
+        appendAuditEvent({
+          tx, actor, id: idFactory(), action: "medication.decision-signed", entityType: "medication_decision",
+          entityId: signed.id, entityRevision: signed.version, reason: null, occurredAt: signed.signedAt,
+        });
+        return signed;
+      }
+
+      const draftItems = tx.select().from(medicationOrderDraftItems)
+        .where(eq(medicationOrderDraftItems.decisionDraftId, draft.id))
+        .orderBy(asc(medicationOrderDraftItems.position))
+        .all();
+      if (draftItems.length === 0 || draftItems.length > 20) {
+        throw new ApiError({
+          code: "VALIDATION_FAILED",
+          messageTh: "ร่างคำสั่งยายังไม่ครบถ้วน",
+          fieldErrors: { "medicationDraft.items": "ต้องระบุยา 1–20 รายการก่อนลงนาม" },
+        });
+      }
+      const items = draftItems.map((item) => ({
+        ...assertMedicationRevision(tx, item.medicationId, item.medicationRevision),
+        quantity: item.quantity,
+        directionsTh: completeDecisionText(item.directionsTh, "medicationDraft.items.directionsTh"),
+      }));
+      const evidence = {
+        id, visitId, version: 1, kind: "ORDER" as const, noMedicationReason: null,
+        items, revisionReason: null, supersedesId: null,
+        signedBy: { id: actor.id, displayName: actor.displayName }, signedAt,
+      };
+      const signed: SignedMedicationDecisionDto = { ...evidence, contentHash: hashEvidence(evidence) };
+      tx.insert(medicationDecisions).values({
+        id: signed.id, visitId: signed.visitId, version: signed.version, kind: signed.kind,
+        noMedicationReason: null, revisionReason: null, supersedesId: null,
+        signedBy: actor.id, signedAt: signed.signedAt, contentHash: signed.contentHash,
+      }).run();
+      tx.insert(medicationOrderItems).values(signed.items.map((item, position) => ({
+        id: idFactory(), medicationDecisionId: signed.id, position,
+        medicationId: item.id, medicationRevision: item.revision,
+        displayNameSnapshot: item.displayName, strengthSnapshot: item.strengthText,
+        dosageFormSnapshot: item.dosageFormText, unitSnapshot: item.canonicalUnit,
+        quantity: item.quantity, directionsTh: item.directionsTh,
+      }))).run();
+      appendAuditEvent({
+        tx, actor, id: idFactory(), action: "medication.decision-signed", entityType: "medication_decision",
+        entityId: signed.id, entityRevision: signed.version, reason: null, occurredAt: signed.signedAt,
+      });
+      return signed;
     },
   };
 }

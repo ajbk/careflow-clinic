@@ -5,13 +5,15 @@ import type {
   SaveConsultationDraftBody,
   ClinicalNoteDraftDto,
   MedicationDecisionDraftDto,
+  FinalizeConsultationBody,
+  FinalizeConsultationResultDto,
 } from "../../shared/contracts.js";
 import { randomUUID } from "node:crypto";
 import { ApiError } from "../errors.js";
 import type { MedicationService } from "../modules/medication/index.js";
 import type { NoteService } from "../modules/note/index.js";
 import type { PatientService } from "../modules/patient/index.js";
-import { appendAuditEvent, type AuditedTransaction } from "../modules/platform/index.js";
+import { appendAuditEvent, hasPermission, type AuditedTransaction } from "../modules/platform/index.js";
 import type { VisitService } from "../modules/visit/index.js";
 
 export interface ClinicalWorkflow {
@@ -27,6 +29,12 @@ export interface ClinicalWorkflow {
     visitId: string,
     body: SaveConsultationDraftBody,
   ): { note: ClinicalNoteDraftDto; medicationDecision: MedicationDecisionDraftDto };
+  finalizeConsultation(
+    tx: AuditedTransaction,
+    actor: Actor,
+    visitId: string,
+    body: FinalizeConsultationBody,
+  ): FinalizeConsultationResultDto;
   replayConsultationDraft(reference: {
     visitId: string;
     noteDraftRevision: number;
@@ -42,6 +50,12 @@ export interface ClinicalWorkflow {
     visitRevision: number;
     visitStatus: AllergyReviewResultDto["visit"]["status"];
   }): AllergyReviewResultDto;
+  replayFinalizedConsultation(reference: {
+    visitId: string;
+    visitRevision: number;
+    clinicalNoteId: string;
+    medicationDecisionId: string;
+  }): FinalizeConsultationResultDto;
 }
 
 export function createClinicalWorkflow(input: {
@@ -51,6 +65,8 @@ export function createClinicalWorkflow(input: {
   medications: MedicationService;
   clock?: () => Date;
   idFactory?: () => string;
+  /** Test seam for proving the enclosing transaction rolls back before the Visit write. */
+  beforeVisitTransition?: () => void;
 }): ClinicalWorkflow {
   const clock = input.clock ?? (() => new Date());
   const idFactory = input.idFactory ?? randomUUID;
@@ -105,6 +121,34 @@ export function createClinicalWorkflow(input: {
       return { note, medicationDecision };
     },
 
+    finalizeConsultation(tx, actor, visitId, body) {
+      if (!hasPermission(actor, "clinical:sign") || !hasPermission(actor, "medication:sign-decision")) {
+        throw new ApiError({ code: "FORBIDDEN", messageTh: "บัญชีนี้ไม่มีสิทธิ์ดำเนินการ" });
+      }
+      input.visits.assertFinalizeConsultationVisit(
+        tx,
+        actor,
+        visitId,
+        body.expectedRevisions.visit,
+        body.expectedRevisions.patient,
+      );
+      const clinicalNote = input.notes.signDraft(
+        tx, actor, visitId, body.expectedRevisions.noteDraft,
+      );
+      const medicationDecision = input.medications.signDecisionDraft(
+        tx, actor, visitId, body.expectedRevisions.medicationDraft,
+      );
+      input.beforeVisitTransition?.();
+      const visit = input.visits.finalizeConsultation(
+        tx, actor, visitId, body.expectedRevisions.visit, medicationDecision.kind,
+      );
+      appendAuditEvent({
+        tx, actor, id: idFactory(), action: "visit.consultation-finalized", entityType: "visit",
+        entityId: visit.id, entityRevision: visit.revision, reason: null, occurredAt: clock().toISOString(),
+      });
+      return { visit, clinicalNote, medicationDecision };
+    },
+
     replayAllergyReview(reference) {
       const patient = input.patients.getPatientById(reference.patientId);
       const visit = input.visits.getVisitSummary(reference.visitId);
@@ -116,6 +160,23 @@ export function createClinicalWorkflow(input: {
         allergy: input.patients.getAllergyAssessment(reference.patientId),
         visit,
       };
+    },
+
+    replayFinalizedConsultation(reference) {
+      const visit = input.visits.getVisitSummary(reference.visitId);
+      const clinicalNote = input.notes.getSignedNote(reference.visitId);
+      const medicationDecision = input.medications.getSignedDecision(reference.visitId);
+      if (
+        !visit ||
+        !clinicalNote ||
+        !medicationDecision ||
+        visit.revision !== reference.visitRevision ||
+        clinicalNote.id !== reference.clinicalNoteId ||
+        medicationDecision.id !== reference.medicationDecisionId
+      ) {
+        throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่พบข้อมูลที่ลงนามสำหรับการเรียกซ้ำ" });
+      }
+      return { visit, clinicalNote, medicationDecision };
     },
   };
 }

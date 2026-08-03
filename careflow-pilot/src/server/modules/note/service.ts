@@ -1,13 +1,27 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, eq } from "drizzle-orm";
-import type { Actor, ClinicalNoteDraftDto, ClinicalNoteDraftInput } from "../../../shared/contracts.js";
+import type {
+  Actor,
+  ClinicalNoteDraftDto,
+  ClinicalNoteDraftInput,
+  SignedClinicalNoteDto,
+} from "../../../shared/contracts.js";
 import type { DatabaseHandle } from "../../db/client.js";
-import { assertExpectedRevision, type AppDatabase, type AppTransaction, type AuditedTransaction } from "../platform/index.js";
-import { staffAccounts } from "../platform/index.js";
-import { clinicalNoteDraftDiagnoses, clinicalNoteDrafts } from "./schema.js";
+import { ApiError } from "../../errors.js";
+import {
+  appendAuditEvent,
+  assertExpectedRevision,
+  hashEvidence,
+  staffAccounts,
+  type AppDatabase,
+  type AppTransaction,
+  type AuditedTransaction,
+} from "../platform/index.js";
+import { clinicalNoteDiagnoses, clinicalNoteDraftDiagnoses, clinicalNoteDrafts, clinicalNotes } from "./schema.js";
 
 export interface NoteService {
   getDraft(visitId: string): ClinicalNoteDraftDto | null;
+  getSignedNote(visitId: string): SignedClinicalNoteDto | null;
   saveDraft(
     tx: AuditedTransaction,
     actor: Actor,
@@ -15,6 +29,12 @@ export interface NoteService {
     expectedRevision: number,
     input: ClinicalNoteDraftInput,
   ): ClinicalNoteDraftDto;
+  signDraft(
+    tx: AuditedTransaction,
+    actor: Actor,
+    visitId: string,
+    expectedDraftRevision: number,
+  ): SignedClinicalNoteDto;
 }
 
 export interface NoteServiceOptions {
@@ -52,6 +72,18 @@ function toDto(tx: NoteTransaction, row: NoteDraftRow): ClinicalNoteDraftDto {
   };
 }
 
+function completeText(value: string, field: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    throw new ApiError({
+      code: "VALIDATION_FAILED",
+      messageTh: "ร่างบันทึกยังไม่ครบถ้วน",
+      fieldErrors: { [field]: "ต้องระบุข้อมูลก่อนลงนาม" },
+    });
+  }
+  return trimmed;
+}
+
 export function createNoteService(options: NoteServiceOptions): NoteService {
   const clock = options.clock ?? (() => new Date());
   const idFactory = options.idFactory ?? randomUUID;
@@ -62,6 +94,24 @@ export function createNoteService(options: NoteServiceOptions): NoteService {
         .where(eq(clinicalNoteDrafts.visitId, visitId))
         .get();
       return row ? toDto(options.database.db, row) : null;
+    },
+
+    getSignedNote(visitId) {
+      const note = options.database.db.select().from(clinicalNotes)
+        .where(eq(clinicalNotes.visitId, visitId)).get();
+      if (!note) return null;
+      const signedBy = options.database.db.select({ id: staffAccounts.id, displayName: staffAccounts.displayName })
+        .from(staffAccounts).where(eq(staffAccounts.id, note.signedBy)).get();
+      if (!signedBy) throw new Error("Clinical note signer is missing");
+      const diagnoses = options.database.db.select({ diagnosisText: clinicalNoteDiagnoses.diagnosisText })
+        .from(clinicalNoteDiagnoses).where(eq(clinicalNoteDiagnoses.clinicalNoteId, note.id))
+        .orderBy(asc(clinicalNoteDiagnoses.position)).all().map((row) => row.diagnosisText);
+      return {
+        id: note.id, visitId: note.visitId, version: note.version,
+        subjective: note.subjective, objective: note.objective, assessment: note.assessment, plan: note.plan,
+        diagnoses, sourceDraftRevision: note.sourceDraftRevision, revisionReason: null, supersedesId: null,
+        signedBy, signedAt: note.signedAt, contentHash: note.contentHash,
+      };
     },
 
     saveDraft(tx, actor, visitId, expectedRevision, input) {
@@ -114,6 +164,72 @@ export function createNoteService(options: NoteServiceOptions): NoteService {
       const saved = tx.select().from(clinicalNoteDrafts).where(eq(clinicalNoteDrafts.id, id)).get();
       if (!saved) throw new Error("Clinical note draft save failed");
       return toDto(tx, saved);
+    },
+
+    signDraft(tx, actor, visitId, expectedDraftRevision) {
+      const draft = tx.select().from(clinicalNoteDrafts)
+        .where(eq(clinicalNoteDrafts.visitId, visitId)).get();
+      assertExpectedRevision(draft?.revision ?? 0, expectedDraftRevision, "noteDraft");
+      if (!draft) throw new Error("Clinical note draft revision assertion did not fail");
+      const subjective = completeText(draft.subjective, "noteDraft.subjective");
+      const objective = completeText(draft.objective, "noteDraft.objective");
+      const assessment = completeText(draft.assessment, "noteDraft.assessment");
+      const plan = completeText(draft.plan, "noteDraft.plan");
+      const diagnoses = tx.select({ diagnosisText: clinicalNoteDraftDiagnoses.diagnosisText })
+        .from(clinicalNoteDraftDiagnoses)
+        .where(eq(clinicalNoteDraftDiagnoses.draftId, draft.id))
+        .orderBy(asc(clinicalNoteDraftDiagnoses.position))
+        .all()
+        .map((row) => completeText(row.diagnosisText, "noteDraft.diagnoses"));
+      if (diagnoses.length === 0 || diagnoses.length > 20) {
+        throw new ApiError({
+          code: "VALIDATION_FAILED",
+          messageTh: "ร่างบันทึกยังไม่ครบถ้วน",
+          fieldErrors: { "noteDraft.diagnoses": "ต้องระบุการวินิจฉัย 1–20 รายการก่อนลงนาม" },
+        });
+      }
+      const prior = tx.select({ id: clinicalNotes.id }).from(clinicalNotes)
+        .where(eq(clinicalNotes.visitId, visitId)).get();
+      if (prior) throw new ApiError({ code: "INVALID_STATE", messageTh: "Visit นี้มีบันทึกที่ลงนามแล้ว" });
+      const id = idFactory();
+      const signedAt = clock().toISOString();
+      const evidence = {
+        id,
+        visitId,
+        version: 1,
+        subjective,
+        objective,
+        assessment,
+        plan,
+        diagnoses,
+        sourceDraftRevision: draft.revision,
+        revisionReason: null,
+        supersedesId: null,
+        signedBy: { id: actor.id, displayName: actor.displayName },
+        signedAt,
+      } as const;
+      const signed: SignedClinicalNoteDto = { ...evidence, contentHash: hashEvidence(evidence) };
+      tx.insert(clinicalNotes).values({
+        id: signed.id,
+        visitId: signed.visitId,
+        version: signed.version,
+        subjective: signed.subjective,
+        objective: signed.objective,
+        assessment: signed.assessment,
+        plan: signed.plan,
+        sourceDraftRevision: signed.sourceDraftRevision,
+        signedBy: actor.id,
+        signedAt: signed.signedAt,
+        contentHash: signed.contentHash,
+      }).run();
+      tx.insert(clinicalNoteDiagnoses).values(signed.diagnoses.map((diagnosisText, position) => ({
+        id: idFactory(), clinicalNoteId: signed.id, position, diagnosisText,
+      }))).run();
+      appendAuditEvent({
+        tx, actor, id: idFactory(), action: "note.signed", entityType: "clinical_note",
+        entityId: signed.id, entityRevision: signed.version, reason: null, occurredAt: signed.signedAt,
+      });
+      return signed;
     },
   };
 }

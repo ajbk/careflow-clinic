@@ -10,6 +10,7 @@ import type {
   SubmitIntakeBody,
   VisitSummaryDto,
   VisitWorkspaceDto,
+  SignedMedicationDecisionDto,
 } from "../../../shared/contracts.js";
 import type { PatientDto } from "../../../shared/contracts.js";
 import type { DatabaseHandle } from "../../db/client.js";
@@ -62,6 +63,20 @@ export interface VisitService {
     actor: Actor,
     visitId: string,
     expectedRevision: number,
+  ): VisitSummaryDto;
+  assertFinalizeConsultationVisit(
+    tx: AuditedTransaction,
+    actor: Actor,
+    visitId: string,
+    expectedRevision: number,
+    expectedPatientRevision: number,
+  ): VisitSummaryDto;
+  finalizeConsultation(
+    tx: AuditedTransaction,
+    actor: Actor,
+    visitId: string,
+    expectedRevision: number,
+    decisionKind: SignedMedicationDecisionDto["kind"],
   ): VisitSummaryDto;
 }
 
@@ -448,6 +463,61 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
         revision: visit.revision,
         arrivedAt: visit.arrivedAt,
         startedAt: visit.startedAt,
+      };
+    },
+
+    assertFinalizeConsultationVisit(tx, actor, visitId, expectedRevision, expectedPatientRevision) {
+      const visit = tx.select().from(visits)
+        .where(and(eq(visits.id, visitId), eq(visits.clinicId, "clinic")))
+        .get();
+      if (!visit) throw notFound("ไม่พบ Visit");
+      assertExpectedRevision(visit.revision, expectedRevision, "visit");
+      if (actor.role !== "doctor") {
+        throw new ApiError({ code: "FORBIDDEN", messageTh: "บัญชีนี้ไม่มีสิทธิ์ดำเนินการ" });
+      }
+      if (visit.status !== "CONSULTING") {
+        throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่อนุญาตให้ลงนามการตรวจ" });
+      }
+      input.patients.assertPatientRevision(tx, visit.patientId, expectedPatientRevision);
+      return {
+        id: visit.id,
+        status: visitStatusSchema.parse(visit.status),
+        revision: visit.revision,
+        arrivedAt: visit.arrivedAt,
+        startedAt: visit.startedAt,
+      };
+    },
+
+    finalizeConsultation(tx, actor, visitId, expectedRevision, decisionKind) {
+      if (actor.role !== "doctor") {
+        throw new ApiError({ code: "FORBIDDEN", messageTh: "บัญชีนี้ไม่มีสิทธิ์ดำเนินการ" });
+      }
+      const nextStatus = decisionKind === "ORDER" ? "AWAITING_PREPARATION" : "AWAITING_CHARGE";
+      const changed = tx.update(visits)
+        .set({ status: nextStatus, revision: expectedRevision + 1 })
+        .where(and(
+          eq(visits.id, visitId),
+          eq(visits.clinicId, "clinic"),
+          eq(visits.status, "CONSULTING"),
+          eq(visits.revision, expectedRevision),
+        ))
+        .run();
+      if (changed.changes !== 1) {
+        const latest = tx.select().from(visits).where(eq(visits.id, visitId)).get();
+        if (!latest) throw notFound("ไม่พบ Visit");
+        if (latest.revision !== expectedRevision) {
+          assertExpectedRevision(latest.revision, expectedRevision, "visit");
+        }
+        throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่อนุญาตให้ลงนามการตรวจ" });
+      }
+      const updated = tx.select().from(visits).where(eq(visits.id, visitId)).get();
+      if (!updated) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "อัปเดต Visit ไม่สำเร็จ" });
+      return {
+        id: updated.id,
+        status: visitStatusSchema.parse(updated.status),
+        revision: updated.revision,
+        arrivedAt: updated.arrivedAt,
+        startedAt: updated.startedAt,
       };
     },
   };

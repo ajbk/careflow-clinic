@@ -291,3 +291,247 @@ describe("consultation draft workflow", () => {
       .toHaveLength(0);
   });
 });
+
+function completeFinalizationBody() {
+  return {
+    expectedRevisions: { visit: 2, patient: 1, noteDraft: 1, medicationDraft: 1 },
+    payload: {},
+  };
+}
+
+async function finalize(
+  test: Awaited<ReturnType<typeof fixture>>,
+  visitId: string,
+  body: unknown = completeFinalizationBody(),
+  key = "clinical-finalize-001",
+  cookie = test.doctorCookie,
+) {
+  return test.app.inject({
+    method: "POST",
+    url: `/api/visits/${visitId}/finalize-consultation`,
+    headers: { cookie, "idempotency-key": key },
+    payload: body as Record<string, unknown>,
+  });
+}
+
+async function saveCompleteDraft(
+  test: Awaited<ReturnType<typeof fixture>>,
+  visitId: string,
+  kind: "ORDER" | "NO_MEDICATION" = "ORDER",
+) {
+  const body = draftBody();
+  body.payload.medicationDecision = kind === "ORDER"
+    ? body.payload.medicationDecision
+    : { kind: "NO_MEDICATION", noMedicationReason: "ไม่มีข้อบ่งชี้ในการจ่ายยา" };
+  const response = await saveDraft(test, visitId, body, `clinical-finalize-draft-${kind}`);
+  expect(response.statusCode).toBe(200);
+}
+
+describe("consultation finalization", () => {
+  it.each([
+    ["ORDER", "AWAITING_PREPARATION"],
+    ["NO_MEDICATION", "AWAITING_CHARGE"],
+  ] as const)("finalizes %s atomically to %s", async (kind, status) => {
+    const test = await fixture();
+    const visitId = await createConsultingVisit(test);
+    await saveCompleteDraft(test, visitId, kind);
+
+    const response = await finalize(test, visitId, completeFinalizationBody());
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.visit).toMatchObject({ status, revision: 3 });
+    expect(response.json().data.clinicalNote).toMatchObject({
+      visitId, version: 1, sourceDraftRevision: 1,
+      signedBy: { id: "doctor-001", displayName: "พญ. ทดสอบ" },
+      revisionReason: null, supersedesId: null,
+    });
+    expect(response.json().data.clinicalNote.contentHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(response.json().data.medicationDecision).toMatchObject({
+      visitId, version: 1, kind, revisionReason: null, supersedesId: null,
+    });
+    if (kind === "ORDER") {
+      expect(response.json().data.medicationDecision.items).toEqual([expect.objectContaining({
+        id: "DEMO-MED-001", revision: 1, displayName: expect.any(String), strengthText: expect.any(String),
+        dosageFormText: expect.any(String), canonicalUnit: expect.any(String), quantity: 10, directionsTh: "คำแนะนำทดสอบ",
+      })]);
+    }
+    expect(response.json().data.medicationDecision.contentHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(test.database.db.select().from(clinicalNotes).all()).toHaveLength(1);
+    expect(test.database.db.select().from(medicationDecisions).all()).toHaveLength(1);
+    expect(test.database.db.select().from(auditEvents).all().filter((event) => event.action === "note.signed"))
+      .toHaveLength(1);
+    expect(test.database.db.select().from(auditEvents).all().filter((event) => event.action === "medication.decision-signed"))
+      .toHaveLength(1);
+    expect(test.database.db.select().from(auditEvents).all().filter((event) => event.action === "visit.consultation-finalized"))
+      .toHaveLength(1);
+  });
+
+  it.each([
+    ["subjective", { subjective: "", objective: "O", assessment: "A", plan: "P", diagnoses: ["D"] }],
+    ["objective", { subjective: "S", objective: "  ", assessment: "A", plan: "P", diagnoses: ["D"] }],
+    ["assessment", { subjective: "S", objective: "O", assessment: "", plan: "P", diagnoses: ["D"] }],
+    ["plan", { subjective: "S", objective: "O", assessment: "A", plan: "", diagnoses: ["D"] }],
+    ["diagnoses", { subjective: "S", objective: "O", assessment: "A", plan: "P", diagnoses: [] }],
+  ])("rejects an incomplete Note draft (%s) before a signed write", async (_field, note) => {
+    const test = await fixture();
+    const visitId = await createConsultingVisit(test);
+    await saveDraft(test, visitId, {
+      expectedRevisions: { visit: 2, noteDraft: 0, medicationDraft: 0 },
+      payload: { note, medicationDecision: draftBody().payload.medicationDecision },
+    }, `clinical-incomplete-note-${_field}`);
+
+    const response = await finalize(test, visitId);
+    expect(response.statusCode).toBe(422);
+    expect(test.database.db.select().from(clinicalNotes).all()).toHaveLength(0);
+    expect(test.database.db.select().from(medicationDecisions).all()).toHaveLength(0);
+    expect(test.database.db.select().from(visits).where(eq(visits.id, visitId)).get())
+      .toMatchObject({ status: "CONSULTING", revision: 2 });
+  });
+
+  it.each([
+    ["UNDECIDED", { kind: "UNDECIDED" }],
+    ["empty ORDER", { kind: "ORDER", items: [] }],
+    ["blank NO_MEDICATION reason", { kind: "NO_MEDICATION", noMedicationReason: " " }],
+  ])("rejects %s medication draft before a signed write", async (_name, medicationDecision) => {
+    const test = await fixture();
+    const visitId = await createConsultingVisit(test);
+    await saveDraft(test, visitId, {
+      expectedRevisions: { visit: 2, noteDraft: 0, medicationDraft: 0 },
+      payload: { note: draftBody().payload.note, medicationDecision },
+    }, `clinical-incomplete-medication-${_name.replaceAll(" ", "-")}`);
+
+    const response = await finalize(test, visitId);
+    expect(response.statusCode).toBe(422);
+    expect(test.database.db.select().from(clinicalNotes).all()).toHaveLength(0);
+    expect(test.database.db.select().from(medicationDecisions).all()).toHaveLength(0);
+  });
+
+  it("uses the Patient revision as the allergy safety token", async () => {
+    const test = await fixture();
+    const visitId = await createConsultingVisit(test);
+    await saveCompleteDraft(test, visitId);
+    const patientId = test.database.db.select().from(visits).where(eq(visits.id, visitId)).get()?.patientId;
+    if (!patientId) throw new Error("missing fixture patient");
+    const allergy = await test.app.inject({
+      method: "POST", url: `/api/patients/${patientId}/allergy-revisions`,
+      headers: { cookie: test.doctorCookie, "idempotency-key": "clinical-finalize-allergy-001" },
+      payload: { expectedRevisions: { patient: 1, visit: 2 }, payload: {
+        visitId, state: "NONE_KNOWN", items: [], sourceText: "ทบทวนก่อนลงนาม", reason: "ความปลอดภัย",
+      } },
+    });
+    expect(allergy.statusCode).toBe(201);
+
+    const response = await finalize(test, visitId);
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error.currentRevisions).toEqual({ patient: 2 });
+    expect(test.database.db.select().from(clinicalNotes).all()).toHaveLength(0);
+  });
+
+  it("rejects finalization from a non-CONSULTING Visit state", async () => {
+    const test = await fixture();
+    const visitId = await createConsultingVisit(test);
+    await saveCompleteDraft(test, visitId);
+    test.database.sqlite.prepare("UPDATE visits SET status='AWAITING_CHARGE' WHERE id=?").run(visitId);
+
+    const response = await finalize(test, visitId);
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error.code).toBe("INVALID_STATE");
+    expect(test.database.db.select().from(clinicalNotes).all()).toHaveLength(0);
+    expect(test.database.db.select().from(medicationDecisions).all()).toHaveLength(0);
+  });
+
+  it.each([
+    ["Visit", { visit: 1, patient: 1, noteDraft: 1, medicationDraft: 1 }, "visit", 2],
+    ["Note draft", { visit: 2, patient: 1, noteDraft: 2, medicationDraft: 1 }, "noteDraft", 1],
+    ["Medication draft", { visit: 2, patient: 1, noteDraft: 1, medicationDraft: 2 }, "medicationDraft", 1],
+  ])("rejects stale %s revisions without a partial signature", async (_name, expectedRevisions, key, current) => {
+    const test = await fixture();
+    const visitId = await createConsultingVisit(test);
+    await saveCompleteDraft(test, visitId);
+    const response = await finalize(test, visitId, { expectedRevisions, payload: {} }, `clinical-finalize-stale-${key}`);
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error.currentRevisions).toEqual({ [key]: current });
+    expect(test.database.db.select().from(clinicalNotes).all()).toHaveLength(0);
+    expect(test.database.db.select().from(medicationDecisions).all()).toHaveLength(0);
+  });
+
+  it("revalidates the catalog, protects the route, replays safely, and detects a key collision", async () => {
+    const test = await fixture();
+    const visitId = await createConsultingVisit(test);
+    await saveCompleteDraft(test, visitId);
+    const assistant = await finalize(test, visitId, completeFinalizationBody(), "clinical-finalize-assistant", test.assistantCookie);
+    expect(assistant.statusCode).toBe(403);
+    test.database.sqlite.prepare("UPDATE medications SET revision=2 WHERE id='DEMO-MED-001'").run();
+    const staleCatalog = await finalize(test, visitId, completeFinalizationBody(), "clinical-finalize-catalog");
+    expect(staleCatalog.statusCode).toBe(409);
+    expect(staleCatalog.json().error.currentRevisions).toEqual({ "medication.DEMO-MED-001": 2 });
+    test.database.sqlite.prepare("UPDATE medications SET revision=1 WHERE id='DEMO-MED-001'").run();
+    const first = await finalize(test, visitId);
+    const replay = await finalize(test, visitId);
+    const collision = await finalize(test, visitId, {
+      expectedRevisions: { visit: 2, patient: 1, noteDraft: 2, medicationDraft: 1 }, payload: {},
+    });
+    const stored = test.database.db.select().from(idempotencyRecords).all()
+      .find((record) => record.key === "clinical-finalize-001");
+    expect(replay.json()).toEqual({ data: first.json().data, replayed: true });
+    expect(first.json().data.clinicalNote.id).toBe(replay.json().data.clinicalNote.id);
+    expect(first.json().data.clinicalNote.contentHash).toBe(replay.json().data.clinicalNote.contentHash);
+    expect(collision.statusCode).toBe(409);
+    expect(collision.json().error.code).toBe("IDEMPOTENCY_CONFLICT");
+    expect(stored?.responseJson).not.toContain("อาการทดสอบ");
+    expect(stored?.responseJson).not.toContain("คำแนะนำทดสอบ");
+  });
+
+  it.each(["after Note", "after decision", "before Visit transition"] as const)(
+    "rolls back all signed and audit writes when failure is injected %s",
+    async (point) => {
+      const test = await fixture();
+      const visitId = await createConsultingVisit(test);
+      await saveCompleteDraft(test, visitId);
+      const patients = createPatientService({ database: test.database });
+      const visitsService = createVisitService({ database: test.database, patients });
+      const notes = createNoteService({ database: test.database });
+      const medications = createMedicationService({ database: test.database });
+      const failingMedications: MedicationService = point === "after Note" ? {
+        ...medications,
+        signDecisionDraft() { throw new Error("injected after Note"); },
+      } : medications;
+      const failingVisits = point === "before Visit transition" ? {
+        ...visitsService,
+        finalizeConsultation() { throw new Error("injected before Visit transition"); },
+      } : visitsService;
+      const workflow = createClinicalWorkflow({
+        patients,
+        visits: failingVisits,
+        notes,
+        medications: failingMedications,
+        beforeVisitTransition: point === "after decision"
+          ? () => { throw new Error("injected after decision"); }
+          : undefined,
+      });
+
+      expect(() => executeIdempotent({
+        db: test.database.db,
+        actor: test.doctor.actor,
+        key: `clinical-finalize-injected-${point.replaceAll(" ", "-")}`,
+        operation: "clinical.finalize-consultation.v1",
+        scope: visitId,
+        requestBody: completeFinalizationBody(),
+        work: (tx) => ({
+          statusCode: 200,
+          data: workflow.finalizeConsultation(tx, test.doctor.actor, visitId, completeFinalizationBody()),
+        }),
+      })).toThrow(`injected ${point}`);
+      expect(test.database.db.select().from(clinicalNotes).all()).toHaveLength(0);
+      expect(test.database.db.select().from(medicationDecisions).all()).toHaveLength(0);
+      expect(test.database.db.select().from(auditEvents).all().filter((event) => (
+        event.action === "note.signed" || event.action === "medication.decision-signed" || event.action === "visit.consultation-finalized"
+      ))).toHaveLength(0);
+      expect(test.database.db.select().from(visits).where(eq(visits.id, visitId)).get())
+        .toMatchObject({ status: "CONSULTING", revision: 2 });
+      expect(test.database.db.select().from(idempotencyRecords).all().filter((record) => (
+        record.key.startsWith("clinical-finalize-injected-")
+      ))).toHaveLength(0);
+    },
+  );
+});

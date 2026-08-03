@@ -1,12 +1,15 @@
 import type { FastifyInstance } from "fastify";
 import {
   allergyReviewResultSchema,
+  finalizeConsultationBodySchema,
+  finalizeConsultationResponseSchema,
   saveConsultationDraftBodySchema,
   saveConsultationDraftResponseSchema,
   reviewAllergyBodySchema,
   type AllergyReviewResultDto,
   type ClinicalNoteDraftDto,
   type MedicationDecisionDraftDto,
+  type FinalizeConsultationResultDto,
 } from "../../shared/contracts.js";
 import { requireActor } from "../auth/hooks.js";
 import type { DatabaseHandle } from "../db/client.js";
@@ -81,6 +84,40 @@ export function registerClinicalRoutes(input: {
           note: ClinicalNoteDraftDto;
           medicationDecision: MedicationDecisionDraftDto;
         } => saveConsultationDraftResponseSchema.safeParse({ data, replayed: false }).success,
+      },
+    });
+    return reply.code(result.statusCode).send(result.body);
+  });
+
+  input.app.post("/api/visits/:visitId/finalize-consultation", async (request, reply) => {
+    requireActor(request, "clinical:sign");
+    const actor = requireActor(request, "medication:sign-decision");
+    const visitId = (request.params as { visitId?: string }).visitId ?? "";
+    const body = finalizeConsultationBodySchema.parse(request.body);
+    const rawKey = request.headers["idempotency-key"];
+    const key = typeof rawKey === "string" ? rawKey : "";
+    const result = executeIdempotent({
+      db: input.database.db,
+      actor,
+      key,
+      operation: "clinical.finalize-consultation.v1",
+      scope: visitId,
+      requestBody: body,
+      work: (tx) => ({
+        statusCode: 200,
+        data: input.clinical.finalizeConsultation(tx, actor, visitId, body),
+      }),
+      safeReplay: {
+        store: (data) => ({
+          visitId: data.visit.id,
+          visitRevision: data.visit.revision,
+          clinicalNoteId: data.clinicalNote.id,
+          medicationDecisionId: data.medicationDecision.id,
+        }),
+        rebuild: (_tx, reference) => input.clinical.replayFinalizedConsultation(reference),
+        isLegacyResponse: (data): data is FinalizeConsultationResultDto => (
+          finalizeConsultationResponseSchema.safeParse({ data, replayed: false }).success
+        ),
       },
     });
     return reply.code(result.statusCode).send(result.body);
