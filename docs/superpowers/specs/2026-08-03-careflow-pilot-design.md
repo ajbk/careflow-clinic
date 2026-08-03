@@ -1,6 +1,6 @@
 # CareFlow Local Pilot — Product Requirements Document (PRD)
 
-**สถานะ:** รอเจ้าของโครงการทบทวนและอนุมัติ
+**สถานะ:** อนุมัติให้จัดทำ implementation plan เมื่อ 3 สิงหาคม 2026
 
 **วันที่:** 3 สิงหาคม 2026
 
