@@ -25,6 +25,7 @@ export interface PatientService {
   getPatientsByIds(ids: readonly string[]): Map<string, PatientDto>;
   assertPatientRevision(tx: AppTransaction, id: string, expected: number): PatientDto;
   getAllergyAssessment(patientId: string): AllergyAssessmentDto;
+  getAllergyAssessments(patientIds: readonly string[]): Map<string, AllergyAssessmentDto>;
   reviewAllergy(
     tx: AuditedTransaction,
     actor: Actor,
@@ -299,6 +300,10 @@ export function createPatientService(input: PatientServiceOptions): PatientServi
 
     getAllergyAssessment(patientId) {
       return readAllergyAssessment(input.database.db, patientId);
+    },
+
+    getAllergyAssessments(patientIds) {
+      return new Map(patientIds.map((patientId) => [patientId, readAllergyAssessment(input.database.db, patientId)]));
     },
 
     reviewAllergy(tx, actor, patientId, expectedPatientRevision, payload) {

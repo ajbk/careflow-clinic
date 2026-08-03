@@ -108,6 +108,32 @@ describe("real-file restart boundary", () => {
     expect(started.statusCode).toBe(200);
     expect(started.json().data.visit).toMatchObject({ id: visitId, status: "CONSULTING", revision: 2 });
 
+    const draft = await firstApp.inject({
+      method: "POST", url: `/api/visits/${visitId}/consultation-draft`,
+      headers: { cookie: doctorCookie, "idempotency-key": "restart-draft-001" },
+      payload: {
+        expectedRevisions: { visit: 2, noteDraft: 0, medicationDraft: 0 },
+        payload: {
+          note: { subjective: "ไอ", objective: "ไข้", assessment: "หวัด", plan: "พักผ่อน", diagnoses: ["หวัด"] },
+          medicationDecision: { kind: "ORDER", items: [{ medicationId: "DEMO-MED-001", medicationRevision: 1, quantity: 3, directionsTh: "หลังอาหาร" }] },
+        },
+      },
+    });
+    expect(draft.statusCode).toBe(200);
+    const finalized = await firstApp.inject({
+      method: "POST", url: `/api/visits/${visitId}/finalize-consultation`,
+      headers: { cookie: doctorCookie, "idempotency-key": "restart-finalize-001" },
+      payload: { expectedRevisions: { visit: 2, patient: 1, noteDraft: 1, medicationDraft: 1 }, payload: {} },
+    });
+    expect(finalized.statusCode).toBe(200);
+    const finalizedData = finalized.json().data;
+    const amendment = await firstApp.inject({
+      method: "POST", url: `/api/clinical-notes/${finalizedData.clinicalNote.id}/amendments`,
+      headers: { cookie: doctorCookie, "idempotency-key": "restart-amendment-001" },
+      payload: { expectedRevisions: { amendment: 0 }, payload: { content: "ติดตามอาการ", reason: "เพิ่มคำแนะนำ" } },
+    });
+    expect(amendment.statusCode).toBe(201);
+
     const beforeAuditIds = firstDatabase.sqlite
       .prepare("SELECT id FROM audit_events ORDER BY id")
       .pluck()
@@ -123,6 +149,14 @@ describe("real-file restart boundary", () => {
     });
     expect(workspaceBefore.statusCode).toBe(200);
     const intakeId = workspaceBefore.json().data.intake.id as string;
+    const beforeEvidence = {
+      note: finalizedData.clinicalNote,
+      decision: finalizedData.medicationDecision,
+      amendment: amendment.json().data,
+      patientRevision: workspaceBefore.json().data.patient.revision,
+      visitRevision: workspaceBefore.json().data.visit.revision,
+      allergyRevision: workspaceBefore.json().data.patientSnapshot.allergy.revision,
+    };
     await firstApp.close();
     firstDatabase.close();
 
@@ -146,9 +180,22 @@ describe("real-file restart boundary", () => {
     });
     expect(workspaceAfter.statusCode).toBe(200);
     expect(workspaceAfter.json().data).toMatchObject({
-      visit: { id: visitId, status: "CONSULTING", revision: 2 },
+      visit: { id: visitId, status: "AWAITING_PREPARATION", revision: 3 },
       patient: { id: patient.id, hn: patient.hn },
       intake: { id: intakeId, chiefComplaint: "ไอและมีไข้" },
+    });
+    expect(workspaceAfter.json().data).toMatchObject({
+      signedClinicalNote: { id: beforeEvidence.note.id, version: 1, contentHash: beforeEvidence.note.contentHash },
+      medicationDecision: { id: beforeEvidence.decision.id, version: 1, contentHash: beforeEvidence.decision.contentHash },
+      amendments: [{ id: beforeEvidence.amendment.id, version: 1, contentHash: beforeEvidence.amendment.contentHash }],
+      patient: { revision: beforeEvidence.patientRevision },
+      visit: { revision: beforeEvidence.visitRevision },
+      patientSnapshot: {
+        allergy: { revision: beforeEvidence.allergyRevision },
+        activeProblems: { state: "VALUE", value: ["หวัด"], source: { type: "CLINICAL_NOTE", id: beforeEvidence.note.id, occurredAt: beforeEvidence.note.signedAt } },
+        latestRelevantPlan: { state: "VALUE", value: "พักผ่อน", source: { type: "CLINICAL_NOTE", id: beforeEvidence.note.id, occurredAt: beforeEvidence.note.signedAt } },
+        currentMedicationContext: { state: "VALUE", value: ["[DEMO] ยาทดสอบชนิด A"], source: { type: "MEDICATION_DECISION", id: beforeEvidence.decision.id, occurredAt: beforeEvidence.decision.signedAt } },
+      },
     });
     const queueAfter = await secondApp.inject({
       method: "GET",
@@ -158,7 +205,7 @@ describe("real-file restart boundary", () => {
     expect(queueAfter.statusCode).toBe(200);
     expect(queueAfter.json().data).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ visit: expect.objectContaining({ id: visitId, status: "CONSULTING", revision: 2 }) }),
+        expect.objectContaining({ visit: expect.objectContaining({ id: visitId, status: "AWAITING_PREPARATION", revision: 3 }) }),
       ]),
     );
     expect(secondDatabase.sqlite.prepare("SELECT count(*) FROM sessions").pluck().get()).toBe(beforeSessionCount);

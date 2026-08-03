@@ -191,11 +191,13 @@ describe("shared Intake, Queue, and consultation workflow", () => {
     });
     expect(assistantQueue.json().data[0]).toMatchObject({
       visit: { id: visitId, status: "WAITING", revision: 1 },
-      allowedActions: [],
+      allergy: { state: "UNKNOWN", id: null, revision: 0 },
+      allowedActions: ["REVIEW_ALLERGY"],
     });
     expect(doctorQueue.json().data[0]).toMatchObject({
       visit: { id: visitId, status: "WAITING", revision: 1 },
-      allowedActions: ["START_CONSULTATION"],
+      allergy: { state: "UNKNOWN", id: null, revision: 0 },
+      allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"],
     });
 
     const forbidden = await test.app.inject({
@@ -223,7 +225,7 @@ describe("shared Intake, Queue, and consultation workflow", () => {
         },
       },
     });
-    expect(started.json().data.allowedActions).toEqual([]);
+    expect(started.json().data.allowedActions).toEqual(["OPEN_CONSULTATION"]);
 
     const replay = await test.app.inject({
       method: "POST",
@@ -517,8 +519,31 @@ describe("shared Intake, Queue, and consultation workflow", () => {
       data: {
         waiting: 1,
         consulting: 1,
+        awaitingOrderRevision: 0,
+        awaitingPreparation: 0,
+        awaitingCharge: 0,
         updatedAt: "2026-08-03T00:00:00.000Z",
       },
+    });
+  });
+
+  it("counts each committed pending state and excludes closed Visits from Dashboard", async () => {
+    const test = await fixture();
+    const statuses = ["WAITING", "CONSULTING", "AWAITING_ORDER_REVISION", "AWAITING_PREPARATION", "AWAITING_CHARGE", "CLOSED"];
+    for (const [index, status] of statuses.entries()) {
+      const patient = await createPatient(test.app, test.assistantCookie, `dashboard-state-patient-${status}`);
+      const created = await submitIntake(
+        test.app, test.assistantCookie, patient.json().data.id, `dashboard-state-visit-${status}`,
+      );
+      test.database.sqlite.prepare("UPDATE visits SET status = ?, arrived_at = ? WHERE id = ?").run(
+        status, `2026-08-03T0${index}:00:00.000Z`, created.json().data.visit.id,
+      );
+    }
+    const dashboard = await test.app.inject({
+      method: "GET", url: "/api/dashboard/today", headers: { cookie: test.assistantCookie },
+    });
+    expect(dashboard.json().data).toMatchObject({
+      waiting: 1, consulting: 1, awaitingOrderRevision: 1, awaitingPreparation: 1, awaitingCharge: 1,
     });
   });
 
@@ -541,7 +566,19 @@ describe("shared Intake, Queue, and consultation workflow", () => {
         chiefComplaint: "ไอและมีไข้",
         recordedBy: { id: test.assistant.actor.id, displayName: test.assistant.actor.displayName },
       },
-      allowedActions: ["START_CONSULTATION"],
+      patientSnapshot: {
+        allergy: { state: "UNKNOWN", id: null, revision: 0 },
+        activeProblems: { state: "UNKNOWN", value: null, source: null },
+        currentMedicationContext: { state: "UNKNOWN", value: null, source: null },
+        latestRelevantPlan: { state: "UNKNOWN", value: null, source: null },
+        pendingFollowUp: { state: "UNKNOWN", value: null, source: null },
+        recentVisits: [],
+      },
+      consultationDraft: { note: null, medicationDecision: null },
+      signedClinicalNote: null,
+      amendments: [],
+      medicationDecision: null,
+      allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"],
     });
     const assistantWorkspace = await test.app.inject({
       method: "GET",

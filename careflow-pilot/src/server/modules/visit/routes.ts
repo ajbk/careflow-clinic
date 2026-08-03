@@ -42,12 +42,6 @@ export function registerVisitRoutes(input: {
     return { data: input.visits.getDashboardToday() };
   });
 
-  input.app.get("/api/visits/:visitId/workspace", async (request) => {
-    const actor = requireActor(request, "visit:start-consultation");
-    const params = request.params as { visitId?: string };
-    return { data: input.visits.getWorkspace(params.visitId ?? "", actor) };
-  });
-
   input.app.post("/api/visits/:visitId/start-consultation", async (request, reply) => {
     const actor = requireActor(request, "visit:start-consultation");
     const body = startConsultationBodySchema.parse(request.body);

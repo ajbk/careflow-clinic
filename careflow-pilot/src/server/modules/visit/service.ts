@@ -9,7 +9,8 @@ import type {
   StartConsultationBody,
   SubmitIntakeBody,
   VisitSummaryDto,
-  VisitWorkspaceDto,
+  VisitWorkspaceBaseDto,
+  AllergyAssessmentDto,
   SignedMedicationDecisionDto,
 } from "../../../shared/contracts.js";
 import type { PatientDto } from "../../../shared/contracts.js";
@@ -30,6 +31,8 @@ export interface VisitPatientReader {
   assertPatientRevision(tx: AppTransaction, id: string, expected: number): PatientDto;
   getPatientById(id: string): PatientDto | null;
   getPatientsByIds(ids: readonly string[]): Map<string, PatientDto>;
+  getAllergyAssessment(id: string): AllergyAssessmentDto;
+  getAllergyAssessments(ids: readonly string[]): Map<string, AllergyAssessmentDto>;
 }
 
 export interface VisitServiceOptions {
@@ -43,9 +46,12 @@ export interface VisitServiceOptions {
 export interface VisitService {
   submitIntake(tx: AuditedTransaction, actor: Actor, body: SubmitIntakeBody): QueueItemDto;
   listQueue(actor: Actor): QueueItemDto[];
-  getDashboardToday(): { waiting: number; consulting: number; updatedAt: string };
+  getDashboardToday(): {
+    waiting: number; consulting: number; awaitingOrderRevision: number;
+    awaitingPreparation: number; awaitingCharge: number; updatedAt: string;
+  };
   getVisitSummary(visitId: string): VisitSummaryDto | null;
-  getWorkspace(visitId: string, actor: Actor): VisitWorkspaceDto;
+  getWorkspaceBase(visitId: string): VisitWorkspaceBaseDto;
   startConsultation(
     tx: AuditedTransaction,
     actor: Actor,
@@ -102,10 +108,10 @@ export interface VisitService {
 type VisitRow = typeof visits.$inferSelect;
 type IntakeRow = typeof intakeObservations.$inferSelect;
 
-const activeStatuses = ["WAITING", "CONSULTING"] as const;
+const pendingStatuses = ["WAITING", "CONSULTING", "AWAITING_ORDER_REVISION", "AWAITING_PREPARATION", "AWAITING_CHARGE"] as const;
 
-function isActiveStatus(status: string): status is (typeof activeStatuses)[number] {
-  return status === "WAITING" || status === "CONSULTING";
+function isPendingStatus(status: string): status is (typeof pendingStatuses)[number] {
+  return (pendingStatuses as readonly string[]).includes(status);
 }
 
 function notFound(messageTh = "ไม่พบข้อมูลที่ร้องขอ"): ApiError {
@@ -135,16 +141,19 @@ function toQueuePatient(patient: PatientDto): QueueItemDto["patient"] {
 }
 
 function allowedActions(actor: Actor, status: string): QueueItemDto["allowedActions"] {
-  return actor.role === "doctor" && status === "WAITING" ? ["START_CONSULTATION"] : [];
+  if (status === "WAITING") return actor.role === "doctor"
+    ? ["START_CONSULTATION", "REVIEW_ALLERGY"] : ["REVIEW_ALLERGY"];
+  return actor.role === "doctor" && isPendingStatus(status) ? ["OPEN_CONSULTATION"] : [];
 }
 
 function toQueueItem(
   visit: VisitRow,
   observation: IntakeRow,
   patient: PatientDto,
+  allergy: AllergyAssessmentDto,
   actor: Actor,
 ): QueueItemDto {
-  if (!isActiveStatus(visit.status)) throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่รองรับคิวนี้" });
+  if (!isPendingStatus(visit.status)) throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่รองรับคิวนี้" });
   return {
     visit: {
       id: visit.id,
@@ -154,6 +163,7 @@ function toQueueItem(
       startedAt: visit.startedAt,
     },
     patient: toQueuePatient(patient),
+    allergy,
     chiefComplaint: visit.chiefComplaint,
     vitals: toVitals(observation),
     allowedActions: allowedActions(actor, visit.status),
@@ -295,21 +305,22 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
         recordedBy: actor.id,
         recordedAt: now,
       };
-      return toQueueItem(visit, observation, patient, actor);
+      return toQueueItem(visit, observation, patient, input.patients.getAllergyAssessment(patient.id), actor);
     },
 
     listQueue(actor) {
       const rows = input.database.db
         .select()
         .from(visits)
-        .where(and(eq(visits.clinicId, "clinic"), inArray(visits.status, activeStatuses)))
-        .orderBy(sql`CASE ${visits.status} WHEN 'WAITING' THEN 0 ELSE 1 END`, asc(visits.arrivedAt), asc(visits.id))
+        .where(and(eq(visits.clinicId, "clinic"), inArray(visits.status, pendingStatuses)))
+        .orderBy(sql`CASE ${visits.status} WHEN 'WAITING' THEN 0 WHEN 'CONSULTING' THEN 1 WHEN 'AWAITING_ORDER_REVISION' THEN 2 WHEN 'AWAITING_PREPARATION' THEN 3 ELSE 4 END`, asc(visits.arrivedAt), asc(visits.id))
         .all();
       const patientMap = input.patients.getPatientsByIds(rows.map((row) => row.patientId));
+      const allergyMap = input.patients.getAllergyAssessments(rows.map((row) => row.patientId));
       return rows.map((visit) => {
         const patient = patientMap.get(visit.patientId);
         if (!patient) throw notFound("ไม่พบผู้ป่วยของ Visit");
-        return toQueueItem(visit, findObservation(input.database.db, visit.id), patient, actor);
+        return toQueueItem(visit, findObservation(input.database.db, visit.id), patient, allergyMap.get(patient.id) ?? input.patients.getAllergyAssessment(patient.id), actor);
       });
     },
 
@@ -322,7 +333,7 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
         .where(
           and(
             eq(visits.clinicId, "clinic"),
-            inArray(visits.status, activeStatuses),
+            inArray(visits.status, pendingStatuses),
             sql`${visits.arrivedAt} >= ${start}`,
             sql`${visits.arrivedAt} < ${end}`,
           ),
@@ -331,6 +342,9 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
       return {
         waiting: rows.filter((row) => row.status === "WAITING").length,
         consulting: rows.filter((row) => row.status === "CONSULTING").length,
+        awaitingOrderRevision: rows.filter((row) => row.status === "AWAITING_ORDER_REVISION").length,
+        awaitingPreparation: rows.filter((row) => row.status === "AWAITING_PREPARATION").length,
+        awaitingCharge: rows.filter((row) => row.status === "AWAITING_CHARGE").length,
         updatedAt: now.toISOString(),
       };
     },
@@ -349,7 +363,7 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
       };
     },
 
-    getWorkspace(visitId, actor) {
+    getWorkspaceBase(visitId) {
       const visit = input.database.db
         .select()
         .from(visits)
@@ -365,7 +379,7 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
         .where(and(eq(staffAccounts.id, observation.recordedBy), eq(staffAccounts.clinicId, "clinic")))
         .get();
       if (!recorder) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่พบผู้บันทึก Intake" });
-      if (!isActiveStatus(visit.status)) {
+      if (!isPendingStatus(visit.status)) {
         throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่รองรับห้องทำงานนี้" });
       }
       return {
@@ -384,7 +398,6 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
           recordedAt: observation.recordedAt,
           recordedBy: recorder,
         },
-        allowedActions: allowedActions(actor, visit.status),
       };
     },
 
@@ -437,7 +450,7 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
 
       const updated = tx.select().from(visits).where(eq(visits.id, visitId)).get();
       if (!updated) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "อัปเดต Visit ไม่สำเร็จ" });
-      return toQueueItem(updated, findObservation(tx, visitId), patient, actor);
+      return toQueueItem(updated, findObservation(tx, visitId), patient, input.patients.getAllergyAssessment(patient.id), actor);
     },
 
     assertAllergyReviewVisit(tx, actor, patientId, body) {

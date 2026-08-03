@@ -27,6 +27,12 @@ export function registerClinicalRoutes(input: {
   database: DatabaseHandle;
   clinical: ClinicalWorkflow;
 }): void {
+  input.app.get("/api/visits/:visitId/workspace", async (request) => {
+    const actor = requireActor(request, "clinical:read");
+    const visitId = (request.params as { visitId?: string }).visitId ?? "";
+    return { data: input.clinical.getWorkspace(visitId, actor) };
+  });
+
   input.app.post("/api/patients/:patientId/allergy-revisions", async (request, reply) => {
     const actor = requireActor(request, "patient:update-allergy");
     const patientId = (request.params as { patientId?: string }).patientId ?? "";

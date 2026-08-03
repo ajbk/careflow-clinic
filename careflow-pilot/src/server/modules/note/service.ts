@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type {
   Actor,
   ClinicalNoteAmendmentDto,
@@ -19,12 +19,15 @@ import {
   type AuditedTransaction,
 } from "../platform/index.js";
 import { clinicalNoteAmendments, clinicalNoteDiagnoses, clinicalNoteDraftDiagnoses, clinicalNoteDrafts, clinicalNotes } from "./schema.js";
+import { visits } from "../visit/schema.js";
 
 export interface NoteService {
   getDraft(visitId: string): ClinicalNoteDraftDto | null;
   getSignedNote(visitId: string): SignedClinicalNoteDto | null;
   getSignedNoteById(noteId: string): SignedClinicalNoteDto | null;
+  getRecentSignedNotesForPatient(patientId: string): SignedClinicalNoteDto[];
   getAmendment(clinicalNoteId: string, version: number): ClinicalNoteAmendmentDto | null;
+  listAmendments(clinicalNoteId: string): ClinicalNoteAmendmentDto[];
   saveDraft(
     tx: AuditedTransaction,
     actor: Actor,
@@ -134,6 +137,16 @@ export function createNoteService(options: NoteServiceOptions): NoteService {
       return note ? toSignedDto(options.database.db, note) : null;
     },
 
+    getRecentSignedNotesForPatient(patientId) {
+      return options.database.db.select({ note: clinicalNotes })
+        .from(clinicalNotes)
+        .innerJoin(visits, eq(clinicalNotes.visitId, visits.id))
+        .where(eq(visits.patientId, patientId))
+        .orderBy(desc(clinicalNotes.signedAt), desc(clinicalNotes.id))
+        .limit(5)
+        .all().map(({ note }) => toSignedDto(options.database.db, note));
+    },
+
     getAmendment(clinicalNoteId, version) {
       const amendment = options.database.db.select().from(clinicalNoteAmendments)
         .where(and(
@@ -151,6 +164,21 @@ export function createNoteService(options: NoteServiceOptions): NoteService {
         signedAt: amendment.signedAt,
         contentHash: amendment.contentHash,
       };
+    },
+
+    listAmendments(clinicalNoteId) {
+      return options.database.db.select().from(clinicalNoteAmendments)
+        .where(eq(clinicalNoteAmendments.clinicalNoteId, clinicalNoteId))
+        .orderBy(asc(clinicalNoteAmendments.version)).all().map((amendment) => ({
+          id: amendment.id,
+          clinicalNoteId: amendment.clinicalNoteId,
+          version: amendment.version,
+          content: amendment.content,
+          reason: amendment.reason,
+          signedBy: { id: amendment.signedBy, displayName: amendment.signedByDisplayName },
+          signedAt: amendment.signedAt,
+          contentHash: amendment.contentHash,
+        }));
     },
 
     saveDraft(tx, actor, visitId, expectedRevision, input) {

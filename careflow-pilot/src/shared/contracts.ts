@@ -301,13 +301,7 @@ export const submitIntakeBodySchema = rejectOwnPrototypeKeys(
 );
 export type SubmitIntakeBody = z.infer<typeof submitIntakeBodySchema>;
 
-const queueVisitSchema = z.strictObject({
-  id: z.string().min(1),
-  status: z.enum(["WAITING", "CONSULTING"]),
-  revision: z.number().int().min(1),
-  arrivedAt: z.string().datetime(),
-  startedAt: z.string().datetime().nullable(),
-});
+const queueVisitSchema = visitSummarySchema;
 
 const queuePatientSchema = patientSchema.pick({
   id: true,
@@ -320,6 +314,7 @@ const queuePatientSchema = patientSchema.pick({
 export const queueItemSchema = z.strictObject({
   visit: queueVisitSchema,
   patient: queuePatientSchema,
+  allergy: allergyAssessmentSchema,
   chiefComplaint: z
     .string()
     .min(1)
@@ -327,7 +322,7 @@ export const queueItemSchema = z.strictObject({
       message: "อาการสำคัญต้องมี 1–500 ตัวอักษร",
     }),
   vitals: intakeVitalsSchema,
-  allowedActions: z.array(z.literal("START_CONSULTATION")),
+  allowedActions: z.array(z.enum(["START_CONSULTATION", "REVIEW_ALLERGY", "OPEN_CONSULTATION"])),
 });
 export type QueueItemDto = z.infer<typeof queueItemSchema>;
 
@@ -340,13 +335,16 @@ export const dashboardTodayResponseSchema = z.strictObject({
   data: z.strictObject({
     waiting: z.number().int().min(0),
     consulting: z.number().int().min(0),
+    awaitingOrderRevision: z.number().int().min(0),
+    awaitingPreparation: z.number().int().min(0),
+    awaitingCharge: z.number().int().min(0),
     updatedAt: z.string().datetime(),
   }),
 });
 export type DashboardTodayResponse = z.infer<typeof dashboardTodayResponseSchema>;
 
-export const visitWorkspaceSchema = z.strictObject({
-  visit: queueVisitSchema,
+export const visitWorkspaceBaseSchema = z.strictObject({
+  visit: visitSummarySchema,
   patient: patientSchema,
   intake: z.strictObject({
     id: z.string().min(1),
@@ -360,9 +358,8 @@ export const visitWorkspaceSchema = z.strictObject({
     recordedAt: z.string().datetime(),
     recordedBy: z.strictObject({ id: z.string().min(1), displayName: z.string().min(1) }),
   }),
-  allowedActions: z.array(z.literal("START_CONSULTATION")),
 });
-export type VisitWorkspaceDto = z.infer<typeof visitWorkspaceSchema>;
+export type VisitWorkspaceBaseDto = z.infer<typeof visitWorkspaceBaseSchema>;
 
 export const startConsultationBodySchema = rejectOwnPrototypeKeys(
   z.strictObject({
@@ -553,6 +550,47 @@ export const signedMedicationDecisionSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 export type SignedMedicationDecisionDto = z.infer<typeof signedMedicationDecisionSchema>;
+
+export const snapshotSourceSchema = z.strictObject({
+  type: z.enum(["ALLERGY_REVIEW", "INTAKE", "CLINICAL_NOTE", "MEDICATION_DECISION"]),
+  id: z.string().min(1),
+  occurredAt: z.string().datetime(),
+});
+export type SnapshotSource = z.infer<typeof snapshotSourceSchema>;
+
+function snapshotFactSchema<T extends z.ZodType>(value: T) {
+  return z.union([
+    z.strictObject({ state: z.literal("UNKNOWN"), value: z.null(), source: z.null() }),
+    z.strictObject({ state: z.literal("VALUE"), value, source: snapshotSourceSchema }),
+  ]);
+}
+export const patientSnapshotSchema = z.strictObject({
+  allergy: allergyAssessmentSchema,
+  activeProblems: snapshotFactSchema(z.array(z.string().min(1))),
+  currentMedicationContext: snapshotFactSchema(z.array(z.string().min(1))),
+  latestRelevantPlan: snapshotFactSchema(z.string().min(1)),
+  pendingFollowUp: snapshotFactSchema(z.string().min(1)),
+  recentVisits: z.array(z.strictObject({
+    visitId: z.string().min(1), noteId: z.string().min(1), signedAt: z.string().datetime(),
+    diagnoses: z.array(z.string().min(1)), plan: z.string().min(1),
+  })).max(5),
+});
+export type PatientSnapshotDto = z.infer<typeof patientSnapshotSchema>;
+
+export const visitWorkspaceSchema = visitWorkspaceBaseSchema.extend({
+  patientSnapshot: patientSnapshotSchema,
+  consultationDraft: z.strictObject({
+    note: clinicalNoteDraftSchema.nullable(),
+    medicationDecision: medicationDecisionDraftSchema.nullable(),
+  }),
+  signedClinicalNote: signedClinicalNoteSchema.nullable(),
+  amendments: z.array(clinicalNoteAmendmentSchema),
+  medicationDecision: signedMedicationDecisionSchema.nullable(),
+  allowedActions: z.array(z.enum([
+    "START_CONSULTATION", "REVIEW_ALLERGY", "SAVE_DRAFT", "FINALIZE_CONSULTATION", "AMEND_NOTE", "REVISE_MEDICATION_DECISION",
+  ])),
+});
+export type VisitWorkspaceDto = z.infer<typeof visitWorkspaceSchema>;
 
 export const signedDecisionInputSchema = z.discriminatedUnion("kind", [
   z.strictObject({

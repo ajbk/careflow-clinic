@@ -26,6 +26,7 @@ import {
   medicationOrderItems,
   medications,
 } from "./schema.js";
+import { visits } from "../visit/schema.js";
 
 const SEARCH_RESULT_LIMIT = 20;
 
@@ -39,6 +40,7 @@ export interface MedicationService {
   getDecisionDraft(visitId: string): MedicationDecisionDraftDto | null;
   getSignedDecision(visitId: string): SignedMedicationDecisionDto | null;
   getSignedDecisionById(decisionId: string): SignedMedicationDecisionDto | null;
+  getRecentSignedDecisionsForPatient(patientId: string): SignedMedicationDecisionDto[];
   saveDecisionDraft(
     tx: AuditedTransaction,
     actor: Actor,
@@ -240,6 +242,16 @@ export function createMedicationService(input: MedicationServiceOptions): Medica
       const decision = input.database.db.select().from(medicationDecisions)
         .where(eq(medicationDecisions.id, decisionId)).get();
       return decision ? toSignedDecisionDto(input.database.db, decision) : null;
+    },
+
+    getRecentSignedDecisionsForPatient(patientId) {
+      return input.database.db.select({ decision: medicationDecisions })
+        .from(medicationDecisions)
+        .innerJoin(visits, eq(medicationDecisions.visitId, visits.id))
+        .where(eq(visits.patientId, patientId))
+        .orderBy(desc(medicationDecisions.signedAt), desc(medicationDecisions.id))
+        .limit(5)
+        .all().map(({ decision }) => toSignedDecisionDto(input.database.db, decision));
     },
 
     saveDecisionDraft(tx, actor, visitId, expectedRevision, decision) {

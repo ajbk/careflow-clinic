@@ -12,6 +12,7 @@ import type {
   SignClinicalNoteAmendmentBody,
   SignMedicationDecisionRevisionBody,
   VisitSummaryDto,
+  VisitWorkspaceDto,
 } from "../../shared/contracts.js";
 import { visitSummarySchema } from "../../shared/contracts.js";
 import { randomUUID } from "node:crypto";
@@ -75,6 +76,7 @@ function invalidReplayReference(): never {
 }
 
 export interface ClinicalWorkflow {
+  getWorkspace(visitId: string, actor: Actor): VisitWorkspaceDto;
   reviewAllergy(
     tx: AuditedTransaction,
     actor: Actor,
@@ -254,6 +256,57 @@ export function createClinicalWorkflow(input: {
     };
   };
   return {
+    getWorkspace(visitId, actor) {
+      if (!hasPermission(actor, "clinical:read")) {
+        throw new ApiError({ code: "FORBIDDEN", messageTh: "บัญชีนี้ไม่มีสิทธิ์ดำเนินการ" });
+      }
+      const base = input.visits.getWorkspaceBase(visitId);
+      const allergy = input.patients.getAllergyAssessment(base.patient.id);
+      const signedClinicalNote = input.notes.getSignedNote(visitId);
+      const medicationDecision = input.medications.getSignedDecision(visitId);
+      const recentNotes = input.notes.getRecentSignedNotesForPatient(base.patient.id);
+      const recentDecisions = input.medications.getRecentSignedDecisionsForPatient(base.patient.id);
+      const latestNote = recentNotes[0] ?? null;
+      const latestDecision = recentDecisions[0] ?? null;
+      const unknown = { state: "UNKNOWN" as const, value: null, source: null };
+      const noteSource = latestNote
+        ? { type: "CLINICAL_NOTE" as const, id: latestNote.id, occurredAt: latestNote.signedAt }
+        : null;
+      const decisionSource = latestDecision
+        ? { type: "MEDICATION_DECISION" as const, id: latestDecision.id, occurredAt: latestDecision.signedAt }
+        : null;
+      return {
+        ...base,
+        patientSnapshot: {
+          allergy,
+          activeProblems: latestNote
+            ? { state: "VALUE" as const, value: latestNote.diagnoses, source: noteSource! }
+            : unknown,
+          currentMedicationContext: latestDecision?.kind === "ORDER"
+            ? { state: "VALUE" as const, value: latestDecision.items.map((item) => item.displayName), source: decisionSource! }
+            : unknown,
+          latestRelevantPlan: latestNote
+            ? { state: "VALUE" as const, value: latestNote.plan, source: noteSource! }
+            : unknown,
+          pendingFollowUp: unknown,
+          recentVisits: recentNotes.map((note) => ({
+            visitId: note.visitId, noteId: note.id, signedAt: note.signedAt,
+            diagnoses: note.diagnoses, plan: note.plan,
+          })),
+        },
+        consultationDraft: {
+          note: input.notes.getDraft(visitId),
+          medicationDecision: input.medications.getDecisionDraft(visitId),
+        },
+        signedClinicalNote,
+        amendments: signedClinicalNote ? input.notes.listAmendments(signedClinicalNote.id) : [],
+        medicationDecision,
+        allowedActions: base.visit.status === "WAITING" ? ["START_CONSULTATION", "REVIEW_ALLERGY"]
+          : base.visit.status === "CONSULTING" ? ["SAVE_DRAFT", "FINALIZE_CONSULTATION", "REVIEW_ALLERGY"]
+          : ["AMEND_NOTE", "REVISE_MEDICATION_DECISION"],
+      };
+    },
+
     reviewAllergy(tx, actor, patientId, body) {
       const visit = input.visits.assertAllergyReviewVisit(tx, actor, patientId, body);
       const { patient, allergy } = input.patients.reviewAllergy(
