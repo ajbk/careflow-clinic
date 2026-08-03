@@ -138,10 +138,6 @@ export function AuthProvider({
     const now = Date.now();
     if (now - lastActivityAt.current < 60_000) return;
     lastActivityAt.current = now;
-    if (expiryTimer.current !== undefined) {
-      window.clearTimeout(expiryTimer.current);
-      expiryTimer.current = undefined;
-    }
     void apiClient
       .void("POST", "/api/auth/activity")
       .then(() => queryClient.invalidateQueries({ queryKey: queryKeys.session }))

@@ -13,5 +13,6 @@ describe("QueryClient retry policy", () => {
     expect(retry(1, new ApiError({ status: 503, code: "INTERNAL_ERROR", messageTh: "busy" }))).toBe(false);
     expect(retry(0, new ApiError({ status: 401, code: "AUTH_REQUIRED", messageTh: "login" }))).toBe(false);
     expect(retry(0, new Error("contract failure"))).toBe(false);
+    expect(retry(0, new TypeError("client failure"))).toBe(false);
   });
 });

@@ -17,7 +17,7 @@ function shouldRetry(failureCount: number, error: unknown): boolean {
   ) {
     return false;
   }
-  if (!isApiError(error)) return error instanceof TypeError;
+  if (!isApiError(error)) return false;
   return error.status === 0 || error.status >= 500;
 }
 
