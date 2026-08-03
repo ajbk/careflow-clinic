@@ -32,3 +32,23 @@ From `careflow-pilot/`:
 Manual production smoke: built `dist/server/server.js` started on `127.0.0.1:3001` against a unique temp SQLite file; `/api/health`, `/`, and `/consultations/demo` returned 200; SIGTERM removed the exact `.careflow-running` lock and checkpointed the WAL.
 
 Frozen demo guard: `git diff --exit-code -- ':(top)careflow-webapp'` remains clean.
+
+## Broad final review fix round
+
+- Start Consultation retries now reuse the same per-Visit idempotency attempt after a lost response; revision conflicts clear that attempt and keep the existing fail-closed reload flow.
+- `npm run dev` starts the API with `--no-static` so a fresh checkout can use Vite before a client build; production `npm start` still requires the built client. Startup stderr now preserves only safe operator messages and never echoes filesystem/driver paths.
+- Patient Search renders a Thai error and explicit retry, Queue and Overview keep valid cached rows visible during transient refresh failures while disabling start actions, and the prototype hard-coded Consultation link was removed.
+- Added runtime/client regression coverage and made browser session fixtures relative to the test clock so the suite does not expire at a particular wall-clock time. Removed trailing EOF whitespace in the noted client files.
+
+Fix-round verification from `careflow-pilot/`:
+
+| Command | Result |
+| --- | --- |
+| `npm run test:client` | 46 passed |
+| `npm run test:server` | 113 passed across 13 files |
+| `npm run typecheck` | passed |
+| `npm run lint` | passed |
+| `npm run build` | passed |
+| `npm run test:e2e` | 4 passed |
+
+`git diff --check` passed and the frozen `careflow-webapp/**` directory remains untouched.

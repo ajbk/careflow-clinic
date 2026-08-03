@@ -13,7 +13,7 @@ describe("pilot router", () => {
         permissions: ["patient:read", "visit:read-queue", "visit:start-consultation"],
         pilotAcknowledgedAt: "2026-08-03T00:00:00.000Z",
         mustChangePassword: false,
-        idleExpiresAt: "2026-08-03T08:00:00.000Z",
+        idleExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       },
     }), { status: 200 })));
     const router = createMemoryRouter(appRoutes, { initialEntries: ["/"] });
@@ -22,6 +22,7 @@ describe("pilot router", () => {
       expect(screen.getByText("CareFlow")).toBeInTheDocument();
       expect(screen.getAllByText(/PILOT — ข้อมูลสังเคราะห์เท่านั้น/).length).toBeGreaterThan(0);
       expect(screen.queryByRole("button", { name: /เปลี่ยนเป็นแพทย์|เปลี่ยนเป็นผู้ช่วย/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: /ห้องตรวจ/ })).not.toBeInTheDocument();
     });
   });
 

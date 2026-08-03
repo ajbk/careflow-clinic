@@ -24,7 +24,7 @@ const session = {
     permissions: ["patient:read", "visit:read-queue", "visit:start-consultation" as const],
     pilotAcknowledgedAt: "2026-08-03T00:00:00.000Z",
     mustChangePassword: false,
-    idleExpiresAt: "2026-08-03T08:00:00.000Z",
+    idleExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
   },
 };
 

@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "concurrently -k -s first npm:dev:server npm:dev:client",
-    "dev:server": "node --env-file-if-exists=.env --watch --import tsx src/server/server.ts",
+    "dev:server": "node --env-file-if-exists=.env --watch --import tsx src/server/server.ts --no-static",
     "dev:client": "vite --host 127.0.0.1 --port 5173",
     "clean": "rimraf dist",
     "build": "npm run clean && npm run build:client && npm run build:server",

@@ -335,6 +335,10 @@
   color: #712323;
 }
 
+.patient-search-error {
+  margin: 0;
+}
+
 .intake-error-active {
   border-color: rgba(121, 82, 13, 0.24);
   border-left-color: #79520d;

@@ -3,6 +3,7 @@ import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { openDatabase } from "./db/client.js";
 import { runClinicHost } from "./lifecycle.js";
+import { shouldServeStatic, startupErrorMessage } from "./runtime.js";
 
 async function main(): Promise<void> {
   const config = loadConfig(process.env);
@@ -12,12 +13,12 @@ async function main(): Promise<void> {
     config,
     clock: () => new Date(),
     idFactory: randomUUID,
-    buildApplication: (options) => buildApp({ ...options, serveStatic: true }),
+    buildApplication: (options) => buildApp({ ...options, serveStatic: shouldServeStatic() }),
   });
 }
 
 void main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : "unknown startup error";
+  const message = startupErrorMessage(error);
   process.stderr.write(`CareFlow server failed to start: ${message}\n`);
   process.exitCode = 1;
 });

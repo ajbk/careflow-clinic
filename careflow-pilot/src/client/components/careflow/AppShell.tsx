@@ -5,7 +5,6 @@ import {
   LayoutDashboard,
   Menu,
   PackageOpen,
-  Stethoscope,
   UsersRound,
   X,
 } from "lucide-react";
@@ -13,14 +12,13 @@ import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../../auth/AuthProvider";
 
-type NavIcon = "dashboard" | "queue" | "intake" | "consultation" | "inventory";
+type NavIcon = "dashboard" | "queue" | "intake" | "inventory";
 type NavPermission = "patient:create-synthetic" | "visit:read-queue" | "visit:submit-intake" | "visit:start-consultation";
 
 const icons: Record<NavIcon, typeof LayoutDashboard> = {
   dashboard: LayoutDashboard,
   queue: UsersRound,
   intake: ClipboardPlus,
-  consultation: Stethoscope,
   inventory: PackageOpen,
 };
 
@@ -28,7 +26,6 @@ const navItems: Array<{ href: string; label: string; labelEn: string; icon: NavI
   { href: "/", label: "ภาพรวม", labelEn: "Overview", icon: "dashboard", permission: "visit:read-queue" },
   { href: "/queue", label: "คิวผู้ป่วย", labelEn: "Queue", icon: "queue", permission: "visit:read-queue" },
   { href: "/intake", label: "รับผู้ป่วย", labelEn: "Intake", icon: "intake", permission: "visit:submit-intake" },
-  { href: "/consultations/pilot-visit", label: "ห้องตรวจ", labelEn: "Consultation", icon: "consultation", permission: "visit:start-consultation" },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {

@@ -87,7 +87,7 @@ function session(role: "assistant" | "doctor") {
         : ["patient:read", "visit:read-queue"],
       pilotAcknowledgedAt: "2026-08-03T00:00:00.000Z",
       mustChangePassword: false,
-      idleExpiresAt: "2026-08-03T08:00:00.000Z",
+      idleExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
     },
   };
 }
@@ -291,6 +291,32 @@ describe("connected shared queue workflow", () => {
     await user.click(await screen.findByRole("button", { name: /เริ่มการตรวจ/ }));
     expect(await screen.findByText("ไม่สามารถเชื่อมต่อระบบได้ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /เริ่มการตรวจ/ })).toBeEnabled();
+  });
+
+  it("reuses the same start attempt when a response is lost and the Doctor retries", async () => {
+    const user = userEvent.setup();
+    const keys: string[] = [];
+    const bodies: unknown[] = [];
+    let requests = 0;
+    server.use(http.post("/api/visits/visit-42/start-consultation", async ({ request }) => {
+      requests += 1;
+      keys.push(request.headers.get("Idempotency-Key") ?? "");
+      bodies.push(await request.json());
+      return requests === 1
+        ? HttpResponse.error()
+        : HttpResponse.json({ data: consultingItem, replayed: true }, { status: 200 });
+    }));
+
+    const router = renderRoute("/queue");
+    await user.click(await screen.findByRole("button", { name: /เริ่มการตรวจ/ }));
+    expect(await screen.findByText("ไม่สามารถเชื่อมต่อระบบได้ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /เริ่มการตรวจ/ }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/consultations/visit-42"));
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toMatch(/\S/);
+    expect(keys[1]).toBe(keys[0]);
+    expect(bodies[1]).toEqual(bodies[0]);
   });
 
   it("renders an explicit permission-denied state when Overview dashboard access is forbidden", async () => {

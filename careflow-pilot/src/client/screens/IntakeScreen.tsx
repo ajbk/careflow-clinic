@@ -225,6 +225,7 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
 
   const error = describeError(submitMutation.error);
   const generatedError = generateMutation.error ? describeError(generateMutation.error) : null;
+  const searchError = patientSearch.error ? describeError(patientSearch.error) : null;
   const searchResults = debouncedSearch.length >= 2 ? patientSearch.data ?? [] : [];
   const submitPending = submitMutation.isPending;
   const generationPending = generateMutation.isPending;
@@ -289,7 +290,15 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
           <p className="synthetic-generation-note">ระบบจะสร้างเลข HN ชื่อ และข้อมูลประชากรสังเคราะห์ให้โดยอัตโนมัติ ไม่มีการกรอกข้อมูลผู้ป่วยจริง</p>
           {generatedError ? <p className="field-error" role="status">{generatedError.messageTh}</p> : null}
 
-          {searchResults.length > 0 ? (
+          {debouncedSearch.length >= 2 && patientSearch.isError ? (
+            <div className="intake-error-summary patient-search-error" role="alert" aria-live="polite">
+              <strong>ค้นหาผู้ป่วยไม่สำเร็จ</strong>
+              <span>{searchError?.messageTh ?? "ไม่สามารถค้นหาผู้ป่วยได้ กรุณาลองใหม่อีกครั้ง"}</span>
+              <button className="inline-retry-button" type="button" onClick={() => void patientSearch.refetch()} disabled={patientSearch.isFetching}>
+                {patientSearch.isFetching ? "กำลังค้นหา…" : "ลองค้นหาอีกครั้ง"}
+              </button>
+            </div>
+          ) : searchResults.length > 0 ? (
             <div className="patient-search-results" aria-label="ผลการค้นหาผู้ป่วย">
               {searchResults.map((result) => <SyntheticSearchResult key={result.id} patient={result} onSelect={choosePatient} disabled={generationPending || submitPending} />)}
             </div>

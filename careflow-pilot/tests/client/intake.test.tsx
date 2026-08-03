@@ -14,7 +14,7 @@ const session = {
     permissions: ["patient:read", "patient:create-synthetic", "visit:submit-intake", "visit:read-queue"] as const,
     pilotAcknowledgedAt: "2026-08-03T00:00:00.000Z",
     mustChangePassword: false,
-    idleExpiresAt: "2026-08-03T08:00:00.000Z",
+    idleExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
   },
 };
 
@@ -321,6 +321,25 @@ describe("connected Intake journey", () => {
     expect(router.state.location.pathname).toBe("/intake");
     await waitFor(() => expect(screen.getByRole("textbox", { name: /อาการสำคัญ/ })).toHaveFocus());
     expect(screen.getByText("กรุณาระบุอาการสำคัญ")).toBeInTheDocument();
+  });
+
+  it("shows a visible Patient search error and offers an explicit retry", async () => {
+    const user = userEvent.setup();
+    let requests = 0;
+    server.use(http.get("/api/patients/search", () => {
+      requests += 1;
+      return requests < 3
+        ? jsonError("INTERNAL_ERROR", "ระบบค้นหาผู้ป่วยไม่พร้อมใช้งาน", 503)
+        : HttpResponse.json({ data: [patient] });
+    }));
+
+    renderIntake();
+    await user.type(await screen.findByRole("textbox", { name: /ค้นหา|ผู้ป่วย/ }), "000123");
+    expect(await screen.findByRole("alert", {}, { timeout: 3_000 })).toHaveTextContent("ระบบค้นหาผู้ป่วยไม่พร้อมใช้งาน");
+    const retry = screen.getByRole("button", { name: /ลองค้นหาอีกครั้ง/ });
+    await user.click(retry);
+    await waitFor(() => expect(screen.getByText(patient.displayName)).toBeInTheDocument());
+    expect(requests).toBe(3);
   });
 
   it("keeps the draft and offers a Queue recovery link for an active visit", async () => {

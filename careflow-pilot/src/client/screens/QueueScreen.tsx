@@ -1,11 +1,11 @@
 import { Clock3, LockKeyhole, RefreshCw, UsersRound } from "lucide-react";
 import type { ReactElement } from "react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { QueueItemDto } from "../../shared/contracts";
 import { useAuth } from "../auth/AuthProvider";
 import { ActionButton, Card, EmptyState, PageHeader, StatusBadge } from "../components/careflow/ui";
-import { createStartConsultationAttempt, useStartConsultation } from "../features/visit";
+import { createStartConsultationAttempt, useStartConsultation, type StartConsultationAttempt } from "../features/visit";
 import { useQueue } from "../features/queue";
 import { ApiError, isApiError } from "../lib/api-error";
 import { formatThaiDateTime } from "../lib/thai-date";
@@ -38,14 +38,36 @@ function actionErrorMessage(error: unknown): string {
 function ConflictBanner({
   visible,
   fetching,
+  error,
   onReload,
 }: {
   visible: boolean;
   fetching: boolean;
+  error?: unknown;
   onReload: () => void;
 }): ReactElement | null {
   if (!visible) return null;
-  return <div className="queue-global-block" role="alert"><strong>ข้อมูลคิวเปลี่ยนแปลง</strong><span>การเริ่มห้องตรวจถูกระงับเพื่อป้องกันการใช้ข้อมูล revision เก่า</span><button className="inline-retry-button" type="button" onClick={onReload} disabled={fetching}>{fetching ? "กำลังโหลด…" : "โหลดข้อมูลล่าสุด"}</button></div>;
+  return <div className="queue-global-block" role="alert"><strong>ข้อมูลคิวเปลี่ยนแปลง</strong><span>{isApiError(error) ? error.messageTh : "การเริ่มห้องตรวจถูกระงับเพื่อป้องกันการใช้ข้อมูล revision เก่า"}</span><button className="inline-retry-button" type="button" onClick={onReload} disabled={fetching}>{fetching ? "กำลังโหลด…" : "โหลดข้อมูลล่าสุด"}</button></div>;
+}
+
+function StaleQueueBanner({
+  error,
+  fetching,
+  onReload,
+}: {
+  error: unknown;
+  fetching: boolean;
+  onReload: () => void;
+}): ReactElement {
+  return (
+    <div className="queue-global-block queue-stale-block" role="alert">
+      <strong>กำลังแสดงข้อมูลคิวล่าสุดที่บันทึกไว้</strong>
+      <span>{isApiError(error) ? error.messageTh : "ระบบคิวไม่พร้อมใช้งาน ข้อมูลอาจไม่ใช่สถานะล่าสุด"}</span>
+      <button className="inline-retry-button" type="button" onClick={onReload} disabled={fetching}>
+        {fetching ? "กำลังโหลด…" : "โหลดข้อมูลล่าสุด"}
+      </button>
+    </div>
+  );
 }
 
 function QueueCard({
@@ -54,6 +76,7 @@ function QueueCard({
   pending,
   blocked,
   startError,
+  stale,
   onStart,
 }: {
   item: QueueItemDto;
@@ -61,11 +84,12 @@ function QueueCard({
   pending: boolean;
   blocked?: ApiError;
   startError?: unknown;
+  stale: boolean;
   onStart: (item: QueueItemDto) => void;
 }): ReactElement {
   const status = statusFor(item.visit.status);
   const serverAllowsStart = item.allowedActions.includes("START_CONSULTATION");
-  const startAllowed = canStart && serverAllowsStart && item.visit.status === "WAITING";
+  const startAllowed = !stale && canStart && serverAllowsStart && item.visit.status === "WAITING";
   return (
     <article className="queue-card" aria-label={`${item.patient.hn} ${item.visit.id}`}>
       <div className="queue-card-top"><span className="queue-time"><Clock3 aria-hidden="true" size={15} /><span>มาถึง {formatThaiDateTime(item.visit.arrivedAt)}</span>{item.visit.startedAt ? <span className="queue-start-time">เริ่มตรวจ {formatThaiDateTime(item.visit.startedAt)}</span> : null}</span><StatusBadge tone={status.tone}>{status.label}</StatusBadge></div>
@@ -76,7 +100,7 @@ function QueueCard({
       {blocked ? <div className="queue-blocked"><strong>{blocked.messageTh}</strong><span>ข้อมูลคิวอาจเปลี่ยนแปลงแล้ว กรุณาโหลดข้อมูลล่าสุดก่อนดำเนินการต่อ</span></div> : null}
       {startError ? <div className="queue-action-error" role="alert"><strong>เริ่มการตรวจไม่สำเร็จ</strong><span>{actionErrorMessage(startError)}</span></div> : null}
       {item.visit.status === "WAITING" && startAllowed ? <ActionButton className="queue-action" variant="secondary" onClick={() => onStart(item)} disabled={pending || Boolean(blocked)}>{pending ? "กำลังเริ่มห้องตรวจ…" : "เริ่มการตรวจ"}</ActionButton> : null}
-      {item.visit.status === "WAITING" && !startAllowed && !blocked ? <span className="queue-waiting-action" aria-label="รอแพทย์เริ่มการตรวจ">รอแพทย์เริ่มการตรวจ</span> : null}
+      {item.visit.status === "WAITING" && !startAllowed && !blocked ? <span className="queue-waiting-action" aria-label={stale ? "ข้อมูลคิวต้องโหลดใหม่" : "รอแพทย์เริ่มการตรวจ"}>{stale ? "โหลดข้อมูลล่าสุดก่อนเริ่มการตรวจ" : "รอแพทย์เริ่มการตรวจ"}</span> : null}
       {item.visit.status === "CONSULTING" ? <Link className="queue-link" to={`/consultations/${item.visit.id}`}>เปิดห้องตรวจ</Link> : null}
     </article>
   );
@@ -91,6 +115,7 @@ export function QueueScreen(): ReactElement {
   const [startErrors, setStartErrors] = useState<Record<string, unknown>>({});
   const [reloadError, setReloadError] = useState<unknown>(null);
   const [pendingVisitId, setPendingVisitId] = useState<string | null>(null);
+  const startAttemptsRef = useRef<Record<string, StartConsultationAttempt>>({});
 
   const rows = Array.isArray(queue.data) ? queue.data : [];
   const waiting = rows.filter((item) => item.visit.status === "WAITING");
@@ -107,7 +132,9 @@ export function QueueScreen(): ReactElement {
       delete next[visitId];
       return next;
     });
-    startMutation.mutate({ visitId, attempt: createStartConsultationAttempt(item) }, {
+    const attempt = startAttemptsRef.current[visitId] ?? createStartConsultationAttempt(item);
+    startAttemptsRef.current[visitId] = attempt;
+    startMutation.mutate({ visitId, attempt }, {
       onSuccess: () => {
         setPendingVisitId(null);
         setStartErrors((current) => {
@@ -121,6 +148,7 @@ export function QueueScreen(): ReactElement {
       onError: (error) => {
         setPendingVisitId(null);
         if (isApiError(error) && (error.code === "REVISION_CONFLICT" || error.code === "INVALID_STATE")) {
+          delete startAttemptsRef.current[visitId];
           setBlocked((current) => ({ ...current, [visitId]: error }));
           return;
         }
@@ -135,6 +163,7 @@ export function QueueScreen(): ReactElement {
       setReloadError(null);
       setBlocked({});
       setStartErrors({});
+      startAttemptsRef.current = {};
       return;
     }
     setReloadError(result.error ?? new Error("Queue reload failed"));
@@ -146,7 +175,11 @@ export function QueueScreen(): ReactElement {
   if (queue.isPending) {
     return <div className="flow-page queue-page"><PageHeader eyebrow="LIVE QUEUE" title="คิวผู้ป่วย" description="ติดตามเส้นทางการดูแลผู้ป่วยในวันนี้" /><div className="queue-board queue-board-loading"><section className="queue-column"><div className="queue-skeleton" /><div className="queue-skeleton" /></section><section className="queue-column"><div className="queue-skeleton" /></section></div></div>;
   }
-  if (queueError) {
+  const hasQueueData = Array.isArray(queue.data);
+  const staleQueue = Boolean(queueError && hasQueueData);
+  const showStaleQueue = staleQueue && !(isApiError(queueError) && queueError.status === 403);
+
+  if (queueError && !showStaleQueue) {
     return <div className="flow-page queue-page"><PageHeader eyebrow="LIVE QUEUE" title="คิวผู้ป่วย" description="ติดตามเส้นทางการดูแลผู้ป่วยในวันนี้" actions={<Link className="care-button care-button-primary" to="/intake">รับผู้ป่วยใหม่</Link>} /><ConflictBanner visible={hasBlockedVisits} fetching={queue.isFetching} onReload={() => void reload()} /><Card><QueryState error={queueError} /></Card></div>;
   }
 
@@ -154,7 +187,7 @@ export function QueueScreen(): ReactElement {
     <section className={`queue-column queue-column-${tone}`} key={title}>
       <header><div><h2>{title}</h2><p>{detail}</p></div><UsersRound aria-hidden="true" size={20} /></header>
       <div className="queue-stack">
-        {items.length > 0 ? items.map((item) => <QueueCard key={item.visit.id} item={item} canStart={canStart} pending={pendingVisitId === item.visit.id} blocked={blocked[item.visit.id]} startError={startErrors[item.visit.id]} onStart={start} />) : <EmptyState icon={UsersRound} title="ยังไม่มีผู้ป่วย" detail="รายการใหม่จะแสดงที่นี่" />}
+        {items.length > 0 ? items.map((item) => <QueueCard key={item.visit.id} item={item} canStart={canStart} pending={pendingVisitId === item.visit.id} blocked={blocked[item.visit.id]} startError={startErrors[item.visit.id]} stale={staleQueue} onStart={start} />) : <EmptyState icon={UsersRound} title="ยังไม่มีผู้ป่วย" detail="รายการใหม่จะแสดงที่นี่" />}
       </div>
     </section>
   );
@@ -162,7 +195,8 @@ export function QueueScreen(): ReactElement {
   return (
     <div className="flow-page queue-page">
       <PageHeader eyebrow="LIVE QUEUE" title="คิวผู้ป่วย" description="ติดตามเส้นทางการดูแลผู้ป่วยในวันนี้" actions={<Link className="care-button care-button-primary" to="/intake">รับผู้ป่วยใหม่</Link>} />
-      <ConflictBanner visible={hasBlockedVisits} fetching={queue.isFetching} onReload={() => void reload()} />
+      <ConflictBanner visible={hasBlockedVisits} error={showStaleQueue ? queueError : undefined} fetching={queue.isFetching} onReload={() => void reload()} />
+      {showStaleQueue && !hasBlockedVisits ? <StaleQueueBanner error={queueError} fetching={queue.isFetching} onReload={() => void reload()} /> : null}
       {rows.length === 0 ? <Card className="queue-empty-card"><EmptyState icon={UsersRound} title="ยังไม่มีผู้ป่วยในคิว" detail="เริ่มงานด้วยการรับผู้ป่วยสังเคราะห์เข้าคิว" /><Link className="care-button care-button-primary" to="/intake">ไปหน้ารับผู้ป่วย</Link></Card> : <div className="queue-board">{renderGroup("รอพบแพทย์", `${waiting.length} ราย`, waiting, "waiting")}{renderGroup("กำลังตรวจ", `${consulting.length} ราย`, consulting, "active")}</div>}
     </div>
   );

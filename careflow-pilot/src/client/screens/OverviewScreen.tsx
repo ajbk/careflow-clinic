@@ -27,6 +27,18 @@ function errorState(error: unknown): ReactElement {
   return <QueryState title="ระบบภาพรวมไม่พร้อมใช้งาน" message="ไม่สามารถเชื่อมต่อระบบได้ กรุณาลองใหม่อีกครั้ง" />;
 }
 
+function staleQueueState(error: unknown, fetching: boolean, onReload: () => void): ReactElement {
+  return (
+    <div className="queue-global-block queue-stale-block" role="alert">
+      <strong>กำลังแสดงข้อมูลคิวล่าสุดที่บันทึกไว้</strong>
+      <span>{isApiError(error) ? error.messageTh : "ระบบคิวไม่พร้อมใช้งาน ข้อมูลอาจไม่ใช่สถานะล่าสุด"}</span>
+      <button className="inline-retry-button" type="button" onClick={onReload} disabled={fetching}>
+        {fetching ? "กำลังโหลด…" : "โหลดข้อมูลล่าสุด"}
+      </button>
+    </div>
+  );
+}
+
 function MetricSkeleton({ label }: { label: string }) {
   return (
     <Card className="metric-card metric-card-loading" aria-label={label}>
@@ -62,6 +74,8 @@ export function OverviewScreen(): ReactElement {
   const activeRows = queue.data?.slice(0, 6) ?? [];
   const queueError = queue.error ? errorState(queue.error) : null;
   const queueLoading = queue.isPending && !queue.data && !queue.error;
+  const hasCachedQueue = Array.isArray(queue.data);
+  const queueStale = Boolean(queue.error && hasCachedQueue && !(isApiError(queue.error) && queue.error.status === 403));
 
   return (
     <div className="operations-page overview-page">
@@ -82,7 +96,10 @@ export function OverviewScreen(): ReactElement {
       <div className="overview-grid">
         <Card className="journey-card">
           <SectionHeading icon={UsersRound} title="เส้นทางผู้ป่วยวันนี้" description="สถานะแบบสดจากระบบคิว" action={<Link className="text-link" to="/queue">ดูคิวทั้งหมด <ArrowRight aria-hidden="true" size={16} /></Link>} />
-          {queueLoading ? <div className="overview-queue-loading" role="status"><span className="queue-skeleton" /><strong>กำลังโหลดคิวผู้ป่วย</strong><p>กำลังดึงข้อมูลล่าสุดจากระบบคิว</p></div> : queueError ? queueError : activeRows.length > 0 ? (
+          {queueLoading ? <div className="overview-queue-loading" role="status"><span className="queue-skeleton" /><strong>กำลังโหลดคิวผู้ป่วย</strong><p>กำลังดึงข้อมูลล่าสุดจากระบบคิว</p></div> : queueError && !queueStale ? queueError : (
+            <>
+              {queueStale ? staleQueueState(queue.error, queue.isFetching, () => void queue.refetch()) : null}
+              {activeRows.length > 0 ? (
             <div className="journey-list">
               {activeRows.map((item) => {
                 const status = item.visit.status === "CONSULTING" ? { label: "กำลังตรวจ", tone: "active" as const } : { label: "รอตรวจ", tone: "waiting" as const };
@@ -95,8 +112,10 @@ export function OverviewScreen(): ReactElement {
                 );
               })}
             </div>
-          ) : (
+              ) : (
             <EmptyState icon={UsersRound} title="ยังไม่มีผู้ป่วยในคิว" detail="เริ่มงานด้วยการรับผู้ป่วยสังเคราะห์เข้าคิว" />
+              )}
+            </>
           )}
           {!queueLoading && activeRows.length === 0 && !queueError ? <Link className="care-button care-button-secondary overview-intake-link" to="/intake"><ClipboardPlus aria-hidden="true" size={18} />รับผู้ป่วยเข้าคิว</Link> : null}
         </Card>
