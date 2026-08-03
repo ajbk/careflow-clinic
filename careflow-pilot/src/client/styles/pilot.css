@@ -371,6 +371,46 @@
   color: var(--error);
 }
 
+/* Queue, Overview, and read-only Consultation connected states. */
+.metric-card-loading { min-height: 150px; align-content: center; }
+.metric-skeleton { display: block; border-radius: 8px; background: var(--surface-container); animation: pilot-skeleton 1.2s ease-in-out infinite alternate; }
+.metric-skeleton-label { width: 62%; height: 14px; }
+.metric-skeleton-value { width: 34%; height: 36px; margin-top: 7px; }
+.metric-skeleton-detail { width: 76%; height: 11px; margin-top: 5px; }
+.metric-time { display: block; font-size: 16px !important; line-height: 1.35 !important; }
+.overview-intake-link { width: fit-content; margin: 8px 0 0; }
+.quick-action-unavailable { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; min-height: 68px; border-radius: 14px; padding: 10px 12px; background: var(--surface-container-low); color: var(--on-surface-variant); }
+.quick-action-unavailable > span:nth-child(2) { display: grid; gap: 2px; }
+.quick-action-unavailable strong { color: var(--primary); font-size: 13px; }
+.quick-action-unavailable small { color: var(--on-surface-variant); font-size: 11px; }
+.queue-vitals { font-size: 11px !important; }
+.queue-global-block { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; margin: -8px 0 22px; border: 1px solid rgba(121, 82, 13, 0.24); border-left: 4px solid #79520d; border-radius: var(--radius-md); padding: 12px 14px; background: #fff0cf; color: #79520d; font-size: 13px; }
+.queue-global-block strong, .queue-global-block span { display: block; }
+.queue-global-block span { color: #79520d; font-size: 12px; }
+.queue-global-block .inline-retry-button { background: rgba(255,255,255,.58); color: #79520d; }
+.queue-blocked { display: grid; gap: 2px; margin-top: 6px; border-radius: 10px; padding: 10px; background: #fff0cf; color: #79520d; font-size: 11px; }
+.queue-blocked span { color: #79520d !important; font-size: 11px !important; }
+.queue-empty-card { display: grid; justify-items: center; padding: 20px; }
+.queue-empty-card .care-button { width: fit-content; margin-bottom: 16px; }
+.queue-board-loading { min-height: 300px; }
+.queue-skeleton { height: 134px; margin-bottom: 12px; border-radius: 14px; background: linear-gradient(90deg, var(--surface-container) 25%, var(--surface-container-lowest) 50%, var(--surface-container) 75%); background-size: 220% 100%; animation: pilot-skeleton 1.2s ease-in-out infinite alternate; }
+.consultation-meta { display: flex; align-items: center; gap: 10px; border-bottom: 1px solid rgba(112,121,116,.14); padding: 10px 22px; color: var(--on-surface-variant); font-size: 11px; }
+.consultation-meta .status-pill { margin-left: auto; }
+.clinical-evidence { margin-top: 26px; border-top: 1px solid rgba(112,121,116,.14); padding-top: 24px; }
+.evidence-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.evidence-grid > div { display: grid; gap: 3px; border-radius: 10px; padding: 11px; background: var(--surface-container-low); }
+.evidence-grid span { color: var(--on-surface-variant); font-size: 11px; }
+.evidence-grid strong { color: var(--primary); font-size: 12px; }
+.milestone-next-copy { align-items: flex-start; line-height: 1.55; }
+.consultation-readonly { display: grid; gap: 10px; border-radius: 12px; padding: 14px; background: var(--surface-container-low); }
+.consultation-readonly > div { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 7px; color: var(--primary); }
+.consultation-readonly > div span { color: var(--on-surface-variant); font-size: 11px; }
+.consultation-readonly > div strong { grid-column: 2; font-size: 12px; }
+.consultation-readonly p { margin: 0; color: var(--on-surface-variant); font-size: 11px; }
+.consultation-skeleton { height: 90px; margin: 22px; border-radius: 14px; background: var(--surface-container); animation: pilot-skeleton 1.2s ease-in-out infinite alternate; }
+.consultation-skeleton-large { height: 300px; margin-top: 0; }
+@keyframes pilot-skeleton { from { opacity: .55; } to { opacity: 1; } }
+
 @media (max-width: 620px) {
   .patient-search-row {
     grid-template-columns: 1fr;
@@ -394,4 +434,10 @@
   .selected-patient-revision {
     padding-inline: 16px;
   }
+
+  .queue-global-block { grid-template-columns: auto minmax(0, 1fr); }
+  .queue-global-block .inline-retry-button { grid-column: 1 / -1; width: 100%; }
+  .consultation-meta { align-items: flex-start; flex-wrap: wrap; padding-inline: 16px; }
+  .consultation-meta .status-pill { margin-left: 0; }
+  .evidence-grid { grid-template-columns: 1fr; }
 }

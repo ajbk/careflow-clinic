@@ -5,6 +5,9 @@ import { ChangePasswordScreen } from "../auth/ChangePasswordScreen";
 import { AuthScreenLayout, LoginScreen } from "../auth/LoginScreen";
 import { PilotRulesScreen } from "../auth/PilotRulesScreen";
 import { AppShell } from "../components/careflow/AppShell";
+import { OverviewScreen } from "../screens/OverviewScreen";
+import { QueueScreen } from "../screens/QueueScreen";
+import { ConsultationScreen } from "../screens/ConsultationScreen";
 import { IntakeScreen } from "../screens/IntakeScreen";
 import { PilotUnavailableScreen } from "../screens/PilotUnavailableScreen";
 
@@ -34,10 +37,10 @@ export const appRoutes: RouteObject[] = [
       {
         element: <AuthGate><ShellRoute /></AuthGate>,
         children: [
-          { index: true, element: <AuthGate requiredPermission="visit:read-queue"><PilotUnavailableScreen title="ภาพรวม" /></AuthGate> },
+          { index: true, element: <AuthGate requiredPermission="visit:read-queue"><OverviewScreen /></AuthGate> },
           { path: "intake", element: <AuthGate requiredPermission="visit:submit-intake"><IntakeScreen /></AuthGate> },
-          { path: "queue", element: <AuthGate requiredPermission="visit:read-queue"><PilotUnavailableScreen title="คิวผู้ป่วย" /></AuthGate> },
-          { path: "consultations/:visitId", element: <AuthGate requiredPermission="visit:start-consultation"><PilotUnavailableScreen title="ห้องตรวจ" /></AuthGate> },
+          { path: "queue", element: <AuthGate requiredPermission="visit:read-queue"><QueueScreen /></AuthGate> },
+          { path: "consultations/:visitId", element: <AuthGate requiredPermission="visit:read-queue"><ConsultationScreen /></AuthGate> },
           { path: "dispensing/:visitId", element: <PilotUnavailableScreen title="จัดยา" /> },
           { path: "dispensing/:visitId/labels", element: <PilotUnavailableScreen title="ฉลากยา" /> },
           { path: "checkout/:visitId", element: <PilotUnavailableScreen title="ชำระเงิน" /> },
