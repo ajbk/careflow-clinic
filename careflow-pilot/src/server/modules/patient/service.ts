@@ -375,10 +375,16 @@ export function createPatientService(input: PatientServiceOptions): PatientServi
         action: "allergy.updated",
         entityType: "patient",
         entityId: patientId,
-        entityRevision: nextAllergyRevision,
+        entityRevision: nextPatientRevision,
         reason: payload.reason,
         occurredAt: now,
-        metadata: { allergyRevisionId, state: payload.state, itemCount: payload.items.length },
+        metadata: {
+          visitId: payload.visitId,
+          allergyRevisionId,
+          allergyRevision: nextAllergyRevision,
+          state: payload.state,
+          itemCount: payload.items.length,
+        },
       });
 
       return { patient: toDto(patient), allergy: toAllergyAssessment(tx, created) };

@@ -262,8 +262,16 @@ describe("versioned allergy review", () => {
       action: "allergy.updated",
       entityType: "patient",
       entityId: patientId,
-      entityRevision: 1,
+      entityRevision: 2,
       reason,
+    });
+    const metadata = JSON.parse(event?.metadataJson ?? "{}");
+    expect(metadata).toMatchObject({
+      visitId,
+      allergyRevisionId: expect.any(String),
+      allergyRevision: 1,
+      state: "NONE_KNOWN",
+      itemCount: 0,
     });
     expect(event?.metadataJson).not.toContain(sourceText);
     expect(event?.metadataJson).not.toContain(reason);
