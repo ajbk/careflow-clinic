@@ -211,7 +211,7 @@ export function QueueScreen(): ReactElement {
       <PageHeader eyebrow={queueWorkspace.eyebrow} title="คิวผู้ป่วย" description={queueWorkspace.description} actions={queueWorkspace.action} />
       <ConflictBanner visible={hasBlockedVisits} error={showStaleQueue ? queueError : undefined} fetching={queue.isFetching} onReload={() => void reload()} />
       {showStaleQueue && !hasBlockedVisits ? <StaleQueueBanner error={queueError} fetching={queue.isFetching} onReload={() => void reload()} /> : null}
-      {rows.length === 0 ? <Card className="queue-empty-card"><EmptyState icon={UsersRound} title="ยังไม่มีผู้ป่วยในคิว" detail="เริ่มงานด้วยการรับผู้ป่วยสังเคราะห์เข้าคิว" /><Link className="care-button care-button-primary" to="/intake">ไปหน้ารับผู้ป่วย</Link></Card> : <div className="queue-board">{renderGroup("รอพบแพทย์", `${waiting.length} ราย`, waiting, "waiting")}{renderGroup("กำลังตรวจ", `${consulting.length} ราย`, consulting, "active")}</div>}
+      {rows.length === 0 ? <Card className="queue-empty-card"><EmptyState icon={UsersRound} title="ยังไม่มีผู้ป่วยในคิว" detail="เริ่มงานด้วยการรับผู้ป่วยสังเคราะห์เข้าคิว" />{!isDoctor ? <Link className="care-button care-button-primary" to="/intake">ไปหน้ารับผู้ป่วย</Link> : null}</Card> : <div className="queue-board">{renderGroup("รอพบแพทย์", `${waiting.length} ราย`, waiting, "waiting")}{renderGroup("กำลังตรวจ", `${consulting.length} ราย`, consulting, "active")}</div>}
     </div>
   );
 }

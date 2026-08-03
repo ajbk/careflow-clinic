@@ -299,7 +299,7 @@ describe("connected shared queue workflow", () => {
     renderRoute("/overview");
     expect(await screen.findByRole("heading", { name: "ภาพรวมคลินิก" })).toBeInTheDocument();
     expect(await screen.findByText("กำลังโหลดคิวผู้ป่วย")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /รับผู้ป่วย/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /รับผู้ป่วย|ไปยังคิวตรวจ/ })).not.toBeInTheDocument();
     resolveQueue(HttpResponse.json({ data: [waitingItem] }));
     await waitFor(() => expect(screen.getByText(patient.displayName)).toBeInTheDocument());
   });
@@ -357,7 +357,10 @@ describe("connected shared queue workflow", () => {
   });
 
   it("renders explicit empty and unavailable Queue states", async () => {
-    server.use(http.get("/api/queue", () => HttpResponse.json({ data: [] })));
+    server.use(
+      http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))),
+      http.get("/api/queue", () => HttpResponse.json({ data: [] })),
+    );
     renderRoute("/queue");
     expect(await screen.findByText("ยังไม่มีผู้ป่วยในคิว")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "ไปหน้ารับผู้ป่วย" })).toBeInTheDocument();
@@ -366,5 +369,12 @@ describe("connected shared queue workflow", () => {
     server.use(http.get("/api/queue", () => jsonError("INTERNAL_ERROR", "ระบบคิวไม่พร้อมใช้งาน", 503)));
     renderRoute("/queue");
     expect((await screen.findAllByText(/ระบบคิวไม่พร้อมใช้งาน/, {}, { timeout: 3_000 })).length).toBeGreaterThan(0);
+  });
+
+  it("omits the Assistant intake CTA from an empty Doctor Queue", async () => {
+    server.use(http.get("/api/queue", () => HttpResponse.json({ data: [] })));
+    renderRoute("/queue");
+    expect(await screen.findByText("ยังไม่มีผู้ป่วยในคิว")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "ไปหน้ารับผู้ป่วย" })).not.toBeInTheDocument();
   });
 });
