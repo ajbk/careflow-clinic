@@ -17,10 +17,12 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
 
-async function expectControlsAtLeast48Px(page: Page): Promise<void> {
-  const controls = page.locator("button.care-button, a.care-button, .primary-button");
+async function expectVisibleControlsAtLeast48Px(page: Page): Promise<void> {
+  const controls = page.locator("button.care-button:visible, a.care-button:visible, .primary-button:visible");
+  await expect.poll(() => controls.count()).toBeGreaterThan(0);
   for (const control of await controls.all()) {
-    await expect(control).toHaveCSS("min-height", /^(4[89]|[5-9]\d|\d{3,})px$/);
+    await expect(control).toBeVisible();
+    expect(await control.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(48);
   }
 }
 
@@ -37,35 +39,52 @@ for (const viewport of viewports) {
       await assistantPage.locator("#username").focus();
       await assistantPage.keyboard.press("Tab");
       await expect(assistantPage.locator("#password")).toBeFocused();
-      await expect(assistantPage.getByRole("button", { name: "เข้าสู่ระบบ" })).toHaveCSS("min-height", "48px");
+      await expectVisibleControlsAtLeast48Px(assistantPage);
 
       await loginAndAcknowledge(assistantPage, server.baseURL, "assistant");
       await expect(assistantPage).toHaveURL(/\/intake$/);
-      for (const route of ["/intake", "/queue"]) {
-        await assistantPage.goto(`${server.baseURL}${route}`);
-        await expectSinglePilotBanner(assistantPage);
-        await expectNoHorizontalOverflow(assistantPage);
-        await expectControlsAtLeast48Px(assistantPage);
-      }
-
-      await assistantPage.goto(`${server.baseURL}/consultations/unknown-visit`);
-      await expect(assistantPage.getByRole("heading", { name: "ไม่มีสิทธิ์ใช้งาน" })).toBeVisible();
       await expectSinglePilotBanner(assistantPage);
       await expectNoHorizontalOverflow(assistantPage);
-      await expect(assistantPage.locator(".consultation-page, .clinical-workspace-grid")).toHaveCount(0);
+      await expectVisibleControlsAtLeast48Px(assistantPage);
+
+      await assistantPage.getByRole("button", { name: "สร้างผู้ป่วยสังเคราะห์" }).click();
+      const patientHeader = assistantPage.locator(".patient-header");
+      await expect(patientHeader).toBeVisible();
+      const hnMatch = (await patientHeader.innerText()).match(/HN DEMO-\d{6}/)?.[0];
+      expect(hnMatch).toMatch(/^HN DEMO-\d{6}$/);
+      const hn = hnMatch as string;
+      await assistantPage.getByLabel("อาการสำคัญ *").fill(`ไอและมีไข้ ${viewport.name}`);
+      await assistantPage.getByRole("button", { name: "ส่งพบแพทย์" }).click();
+      await expect(assistantPage).toHaveURL(/\/queue$/);
+      await expect(assistantPage.locator(".queue-card")).toContainText(hn);
+      await expectSinglePilotBanner(assistantPage);
+      await expectNoHorizontalOverflow(assistantPage);
+      await expectVisibleControlsAtLeast48Px(assistantPage);
       await expect(assistantPage.getByText(/รีเซ็ตข้อมูล|Reset synthetic|ล้างข้อมูล/i)).toHaveCount(0);
 
       await loginAndAcknowledge(doctorPage, server.baseURL, "doctor");
       await expect(doctorPage).toHaveURL(/\/queue$/);
-      for (const route of ["/queue", "/consultations/unknown-visit"]) {
-        await doctorPage.goto(`${server.baseURL}${route}`);
-        if (route.startsWith("/consultations/")) {
-          await expect(doctorPage.getByRole("heading", { name: "ไม่พบข้อมูลห้องตรวจ" })).toBeVisible();
-          await expect(doctorPage.locator(".consultation-page")).toBeVisible();
-        }
-        await expectSinglePilotBanner(doctorPage);
-        await expectNoHorizontalOverflow(doctorPage);
-      }
+      await expect(doctorPage.locator(".queue-card")).toContainText(hn);
+      await expectSinglePilotBanner(doctorPage);
+      await expectNoHorizontalOverflow(doctorPage);
+      await expectVisibleControlsAtLeast48Px(doctorPage);
+
+      await doctorPage.getByRole("button", { name: "เริ่มการตรวจ" }).click();
+      await expect(doctorPage).toHaveURL(/\/consultations\/[^/]+$/);
+      const consultationPath = new URL(doctorPage.url()).pathname;
+      await expect(doctorPage.getByRole("heading", { name: "ห้องตรวจผู้ป่วย" })).toBeVisible();
+      await expect(doctorPage.locator(".consultation-patient-rail")).toContainText(hn);
+      await expect(doctorPage.locator(".consultation-clinical-content")).toBeVisible();
+      await expectSinglePilotBanner(doctorPage);
+      await expectNoHorizontalOverflow(doctorPage);
+      await expectVisibleControlsAtLeast48Px(doctorPage);
+
+      await assistantPage.goto(`${server.baseURL}${consultationPath}`);
+      await expect(assistantPage.getByRole("heading", { name: "ไม่มีสิทธิ์ใช้งาน" })).toBeVisible();
+      await expectSinglePilotBanner(assistantPage);
+      await expectNoHorizontalOverflow(assistantPage);
+      await expect(assistantPage.locator(".consultation-page, .clinical-workspace-grid, .consultation-patient-rail, .consultation-clinical-content")).toHaveCount(0);
+      await expect(assistantPage.getByText(hn, { exact: false })).toHaveCount(0);
     } finally {
       await assistantContext.close();
       await doctorContext.close();

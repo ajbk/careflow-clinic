@@ -1,5 +1,25 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import { loginAndAcknowledge, startPilotServer } from "./fixtures.js";
+
+async function expectCookieOnlySession(context: BrowserContext, page: Page, baseURL: string): Promise<void> {
+  const sessionCookies = (await context.cookies(baseURL)).filter((cookie) => cookie.name === "careflow_session");
+  expect(sessionCookies).toEqual([
+    expect.objectContaining({
+      name: "careflow_session",
+      httpOnly: true,
+      sameSite: "Strict",
+    }),
+  ]);
+
+  const browserState = await page.evaluate(() => ({
+    documentCookie: document.cookie,
+    localStorageLength: localStorage.length,
+    sessionStorageLength: sessionStorage.length,
+  }));
+  expect(browserState.documentCookie).not.toContain("careflow_session");
+  expect(browserState.localStorageLength).toBe(0);
+  expect(browserState.sessionStorageLength).toBe(0);
+}
 
 test.describe("shared Visit journey", () => {
   test("Assistant and Doctor observe one Visit through independent sessions", async ({ browser }) => {
@@ -55,8 +75,8 @@ test.describe("shared Visit journey", () => {
       await expect(assistantPage.locator(".clinical-workspace-grid, .consultation-patient-rail, .consultation-clinical-content")).toHaveCount(0);
       await expect(assistantPage.getByText(hn, { exact: false })).toHaveCount(0);
       expect(assistantWorkspaceRequests).toHaveLength(0);
-      expect(await assistantPage.evaluate(() => localStorage.length)).toBe(0);
-      expect(await doctorPage.evaluate(() => localStorage.length)).toBe(0);
+      await expectCookieOnlySession(assistantContext, assistantPage, server.baseURL);
+      await expectCookieOnlySession(doctorContext, doctorPage, server.baseURL);
     } finally {
       await assistantContext.close();
       await doctorContext.close();
