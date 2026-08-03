@@ -52,6 +52,15 @@ function uniqueIndexNames(value: TestDatabase, table: string): string[] {
     .sort();
 }
 
+function indexColumns(value: TestDatabase, index: string): string[] {
+  return (value.sqlite.prepare(`PRAGMA index_info('${index}')`).all() as Array<{
+    name: string;
+    seqno: number;
+  }>)
+    .sort((left, right) => left.seqno - right.seqno)
+    .map((column) => column.name);
+}
+
 function foreignKeyRules(value: TestDatabase, table: string): Array<Record<string, string>> {
   return (value.sqlite.prepare(`PRAGMA foreign_key_list('${table}')`).all() as Array<{
     table: string;
@@ -255,22 +264,47 @@ describe("clinical evidence schema", () => {
       );
     }
 
-    const expectedUniqueIndexes: Record<string, string[]> = {
-      patient_allergy_revisions: ["patient_allergy_revisions_patient_revision_unique"],
-      patient_allergy_items: ["patient_allergy_items_revision_position_unique"],
-      clinical_note_drafts: ["clinical_note_drafts_visit_id_unique"],
-      clinical_note_draft_diagnoses: ["clinical_note_draft_diagnoses_draft_position_unique"],
-      clinical_notes: ["clinical_notes_visit_version_unique"],
-      clinical_note_diagnoses: ["clinical_note_diagnoses_note_position_unique"],
-      clinical_note_amendments: ["clinical_note_amendments_note_version_unique"],
-      medications: [],
-      medication_decision_drafts: ["medication_decision_drafts_visit_id_unique"],
-      medication_order_draft_items: ["medication_order_draft_items_draft_position_unique"],
-      medication_decisions: ["medication_decisions_visit_version_unique"],
-      medication_order_items: ["medication_order_items_decision_position_unique"],
+    const expectedUniqueIndexes: Record<string, Record<string, string[]>> = {
+      patient_allergy_revisions: {
+        patient_allergy_revisions_patient_revision_unique: ["patient_id", "revision"],
+      },
+      patient_allergy_items: {
+        patient_allergy_items_revision_position_unique: ["allergy_revision_id", "position"],
+      },
+      clinical_note_drafts: {
+        clinical_note_drafts_visit_id_unique: ["visit_id"],
+      },
+      clinical_note_draft_diagnoses: {
+        clinical_note_draft_diagnoses_draft_position_unique: ["draft_id", "position"],
+      },
+      clinical_notes: {
+        clinical_notes_visit_version_unique: ["visit_id", "version"],
+      },
+      clinical_note_diagnoses: {
+        clinical_note_diagnoses_note_position_unique: ["clinical_note_id", "position"],
+      },
+      clinical_note_amendments: {
+        clinical_note_amendments_note_version_unique: ["clinical_note_id", "version"],
+      },
+      medications: {},
+      medication_decision_drafts: {
+        medication_decision_drafts_visit_id_unique: ["visit_id"],
+      },
+      medication_order_draft_items: {
+        medication_order_draft_items_draft_position_unique: ["decision_draft_id", "position"],
+      },
+      medication_decisions: {
+        medication_decisions_visit_version_unique: ["visit_id", "version"],
+      },
+      medication_order_items: {
+        medication_order_items_decision_position_unique: ["medication_decision_id", "position"],
+      },
     };
     for (const [table, indexes] of Object.entries(expectedUniqueIndexes)) {
-      expect(uniqueIndexNames(value, table)).toEqual(indexes);
+      expect(uniqueIndexNames(value, table)).toEqual(Object.keys(indexes).sort());
+      for (const [index, columns] of Object.entries(indexes)) {
+        expect(indexColumns(value, index)).toEqual(columns);
+      }
     }
     expect(indexNames(value)).toContain("clinical_note_drafts_visit_id_unique");
   });
