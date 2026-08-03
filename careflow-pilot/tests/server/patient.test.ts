@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { auditEvents, clinicCounters } from "../../src/server/modules/platform/index.js";
 import { patients } from "../../src/server/modules/patient/index.js";
+import {
+  createSyntheticPatientBodySchema,
+  patientSearchQuerySchema,
+} from "../../src/shared/contracts.js";
 import { cookieFrom, login, seedAccount } from "./helpers/auth.js";
 import { createTestApp } from "./helpers/database.js";
 
@@ -97,6 +101,37 @@ describe("synthetic patient registry", () => {
         .all()
         .filter((event) => event.action === "patient.synthetic-created"),
     ).toHaveLength(0);
+  });
+
+  it("rejects own __proto__ keys before strict object parsing", async () => {
+    const fixture = await authenticatedPatientApp();
+    const body = JSON.parse(
+      '{"expectedRevisions":{"__proto__":1},"payload":{"__proto__":1}}',
+    ) as Record<string, unknown>;
+
+    expect(createSyntheticPatientBodySchema.safeParse(body).success).toBe(false);
+    const response = await fixture.app.inject({
+      method: "POST",
+      url: "/api/patients/synthetic",
+      payload: JSON.stringify(body),
+      headers: {
+        cookie: fixture.cookie,
+        "idempotency-key": "patient-proto-001",
+        "content-type": "application/json",
+      },
+    });
+
+    // Fastify's JSON parser rejects prototype-pollution keys before route parsing;
+    // both parser and schema paths remain the stable VALIDATION_FAILED contract.
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.code).toBe("VALIDATION_FAILED");
+    expect(fixture.database.db.select().from(patients).all()).toHaveLength(0);
+    expect(fixture.database.db.select().from(auditEvents).all()).toHaveLength(0);
+  });
+
+  it("bounds search queries by Unicode code points rather than UTF-16 units", () => {
+    expect(patientSearchQuerySchema.safeParse({ q: "😀".repeat(80) }).success).toBe(true);
+    expect(patientSearchQuerySchema.safeParse({ q: "😀".repeat(81) }).success).toBe(false);
   });
 
   it("requires authentication and permits both Assistant and Doctor", async () => {

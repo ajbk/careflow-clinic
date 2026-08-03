@@ -1,5 +1,24 @@
 import { z } from "zod";
 
+const invalidPrototypeKey = Symbol("invalid-prototype-key");
+
+function hasOwnPrototypeKey(value: unknown, seen = new Set<object>()): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  if (Object.prototype.hasOwnProperty.call(value, "__proto__")) return true;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  if (Array.isArray(value)) return value.some((item) => hasOwnPrototypeKey(item, seen));
+  const record = value as Record<string, unknown>;
+  return Object.keys(record).some((key) => hasOwnPrototypeKey(record[key], seen));
+}
+
+function rejectOwnPrototypeKeys<T extends z.ZodType>(schema: T) {
+  return z.preprocess(
+    (value) => (hasOwnPrototypeKey(value) ? invalidPrototypeKey : value),
+    schema,
+  );
+}
+
 export interface Actor {
   id: string;
   role: "assistant" | "doctor";
@@ -48,10 +67,12 @@ export const changePasswordBodySchema = z.strictObject({
 });
 export type ChangePasswordBody = z.infer<typeof changePasswordBodySchema>;
 
-export const createSyntheticPatientBodySchema = z.strictObject({
-  expectedRevisions: z.strictObject({}),
-  payload: z.strictObject({}),
-});
+export const createSyntheticPatientBodySchema = rejectOwnPrototypeKeys(
+  z.strictObject({
+    expectedRevisions: z.strictObject({}),
+    payload: z.strictObject({}),
+  }),
+);
 export type CreateSyntheticPatientBody = z.infer<typeof createSyntheticPatientBodySchema>;
 
 export const patientSchema = z.strictObject({
@@ -73,7 +94,15 @@ export const patientCommandResponseSchema = z.strictObject({
 export type PatientCommandResponse = z.infer<typeof patientCommandResponseSchema>;
 
 export const patientSearchQuerySchema = z.strictObject({
-  q: z.string().trim().min(2).max(80),
+  q: z.string()
+    .trim()
+    .refine(
+      (value) => {
+        const length = Array.from(value).length;
+        return length >= 2 && length <= 80;
+      },
+      { message: "คำค้นหาต้องมี 2–80 ตัวอักษร" },
+    ),
 });
 export type PatientSearchQuery = z.infer<typeof patientSearchQuerySchema>;
 
