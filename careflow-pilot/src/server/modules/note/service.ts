@@ -23,6 +23,7 @@ import { clinicalNoteAmendments, clinicalNoteDiagnoses, clinicalNoteDraftDiagnos
 export interface NoteService {
   getDraft(visitId: string): ClinicalNoteDraftDto | null;
   getSignedNote(visitId: string): SignedClinicalNoteDto | null;
+  getSignedNoteById(noteId: string): SignedClinicalNoteDto | null;
   getAmendment(clinicalNoteId: string, version: number): ClinicalNoteAmendmentDto | null;
   saveDraft(
     tx: AuditedTransaction,
@@ -54,6 +55,7 @@ export interface NoteServiceOptions {
 }
 
 type NoteDraftRow = typeof clinicalNoteDrafts.$inferSelect;
+type SignedNoteRow = typeof clinicalNotes.$inferSelect;
 type NoteTransaction = AppDatabase | AppTransaction;
 
 function toDto(tx: NoteTransaction, row: NoteDraftRow): ClinicalNoteDraftDto {
@@ -79,6 +81,19 @@ function toDto(tx: NoteTransaction, row: NoteDraftRow): ClinicalNoteDraftDto {
     diagnoses,
     updatedBy,
     updatedAt: row.updatedAt,
+  };
+}
+
+function toSignedDto(tx: NoteTransaction, note: SignedNoteRow): SignedClinicalNoteDto {
+  const diagnoses = tx.select({ diagnosisText: clinicalNoteDiagnoses.diagnosisText })
+    .from(clinicalNoteDiagnoses).where(eq(clinicalNoteDiagnoses.clinicalNoteId, note.id))
+    .orderBy(asc(clinicalNoteDiagnoses.position)).all().map((row) => row.diagnosisText);
+  return {
+    id: note.id, visitId: note.visitId, version: note.version,
+    subjective: note.subjective, objective: note.objective, assessment: note.assessment, plan: note.plan,
+    diagnoses, sourceDraftRevision: note.sourceDraftRevision, revisionReason: null, supersedesId: null,
+    signedBy: { id: note.signedBy, displayName: note.signedByDisplayName },
+    signedAt: note.signedAt, contentHash: note.contentHash,
   };
 }
 
@@ -110,16 +125,13 @@ export function createNoteService(options: NoteServiceOptions): NoteService {
       const note = options.database.db.select().from(clinicalNotes)
         .where(eq(clinicalNotes.visitId, visitId)).get();
       if (!note) return null;
-      const diagnoses = options.database.db.select({ diagnosisText: clinicalNoteDiagnoses.diagnosisText })
-        .from(clinicalNoteDiagnoses).where(eq(clinicalNoteDiagnoses.clinicalNoteId, note.id))
-        .orderBy(asc(clinicalNoteDiagnoses.position)).all().map((row) => row.diagnosisText);
-      return {
-        id: note.id, visitId: note.visitId, version: note.version,
-        subjective: note.subjective, objective: note.objective, assessment: note.assessment, plan: note.plan,
-        diagnoses, sourceDraftRevision: note.sourceDraftRevision, revisionReason: null, supersedesId: null,
-        signedBy: { id: note.signedBy, displayName: note.signedByDisplayName },
-        signedAt: note.signedAt, contentHash: note.contentHash,
-      };
+      return toSignedDto(options.database.db, note);
+    },
+
+    getSignedNoteById(noteId) {
+      const note = options.database.db.select().from(clinicalNotes)
+        .where(eq(clinicalNotes.id, noteId)).get();
+      return note ? toSignedDto(options.database.db, note) : null;
     },
 
     getAmendment(clinicalNoteId, version) {

@@ -11,6 +11,7 @@ import type {
   MedicationDecisionRevisionResultDto,
   SignClinicalNoteAmendmentBody,
   SignMedicationDecisionRevisionBody,
+  VisitSummaryDto,
 } from "../../shared/contracts.js";
 import { randomUUID } from "node:crypto";
 import { ApiError } from "../errors.js";
@@ -67,15 +68,15 @@ export interface ClinicalWorkflow {
     visitStatus: AllergyReviewResultDto["visit"]["status"];
   }): AllergyReviewResultDto;
   replayFinalizedConsultation(reference: {
-    visitId: string;
-    visitRevision: number;
+    visit: VisitSummaryDto;
     clinicalNoteId: string;
+    clinicalNoteVersion: number;
     medicationDecisionId: string;
+    medicationDecisionVersion: number;
   }): FinalizeConsultationResultDto;
   replayAmendment(reference: { clinicalNoteId: string; amendmentId: string; amendmentVersion: number }): ClinicalNoteAmendmentDto;
   replayMedicationDecisionRevision(reference: {
-    visitId: string;
-    visitRevision: number;
+    visit: VisitSummaryDto;
     medicationDecisionId: string;
     medicationDecisionVersion: number;
   }): MedicationDecisionRevisionResultDto;
@@ -223,20 +224,19 @@ export function createClinicalWorkflow(input: {
     },
 
     replayFinalizedConsultation(reference) {
-      const visit = input.visits.getVisitSummary(reference.visitId);
-      const clinicalNote = input.notes.getSignedNote(reference.visitId);
-      const medicationDecision = input.medications.getSignedDecision(reference.visitId);
+      const clinicalNote = input.notes.getSignedNoteById(reference.clinicalNoteId);
+      const medicationDecision = input.medications.getSignedDecisionById(reference.medicationDecisionId);
       if (
-        !visit ||
         !clinicalNote ||
         !medicationDecision ||
-        visit.revision !== reference.visitRevision ||
-        clinicalNote.id !== reference.clinicalNoteId ||
-        medicationDecision.id !== reference.medicationDecisionId
+        clinicalNote.visitId !== reference.visit.id ||
+        clinicalNote.version !== reference.clinicalNoteVersion ||
+        medicationDecision.visitId !== reference.visit.id ||
+        medicationDecision.version !== reference.medicationDecisionVersion
       ) {
         throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่พบข้อมูลที่ลงนามสำหรับการเรียกซ้ำ" });
       }
-      return { visit, clinicalNote, medicationDecision };
+      return { visit: reference.visit, clinicalNote, medicationDecision };
     },
 
     replayAmendment(reference) {
@@ -248,18 +248,15 @@ export function createClinicalWorkflow(input: {
     },
 
     replayMedicationDecisionRevision(reference) {
-      const visit = input.visits.getVisitSummary(reference.visitId);
-      const medicationDecision = input.medications.getSignedDecision(reference.visitId);
+      const medicationDecision = input.medications.getSignedDecisionById(reference.medicationDecisionId);
       if (
-        !visit ||
         !medicationDecision ||
-        visit.revision !== reference.visitRevision ||
-        medicationDecision.id !== reference.medicationDecisionId ||
+        medicationDecision.visitId !== reference.visit.id ||
         medicationDecision.version !== reference.medicationDecisionVersion
       ) {
         throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่พบคำสั่งยาที่แก้ไขสำหรับการเรียกซ้ำ" });
       }
-      return { visit, medicationDecision };
+      return { visit: reference.visit, medicationDecision };
     },
   };
 }

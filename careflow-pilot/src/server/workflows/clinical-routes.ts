@@ -106,8 +106,7 @@ export function registerClinicalRoutes(input: {
       work: (tx) => ({ statusCode: 201, data: input.clinical.reviseMedicationDecision(tx, actor, visitId, body) }),
       safeReplay: {
         store: (data) => ({
-          visitId: data.visit.id,
-          visitRevision: data.visit.revision,
+          visit: data.visit,
           medicationDecisionId: data.medicationDecision.id,
           medicationDecisionVersion: data.medicationDecision.version,
         }),
@@ -174,10 +173,11 @@ export function registerClinicalRoutes(input: {
       }),
       safeReplay: {
         store: (data) => ({
-          visitId: data.visit.id,
-          visitRevision: data.visit.revision,
+          visit: data.visit,
           clinicalNoteId: data.clinicalNote.id,
+          clinicalNoteVersion: data.clinicalNote.version,
           medicationDecisionId: data.medicationDecision.id,
+          medicationDecisionVersion: data.medicationDecision.version,
         }),
         rebuild: (_tx, reference) => input.clinical.replayFinalizedConsultation(reference),
         isLegacyResponse: (data): data is FinalizeConsultationResultDto => (

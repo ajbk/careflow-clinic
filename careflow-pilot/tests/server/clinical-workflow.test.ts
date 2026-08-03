@@ -663,6 +663,28 @@ describe("signed evidence amendments and safety revisions", () => {
       .toMatchObject({ reason: "ปรับคำสั่งตามข้อมูลใหม่" });
   });
 
+  it("replays original finalization and decision revisions after a later decision changes the Visit", async () => {
+    const test = await fixture();
+    const { visitId, finalized } = await finalizeOrder(test);
+    const firstRevision = await reviseDecision(test, visitId);
+    const laterRevision = await reviseDecision(test, visitId, {
+      visit: 4,
+      decision: 2,
+      kind: "ORDER",
+      key: "clinical-decision-revision-later",
+    });
+
+    const finalizedReplay = await finalize(test, visitId);
+    const firstRevisionReplay = await reviseDecision(test, visitId);
+
+    expect(firstRevision.statusCode).toBe(201);
+    expect(laterRevision.statusCode).toBe(201);
+    expect(finalizedReplay.statusCode).toBe(200);
+    expect(finalizedReplay.json()).toEqual({ data: finalized, replayed: true });
+    expect(firstRevisionReplay.statusCode).toBe(201);
+    expect(firstRevisionReplay.json()).toEqual({ data: firstRevision.json().data, replayed: true });
+  });
+
   it.each(["AWAITING_ORDER_REVISION", "AWAITING_PREPARATION", "AWAITING_CHARGE"] as const)(
     "accepts an ORDER decision revision only from %s",
     async (status) => {

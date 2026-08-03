@@ -38,6 +38,7 @@ export interface MedicationService {
   ): MedicationDto;
   getDecisionDraft(visitId: string): MedicationDecisionDraftDto | null;
   getSignedDecision(visitId: string): SignedMedicationDecisionDto | null;
+  getSignedDecisionById(decisionId: string): SignedMedicationDecisionDto | null;
   saveDecisionDraft(
     tx: AuditedTransaction,
     actor: Actor,
@@ -69,6 +70,7 @@ export interface MedicationServiceOptions {
 
 type MedicationRow = typeof medications.$inferSelect;
 type DecisionDraftRow = typeof medicationDecisionDrafts.$inferSelect;
+type SignedDecisionRow = typeof medicationDecisions.$inferSelect;
 type MedicationTransaction = AppDatabase | AppTransaction;
 
 function toDto(row: MedicationRow): MedicationDto {
@@ -144,6 +146,28 @@ function toDecisionDraftDto(tx: MedicationTransaction, row: DecisionDraftRow): M
   return { ...base, kind: "ORDER", noMedicationReason: null, items };
 }
 
+function toSignedDecisionDto(tx: MedicationTransaction, decision: SignedDecisionRow): SignedMedicationDecisionDto {
+  const base = {
+    id: decision.id, visitId: decision.visitId, version: decision.version,
+    revisionReason: decision.revisionReason, supersedesId: decision.supersedesId,
+    signedBy: { id: decision.signedBy, displayName: decision.signedByDisplayName },
+    signedAt: decision.signedAt, contentHash: decision.contentHash,
+  };
+  if (decision.kind === "NO_MEDICATION") {
+    return {
+      ...base, kind: "NO_MEDICATION", noMedicationReason: decision.noMedicationReason ?? "", items: [],
+    };
+  }
+  const items = tx.select().from(medicationOrderItems)
+    .where(eq(medicationOrderItems.medicationDecisionId, decision.id))
+    .orderBy(asc(medicationOrderItems.position)).all().map((item) => ({
+      id: item.medicationId, displayName: item.displayNameSnapshot, strengthText: item.strengthSnapshot,
+      dosageFormText: item.dosageFormSnapshot, canonicalUnit: item.unitSnapshot,
+      revision: item.medicationRevision, quantity: item.quantity, directionsTh: item.directionsTh,
+    }));
+  return { ...base, kind: "ORDER", noMedicationReason: null, items };
+}
+
 function completeDecisionText(value: string | null, field: string): string {
   const trimmed = value?.trim() ?? "";
   if (trimmed.length === 0) {
@@ -209,26 +233,13 @@ export function createMedicationService(input: MedicationServiceOptions): Medica
       const decision = input.database.db.select().from(medicationDecisions)
         .where(eq(medicationDecisions.visitId, visitId))
         .orderBy(desc(medicationDecisions.version)).get();
-      if (!decision) return null;
-      const base = {
-        id: decision.id, visitId: decision.visitId, version: decision.version,
-        revisionReason: decision.revisionReason, supersedesId: decision.supersedesId,
-        signedBy: { id: decision.signedBy, displayName: decision.signedByDisplayName },
-        signedAt: decision.signedAt, contentHash: decision.contentHash,
-      };
-      if (decision.kind === "NO_MEDICATION") {
-        return {
-          ...base, kind: "NO_MEDICATION", noMedicationReason: decision.noMedicationReason ?? "", items: [],
-        };
-      }
-      const items = input.database.db.select().from(medicationOrderItems)
-        .where(eq(medicationOrderItems.medicationDecisionId, decision.id))
-        .orderBy(asc(medicationOrderItems.position)).all().map((item) => ({
-          id: item.medicationId, displayName: item.displayNameSnapshot, strengthText: item.strengthSnapshot,
-          dosageFormText: item.dosageFormSnapshot, canonicalUnit: item.unitSnapshot,
-          revision: item.medicationRevision, quantity: item.quantity, directionsTh: item.directionsTh,
-        }));
-      return { ...base, kind: "ORDER", noMedicationReason: null, items };
+      return decision ? toSignedDecisionDto(input.database.db, decision) : null;
+    },
+
+    getSignedDecisionById(decisionId) {
+      const decision = input.database.db.select().from(medicationDecisions)
+        .where(eq(medicationDecisions.id, decisionId)).get();
+      return decision ? toSignedDecisionDto(input.database.db, decision) : null;
     },
 
     saveDecisionDraft(tx, actor, visitId, expectedRevision, decision) {
