@@ -153,7 +153,7 @@ export function createPatientService(input: PatientServiceOptions): PatientServi
             ),
           ),
         )
-        .orderBy(desc(patients.createdAt), desc(patients.id))
+        .orderBy(desc(patients.createdAt), desc(patients.hn))
         .limit(SEARCH_RESULT_LIMIT)
         .all();
       return rows.map(toDto);
