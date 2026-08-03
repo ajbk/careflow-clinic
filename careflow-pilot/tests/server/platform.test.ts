@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import * as auditModule from "../../src/server/modules/platform/audit.js";
+import * as platform from "../../src/server/modules/platform/index.js";
 import {
   appendAuditEvent,
   assertExpectedRevision,
@@ -12,6 +14,10 @@ import {
   type Actor,
   type CommandBody,
 } from "../../src/server/modules/platform/index.js";
+import {
+  appendMaintenanceAuditEvent,
+  runMaintenanceAuditedTransaction,
+} from "../../src/server/maintenance/audit.js";
 import { createTestDatabase, type TestDatabase } from "./helpers/database.js";
 
 const cleanups: Array<() => void> = [];
@@ -70,11 +76,10 @@ function appendTestAudit(
     tx,
     actor,
     id: `audit-${entityId}`,
-    action: "test.entity-created",
+    action: "patient.synthetic-created",
     entityType: "test-entity",
     entityId,
     entityRevision: 1,
-    reasonRequired: false,
     reason: null,
     occurredAt,
     metadata: { source: "platform-test" },
@@ -290,20 +295,23 @@ describe("idempotent audited transactions", () => {
           tx.insert(clinicCounters).values({ key: "spoofed", value: 1 }).run();
           appendAuditEvent({
             tx,
-            actor: { id: null, role: "system", displayName: "maintenance-cli" },
+            actor: {
+              id: null,
+              role: "system",
+              displayName: "maintenance-cli",
+            } as unknown as Actor,
             id: "audit-spoofed",
-            action: "test.spoofed",
+            action: "patient.synthetic-created",
             entityType: "test-entity",
             entityId: "spoofed",
             entityRevision: 1,
-            reasonRequired: false,
             reason: null,
             occurredAt,
           });
           return { statusCode: 201, data: { id: "spoofed" } };
         },
       }),
-    ).toThrow("Audit actor does not match transaction actor");
+    ).toThrow("Named actor required");
     expect(database.db.select().from(clinicCounters).all()).toHaveLength(0);
     expect(database.db.select().from(auditEvents).all()).toHaveLength(0);
     expect(database.db.select().from(idempotencyRecords).all()).toHaveLength(0);
@@ -311,6 +319,102 @@ describe("idempotent audited transactions", () => {
 });
 
 describe("append-only Audit Events", () => {
+  it("does not expose maintenance system capabilities from the HTTP-facing platform index", () => {
+    expect(platform).not.toHaveProperty("runMaintenanceAuditedTransaction");
+    expect(platform).not.toHaveProperty("appendMaintenanceAuditEvent");
+    expect(platform).not.toHaveProperty("maintenanceAuditCapability");
+    expectTypeOf<Parameters<typeof runAuditedTransaction>[0]["actor"]>().toEqualTypeOf<Actor>();
+    expectTypeOf<Parameters<typeof appendAuditEvent>[0]["actor"]>().toEqualTypeOf<Actor>();
+  });
+
+  it("does not export raw actor-selectable transaction primitives", () => {
+    expect(auditModule).not.toHaveProperty("runBoundAuditedTransaction");
+    expect(auditModule).not.toHaveProperty("appendBoundAuditEvent");
+  });
+
+  it("writes system Audit only through the maintenance-only boundary", () => {
+    const { database } = databaseWithActor();
+
+    runMaintenanceAuditedTransaction({
+      db: database.db,
+      work: (tx) =>
+        appendMaintenanceAuditEvent({
+          tx,
+          id: "audit-maintenance-account-created",
+          action: "account.created",
+          entityType: "staff-account",
+          entityId: "doctor-002",
+          entityRevision: 1,
+          reason: null,
+          occurredAt,
+        }),
+    });
+
+    expect(database.db.select().from(auditEvents).get()).toMatchObject({
+      actorId: null,
+      actorRole: "system",
+      action: "account.created",
+      entityId: "doctor-002",
+    });
+  });
+
+  it("rejects a system actor at the named audited transaction boundary", () => {
+    const { database } = databaseWithActor();
+    const systemActor = {
+      id: null,
+      role: "system",
+      displayName: "maintenance-cli",
+    } as const;
+
+    expect(() =>
+      runAuditedTransaction({
+        db: database.db,
+        actor: systemActor as unknown as Actor,
+        work: (tx) =>
+          appendAuditEvent({
+            tx,
+            actor: systemActor as unknown as Actor,
+            id: "audit-system-from-public-helper",
+            action: "account.created",
+            entityType: "staff-account",
+            entityId: "doctor-002",
+            entityRevision: 1,
+            reason: null,
+            occurredAt,
+          }),
+      }),
+    ).toThrow("Named actor required");
+    expect(database.db.select().from(auditEvents).all()).toHaveLength(0);
+  });
+
+  it("rejects the public append helper inside a maintenance system transaction", () => {
+    const { database } = databaseWithActor();
+    const systemActor = {
+      id: null,
+      role: "system",
+      displayName: "maintenance-cli",
+    } as unknown as Actor;
+
+    expect(() =>
+      runMaintenanceAuditedTransaction({
+        db: database.db,
+        work: (tx) =>
+          appendAuditEvent({
+            tx,
+            actor: systemActor,
+            id: "audit-public-system-append",
+            action: "account.created",
+            entityType: "staff-account",
+            entityId: "doctor-003",
+            entityRevision: 1,
+            reason: null,
+            occurredAt,
+          }),
+      }),
+    ).toThrow("Named actor required");
+    expect(database.db.select().from(auditEvents).all()).toHaveLength(0);
+  });
+
   it("rejects a missing reason when the action contract requires one", () => {
     const { database, actor } = databaseWithActor();
 
@@ -323,16 +427,96 @@ describe("append-only Audit Events", () => {
             tx,
             actor,
             id: "audit-missing-reason",
-            action: "test.reason-required",
+            action: "allergy.updated",
             entityType: "test-entity",
             entityId: "reason-required",
             entityRevision: 1,
-            reasonRequired: true,
+            reasonRequired: false,
             reason: null,
             occurredAt,
           } as unknown as Parameters<typeof appendAuditEvent>[0]),
       }),
     ).toThrow("Audit reason is required");
+    expect(database.db.select().from(auditEvents).all()).toHaveLength(0);
+  });
+
+  it("rejects an action that is absent from the server-owned Audit policy", () => {
+    const { database, actor } = databaseWithActor();
+
+    expect(() =>
+      runAuditedTransaction({
+        db: database.db,
+        actor,
+        work: (tx) =>
+          appendAuditEvent({
+            tx,
+            actor,
+            id: "audit-unknown-action",
+            action: "allergy.updated.v2",
+            entityType: "patient",
+            entityId: "patient-001",
+            entityRevision: 2,
+            reasonRequired: false,
+            reason: null,
+            occurredAt,
+          } as unknown as Parameters<typeof appendAuditEvent>[0]),
+      }),
+    ).toThrow("Unknown Audit action");
+    expect(database.db.select().from(auditEvents).all()).toHaveLength(0);
+  });
+
+  it.each(["toString", "constructor", "__proto__"])(
+    "rejects an inherited-object action name: %s",
+    (inheritedAction) => {
+      const { database, actor } = databaseWithActor();
+
+      expect(() =>
+        runAuditedTransaction({
+          db: database.db,
+          actor,
+          work: (tx) =>
+            appendAuditEvent({
+              tx,
+              actor,
+              id: `audit-${inheritedAction}`,
+              action: inheritedAction,
+              entityType: "patient",
+              entityId: "patient-001",
+              entityRevision: 1,
+              reason: null,
+              occurredAt,
+            } as unknown as Parameters<typeof appendAuditEvent>[0]),
+        }),
+      ).toThrow("Unknown Audit action");
+      expect(database.db.select().from(auditEvents).all()).toHaveLength(0);
+    },
+  );
+
+  it.each([
+    "2026-08-03T08:02:03.000+07:00",
+    "2026-08-03T01:02:03",
+    "not-a-timestamp",
+  ])("rejects a non-canonical UTC Audit timestamp: %s", (invalidOccurredAt) => {
+    const { database, actor } = databaseWithActor();
+
+    expect(() =>
+      runAuditedTransaction({
+        db: database.db,
+        actor,
+        work: (tx) =>
+          appendAuditEvent({
+            tx,
+            actor,
+            id: "audit-invalid-time",
+            action: "patient.synthetic-created",
+            entityType: "patient",
+            entityId: "patient-001",
+            entityRevision: 1,
+            reason: null,
+            occurredAt: invalidOccurredAt,
+          }),
+      }),
+    ).toThrow("Audit timestamp must be canonical UTC");
     expect(database.db.select().from(auditEvents).all()).toHaveLength(0);
   });
 

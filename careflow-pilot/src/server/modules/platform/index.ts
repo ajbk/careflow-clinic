@@ -1,9 +1,12 @@
 export * from "../../../shared/contracts.js";
-export { appendAuditEvent, runAuditedTransaction } from "./audit.js";
+export {
+  appendAuditEvent,
+  runAuditedTransaction,
+} from "./audit.js";
 export type {
   AppDatabase,
   AppTransaction,
-  AuditActor,
+  AuditAction,
   AuditedTransaction,
   AuditEventInput,
 } from "./audit.js";

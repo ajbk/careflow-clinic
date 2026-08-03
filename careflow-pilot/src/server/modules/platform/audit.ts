@@ -11,17 +11,42 @@ export type AuditedTransaction = AppTransaction & {
   readonly [auditedTransactionBrand]: true;
 };
 
-export type AuditActor =
-  | Actor
-  | { id: null; role: "system"; displayName: "maintenance-cli" };
+type SystemAuditActor = { id: null; role: "system"; displayName: "maintenance-cli" };
+type BoundAuditActor = Actor | SystemAuditActor;
 
-const transactionActors = new WeakMap<AppTransaction, AuditActor>();
+const systemAuditActor: SystemAuditActor = {
+  id: null,
+  role: "system",
+  displayName: "maintenance-cli",
+};
 
-interface AuditEventBaseInput {
+const transactionActors = new WeakMap<AppTransaction, BoundAuditActor>();
+
+const auditActionPolicyEntries = [
+  ["account.created", "optional"],
+  ["account.disabled", "optional"],
+  ["account.password-reset", "optional"],
+  ["patient.synthetic-created", "optional"],
+  ["visit.intake-submitted", "optional"],
+  ["visit.consultation-started", "optional"],
+  ["allergy.updated", "required"],
+] as const;
+
+type AuditActionPolicyEntry = (typeof auditActionPolicyEntries)[number];
+export type AuditAction = AuditActionPolicyEntry[0];
+type AuditReasonRequirement<TAction extends AuditAction> = Extract<
+  AuditActionPolicyEntry,
+  readonly [TAction, "optional" | "required"]
+>[1];
+
+const auditActionPolicy: ReadonlyMap<string, "optional" | "required"> = new Map(
+  auditActionPolicyEntries,
+);
+
+interface AuditEventBaseInput<TAction extends AuditAction> {
   tx: AuditedTransaction;
-  actor: AuditActor;
   id: string;
-  action: string;
+  action: TAction;
   entityType: string;
   entityId: string;
   entityRevision: number;
@@ -29,13 +54,46 @@ interface AuditEventBaseInput {
   metadata?: Record<string, unknown>;
 }
 
-export type AuditEventInput = AuditEventBaseInput &
-  (
-    | { reasonRequired: true; reason: string }
-    | { reasonRequired: false; reason: string | null }
-  );
+type AuditReasonInput<TAction extends AuditAction> =
+  AuditReasonRequirement<TAction> extends "required"
+    ? { reason: string }
+    : { reason: string | null };
 
-export function appendAuditEvent(input: AuditEventInput): void {
+export type AuditEventDetails<TAction extends AuditAction = AuditAction> =
+  TAction extends AuditAction
+    ? AuditEventBaseInput<TAction> & AuditReasonInput<TAction>
+    : never;
+
+export type AuditEventInput<TAction extends AuditAction = AuditAction> =
+  AuditEventDetails<TAction> & { actor: Actor };
+
+const canonicalUtcTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+function isCanonicalUtcTimestamp(value: string): boolean {
+  if (!canonicalUtcTimestampPattern.test(value)) return false;
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+}
+
+function assertNamedActor(actor: unknown): asserts actor is Actor {
+  if (
+    typeof actor !== "object" ||
+    actor === null ||
+    !("id" in actor) ||
+    typeof actor.id !== "string" ||
+    actor.id.length === 0 ||
+    !("role" in actor) ||
+    (actor.role !== "assistant" && actor.role !== "doctor") ||
+    !("displayName" in actor) ||
+    typeof actor.displayName !== "string"
+  ) {
+    throw new Error("Named actor required");
+  }
+}
+
+function appendBoundAuditEvent<TAction extends AuditAction>(
+  input: AuditEventDetails<TAction> & { actor: BoundAuditActor },
+): void {
   const transactionActor = transactionActors.get(input.tx);
   if (
     !transactionActor ||
@@ -45,11 +103,18 @@ export function appendAuditEvent(input: AuditEventInput): void {
   ) {
     throw new Error("Audit actor does not match transaction actor");
   }
+  const policy = auditActionPolicy.get(input.action);
+  if (!policy) {
+    throw new Error("Unknown Audit action");
+  }
   if (
-    input.reasonRequired &&
+    policy === "required" &&
     (typeof input.reason !== "string" || input.reason.trim().length === 0)
   ) {
     throw new Error("Audit reason is required");
+  }
+  if (!isCanonicalUtcTimestamp(input.occurredAt)) {
+    throw new Error("Audit timestamp must be canonical UTC");
   }
 
   input.tx
@@ -70,12 +135,19 @@ export function appendAuditEvent(input: AuditEventInput): void {
     .run();
 }
 
-export function runBoundAuditedTransaction<T>(input: {
+export function appendAuditEvent<TAction extends AuditAction>(
+  input: AuditEventInput<TAction>,
+): void {
+  assertNamedActor(input.actor);
+  appendBoundAuditEvent(input);
+}
+
+function runBoundAuditedTransaction<T>(input: {
   db: AppDatabase;
-  actor: AuditActor;
+  actor: BoundAuditActor;
   work: (tx: AuditedTransaction) => T;
 }): T {
-  const actor = { ...input.actor } as AuditActor;
+  const actor = { ...input.actor } as BoundAuditActor;
   return input.db.transaction(
     (tx) => {
       transactionActors.set(tx, actor);
@@ -89,10 +161,35 @@ export function runBoundAuditedTransaction<T>(input: {
   );
 }
 
-export function runAuditedTransaction<T>(input: {
+export function runNamedAuditedTransactionInternal<T>(input: {
   db: AppDatabase;
-  actor: AuditActor;
+  actor: Actor;
   work: (tx: AuditedTransaction) => T;
 }): T {
+  assertNamedActor(input.actor);
   return runBoundAuditedTransaction(input);
+}
+
+export const maintenanceAuditCapability = Object.freeze({
+  append<TAction extends AuditAction>(input: AuditEventDetails<TAction>): void {
+    appendBoundAuditEvent({ ...input, actor: systemAuditActor });
+  },
+  run<T>(input: {
+    db: AppDatabase;
+    work: (tx: AuditedTransaction) => T;
+  }): T {
+    return runBoundAuditedTransaction({
+      db: input.db,
+      actor: systemAuditActor,
+      work: input.work,
+    });
+  },
+});
+
+export function runAuditedTransaction<T>(input: {
+  db: AppDatabase;
+  actor: Actor;
+  work: (tx: AuditedTransaction) => T;
+}): T {
+  return runNamedAuditedTransactionInternal(input);
 }

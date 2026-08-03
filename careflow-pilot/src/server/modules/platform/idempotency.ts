@@ -10,7 +10,7 @@ import type {
 } from "../../../shared/contracts.js";
 import { ApiError } from "../../errors.js";
 import {
-  runBoundAuditedTransaction,
+  runNamedAuditedTransactionInternal,
   type AppDatabase,
   type AuditedTransaction,
 } from "./audit.js";
@@ -64,7 +64,7 @@ export function executeIdempotent<T>(input: {
   assertValidIdempotencyKey(input.key);
   const hash = requestHash(input.operation, input.requestBody);
 
-  return runBoundAuditedTransaction({
+  return runNamedAuditedTransactionInternal({
     db: input.db,
     actor: input.actor,
     work: (tx) => {
