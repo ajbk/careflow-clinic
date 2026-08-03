@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { visitStatusSchema } from "../../../shared/contracts.js";
 import type {
   Actor,
   IntakePayload,
   QueueItemDto,
+  ReviewAllergyBody,
   StartConsultationBody,
   SubmitIntakeBody,
+  VisitSummaryDto,
   VisitWorkspaceDto,
 } from "../../../shared/contracts.js";
 import type { PatientDto } from "../../../shared/contracts.js";
@@ -47,6 +50,12 @@ export interface VisitService {
     visitId: string,
     body: StartConsultationBody,
   ): QueueItemDto;
+  assertAllergyReviewVisit(
+    tx: AuditedTransaction,
+    actor: Actor,
+    patientId: string,
+    body: ReviewAllergyBody,
+  ): VisitSummaryDto;
 }
 
 type VisitRow = typeof visits.$inferSelect;
@@ -374,6 +383,30 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
       const updated = tx.select().from(visits).where(eq(visits.id, visitId)).get();
       if (!updated) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "อัปเดต Visit ไม่สำเร็จ" });
       return toQueueItem(updated, findObservation(tx, visitId), patient, actor);
+    },
+
+    assertAllergyReviewVisit(tx, actor, patientId, body) {
+      const visit = tx
+        .select()
+        .from(visits)
+        .where(and(eq(visits.id, body.payload.visitId), eq(visits.clinicId, "clinic")))
+        .get();
+      if (!visit) throw notFound("ไม่พบ Visit");
+      if (visit.patientId !== patientId) {
+        throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit ของผู้ป่วยรายนี้" });
+      }
+      assertExpectedRevision(visit.revision, body.expectedRevisions.visit, "visit");
+      const allowed = visit.status === "WAITING" || (visit.status === "CONSULTING" && actor.role === "doctor");
+      if (!allowed) {
+        throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่อนุญาตให้ทบทวนข้อมูลแพ้" });
+      }
+      return {
+        id: visit.id,
+        status: visitStatusSchema.parse(visit.status),
+        revision: visit.revision,
+        arrivedAt: visit.arrivedAt,
+        startedAt: visit.startedAt,
+      };
     },
   };
 

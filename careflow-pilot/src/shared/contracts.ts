@@ -151,6 +151,81 @@ export const medicationDecisionDraftKindSchema = z.enum(["UNDECIDED", "ORDER", "
 export const medicationDecisionKindSchema = z.enum(["ORDER", "NO_MEDICATION"]);
 export type AllergySeverity = z.infer<typeof allergySeveritySchema>;
 
+function requiredClinicalText(maximumLength: number) {
+  return z.string().trim().min(1).refine(
+    (value) => Array.from(value).length <= maximumLength,
+    { message: `ต้องมีความยาวไม่เกิน ${maximumLength} ตัวอักษร` },
+  );
+}
+
+export const allergyItemSchema = z.strictObject({
+  substance: requiredClinicalText(200),
+  reaction: requiredClinicalText(300),
+  severity: allergySeveritySchema,
+  note: requiredClinicalText(500).nullable(),
+});
+
+export const allergyAssessmentSchema = z.strictObject({
+  id: z.string().min(1).nullable(),
+  revision: z.number().int().min(0),
+  state: allergyStateSchema,
+  items: z.array(allergyItemSchema),
+  sourceText: z.string().nullable(),
+  reason: z.string().nullable(),
+  reviewedBy: z.strictObject({ id: z.string().min(1), displayName: z.string().min(1) }).nullable(),
+  reviewedAt: z.string().datetime().nullable(),
+});
+export type AllergyAssessmentDto = z.infer<typeof allergyAssessmentSchema>;
+
+export const visitSummarySchema = z.strictObject({
+  id: z.string().min(1),
+  status: visitStatusSchema,
+  revision: z.number().int().min(1),
+  arrivedAt: z.string().datetime(),
+  startedAt: z.string().datetime().nullable(),
+});
+export type VisitSummaryDto = z.infer<typeof visitSummarySchema>;
+
+export const reviewAllergyPayloadSchema = rejectOwnPrototypeKeys(
+  z.strictObject({
+    visitId: z.string().trim().min(1).max(120),
+    state: allergyStateSchema,
+    items: z.array(allergyItemSchema).max(20),
+    sourceText: requiredClinicalText(500),
+    reason: requiredClinicalText(500),
+  }).superRefine((payload, context) => {
+    const expectedLength = payload.state === "PRESENT" ? [1, 20] : [0, 0];
+    if (payload.items.length < expectedLength[0] || payload.items.length > expectedLength[1]) {
+      context.addIssue({
+        code: "custom",
+        path: ["items"],
+        message: payload.state === "PRESENT"
+          ? "ต้องระบุรายการแพ้อย่างน้อย 1 รายการและไม่เกิน 20 รายการ"
+          : "สถานะนี้ต้องไม่มีรายการแพ้",
+      });
+    }
+  }),
+);
+export type ReviewAllergyPayload = z.infer<typeof reviewAllergyPayloadSchema>;
+
+export const reviewAllergyBodySchema = rejectOwnPrototypeKeys(
+  z.strictObject({
+    expectedRevisions: z.strictObject({
+      patient: z.number().int().min(1),
+      visit: z.number().int().min(1),
+    }),
+    payload: reviewAllergyPayloadSchema,
+  }),
+);
+export type ReviewAllergyBody = z.infer<typeof reviewAllergyBodySchema>;
+
+export const allergyReviewResultSchema = z.strictObject({
+  patient: patientSchema,
+  allergy: allergyAssessmentSchema,
+  visit: visitSummarySchema,
+});
+export type AllergyReviewResultDto = z.infer<typeof allergyReviewResultSchema>;
+
 const intakeVitalsSchema = z.strictObject({
   weightKg: z.number().finite().min(1).max(350).nullable(),
   heightCm: z.number().finite().min(30).max(250).nullable(),

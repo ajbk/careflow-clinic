@@ -1,0 +1,335 @@
+import { afterEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
+import { createPatientService, patientAllergyItems, patientAllergyRevisions } from "../../src/server/modules/patient/index.js";
+import { auditEvents } from "../../src/server/modules/platform/index.js";
+import { visits } from "../../src/server/modules/visit/index.js";
+import { cookieFrom, login, seedAccount } from "./helpers/auth.js";
+import { createTestApp } from "./helpers/database.js";
+
+const cleanups: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+});
+
+async function fixture() {
+  const app = await createTestApp();
+  cleanups.push(app.cleanup);
+  const assistant = await seedAccount(app.database, {
+    id: "allergy-assistant-001",
+    username: "allergy-assistant",
+    role: "assistant",
+    displayName: "ผู้ช่วยทดสอบ",
+    mustChangePassword: false,
+  });
+  const doctor = await seedAccount(app.database, {
+    id: "allergy-doctor-001",
+    username: "allergy-doctor",
+    role: "doctor",
+    displayName: "พญ. ทดสอบ",
+    mustChangePassword: false,
+  });
+  return {
+    ...app,
+    assistant,
+    doctor,
+    assistantCookie: cookieFrom(await login(app.app, assistant.username, assistant.password)),
+    doctorCookie: cookieFrom(await login(app.app, doctor.username, doctor.password)),
+  };
+}
+
+async function createPatientAndVisit(test: Awaited<ReturnType<typeof fixture>>) {
+  const patientResponse = await test.app.inject({
+    method: "POST",
+    url: "/api/patients/synthetic",
+    headers: { cookie: test.assistantCookie, "idempotency-key": "allergy-patient-001" },
+    payload: { expectedRevisions: {}, payload: {} },
+  });
+  const patientId = patientResponse.json().data.id as string;
+  const intakeResponse = await test.app.inject({
+    method: "POST",
+    url: "/api/visits/intake",
+    headers: { cookie: test.assistantCookie, "idempotency-key": "allergy-intake-001" },
+    payload: {
+      expectedRevisions: { patient: 1 },
+      payload: {
+        patientId,
+        chiefComplaint: "อาการทดสอบ",
+        vitals: {
+          weightKg: null,
+          heightCm: null,
+          temperatureC: null,
+          systolicMmhg: null,
+          diastolicMmhg: null,
+          heartRateBpm: null,
+          spo2Percent: null,
+        },
+      },
+    },
+  });
+  return { patientId, visitId: intakeResponse.json().data.visit.id as string };
+}
+
+function review(
+  test: Awaited<ReturnType<typeof fixture>>,
+  input: {
+    patientId: string;
+    visitId: string;
+    patientRevision?: number;
+    visitRevision?: number;
+    state?: "UNKNOWN" | "NONE_KNOWN" | "PRESENT";
+    items?: Array<{ substance: string; reaction: string; severity: "UNKNOWN" | "MILD" | "MODERATE" | "SEVERE"; note: string | null }>;
+    sourceText?: string;
+    reason?: string;
+    cookie?: string;
+    key?: string;
+  },
+) {
+  return test.app.inject({
+    method: "POST",
+    url: `/api/patients/${input.patientId}/allergy-revisions`,
+    headers: {
+      cookie: input.cookie ?? test.assistantCookie,
+      "idempotency-key": input.key ?? "allergy-review-001",
+    },
+    payload: {
+      expectedRevisions: { patient: input.patientRevision ?? 1, visit: input.visitRevision ?? 1 },
+      payload: {
+        visitId: input.visitId,
+        state: input.state ?? "NONE_KNOWN",
+        items: input.items ?? [],
+        sourceText: input.sourceText ?? "คำให้การผู้ป่วยทดสอบ",
+        reason: input.reason ?? "ทบทวนก่อนตรวจ",
+      },
+    },
+  });
+}
+
+describe("versioned allergy review", () => {
+  it("appends NONE_KNOWN without coercing the initial UNKNOWN", async () => {
+    const test = await fixture();
+    const { patientId, visitId } = await createPatientAndVisit(test);
+    const patients = createPatientService({ database: test.database });
+
+    expect(patients.getAllergyAssessment(patientId)).toMatchObject({
+      id: null,
+      revision: 0,
+      state: "UNKNOWN",
+      items: [],
+      sourceText: null,
+      reason: null,
+      reviewedBy: null,
+      reviewedAt: null,
+    });
+
+    const response = await review(test, { patientId, visitId });
+    expect(response.statusCode).toBe(201);
+    expect(response.json().data).toMatchObject({
+      patient: { revision: 2 },
+      allergy: { revision: 1, state: "NONE_KNOWN", items: [] },
+      visit: { id: visitId, status: "WAITING", revision: 1 },
+    });
+    expect(patients.getAllergyAssessment(patientId)).toMatchObject({
+      revision: 1,
+      state: "NONE_KNOWN",
+      reviewedBy: { id: test.assistant.actor.id, displayName: "ผู้ช่วยทดสอบ" },
+    });
+
+    const reviewedUnknown = await review(test, {
+      patientId,
+      visitId,
+      patientRevision: 2,
+      state: "UNKNOWN",
+      items: [],
+      sourceText: "ยังไม่สามารถยืนยันข้อมูลได้",
+      reason: "ทบทวนข้อมูลไม่ครบ",
+      key: "allergy-review-unknown-001",
+    });
+    expect(reviewedUnknown.statusCode).toBe(201);
+    expect(reviewedUnknown.json().data).toMatchObject({
+      patient: { revision: 3 },
+      allergy: { revision: 2, state: "UNKNOWN", items: [] },
+    });
+  });
+
+  it("appends PRESENT items while preserving the byte-stable earlier revision", async () => {
+    const test = await fixture();
+    const { patientId, visitId } = await createPatientAndVisit(test);
+    const first = await review(test, { patientId, visitId });
+    expect(first.statusCode).toBe(201);
+    const before = test.database.sqlite
+      .prepare("SELECT id, patient_id, revision, state, source_text, reason, reviewed_by, reviewed_at FROM patient_allergy_revisions WHERE patient_id = ?")
+      .get(patientId);
+
+    const second = await review(test, {
+      patientId,
+      visitId,
+      patientRevision: 2,
+      state: "PRESENT",
+      items: [{ substance: "ยาทดสอบ", reaction: "ผื่น", severity: "MILD", note: "ติดตามอาการ" }],
+      sourceText: "ทบทวนข้อมูลยาแพ้",
+      reason: "แก้ไขข้อมูลก่อนตรวจ",
+      key: "allergy-review-002",
+    });
+
+    expect(second.statusCode).toBe(201);
+    expect(second.json().data).toMatchObject({
+      patient: { revision: 3 },
+      allergy: {
+        revision: 2,
+        state: "PRESENT",
+        items: [{ substance: "ยาทดสอบ", reaction: "ผื่น", severity: "MILD", note: "ติดตามอาการ" }],
+      },
+    });
+    expect(test.database.sqlite
+      .prepare("SELECT id, patient_id, revision, state, source_text, reason, reviewed_by, reviewed_at FROM patient_allergy_revisions WHERE patient_id = ? AND revision = 1")
+      .get(patientId)).toEqual(before);
+    expect(test.database.db.select().from(patientAllergyRevisions).all()).toHaveLength(2);
+    expect(test.database.db.select().from(patientAllergyItems).all()).toHaveLength(1);
+  });
+
+  it("rejects state-item mismatches before a write", async () => {
+    const test = await fixture();
+    const { patientId, visitId } = await createPatientAndVisit(test);
+    const response = await review(test, {
+      patientId,
+      visitId,
+      state: "NONE_KNOWN",
+      items: [{ substance: "ยา", reaction: "ผื่น", severity: "MILD", note: null }],
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json().error.code).toBe("VALIDATION_FAILED");
+    expect(test.database.db.select().from(patientAllergyRevisions).all()).toEqual([]);
+  });
+
+  it("replays identical commands and rejects an idempotency collision", async () => {
+    const test = await fixture();
+    const { patientId, visitId } = await createPatientAndVisit(test);
+    const first = await review(test, { patientId, visitId });
+    const replay = await review(test, { patientId, visitId });
+    const collision = await review(test, {
+      patientId,
+      visitId,
+      sourceText: "ข้อความอื่น",
+    });
+
+    expect(replay.json()).toEqual({ data: first.json().data, replayed: true });
+    expect(collision.statusCode).toBe(409);
+    expect(collision.json().error.code).toBe("IDEMPOTENCY_CONFLICT");
+    expect(test.database.db.select().from(patientAllergyRevisions).all()).toHaveLength(1);
+  });
+
+  it("rejects stale patient and visit revisions with no appended revision", async () => {
+    const test = await fixture();
+    const { patientId, visitId } = await createPatientAndVisit(test);
+    expect((await review(test, { patientId, visitId })).statusCode).toBe(201);
+
+    const stalePatient = await review(test, {
+      patientId,
+      visitId,
+      patientRevision: 1,
+      key: "allergy-stale-patient",
+    });
+    const staleVisit = await review(test, {
+      patientId,
+      visitId,
+      patientRevision: 2,
+      visitRevision: 99,
+      key: "allergy-stale-visit-001",
+    });
+
+    expect(stalePatient.statusCode).toBe(409);
+    expect(stalePatient.json().error).toMatchObject({ code: "REVISION_CONFLICT", currentRevisions: { patient: 2 } });
+    expect(staleVisit.statusCode).toBe(409);
+    expect(staleVisit.json().error).toMatchObject({ code: "REVISION_CONFLICT", currentRevisions: { visit: 1 } });
+    expect(test.database.db.select().from(patientAllergyRevisions).all()).toHaveLength(1);
+  });
+
+  it("stores a required reason without clinical prose in allergy audit metadata", async () => {
+    const test = await fixture();
+    const { patientId, visitId } = await createPatientAndVisit(test);
+    const sourceText = "คำให้การข้อมูลยาแพ้เฉพาะราย";
+    const reason = "ทบทวนก่อนตรวจเฉพาะราย";
+    const response = await review(test, { patientId, visitId, sourceText, reason });
+
+    expect(response.statusCode).toBe(201);
+    const event = test.database.db
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.action, "allergy.updated"))
+      .get();
+    expect(event).toMatchObject({
+      action: "allergy.updated",
+      entityType: "patient",
+      entityId: patientId,
+      entityRevision: 1,
+      reason,
+    });
+    expect(event?.metadataJson).not.toContain(sourceText);
+    expect(event?.metadataJson).not.toContain(reason);
+  });
+
+  it("permits Assistant only in WAITING and Doctor in WAITING or CONSULTING", async () => {
+    const test = await fixture();
+    const { patientId, visitId } = await createPatientAndVisit(test);
+    expect((await review(test, {
+      patientId,
+      visitId,
+      cookie: test.doctorCookie,
+      key: "allergy-doctor-waiting",
+    })).statusCode).toBe(201);
+
+    const start = await test.app.inject({
+      method: "POST",
+      url: `/api/visits/${visitId}/start-consultation`,
+      headers: { cookie: test.doctorCookie, "idempotency-key": "allergy-role-start-001" },
+      payload: { expectedRevisions: { visit: 1 }, payload: {} },
+    });
+    expect(start.statusCode).toBe(200);
+
+    const assistantConsulting = await review(test, {
+      patientId,
+      visitId,
+      patientRevision: 2,
+      visitRevision: 2,
+      key: "allergy-assistant-consulting",
+    });
+    const doctorConsulting = await review(test, {
+      patientId,
+      visitId,
+      patientRevision: 2,
+      visitRevision: 2,
+      cookie: test.doctorCookie,
+      key: "allergy-doctor-consulting",
+    });
+
+    expect(assistantConsulting.statusCode).toBe(409);
+    expect(assistantConsulting.json().error.code).toBe("INVALID_STATE");
+    expect(doctorConsulting.statusCode).toBe(201);
+  });
+
+  it("does not append an allergy revision when Start wins the WAITING race", async () => {
+    const test = await fixture();
+    const { patientId, visitId } = await createPatientAndVisit(test);
+    const [started, staleReview] = await Promise.all([
+      test.app.inject({
+        method: "POST",
+        url: `/api/visits/${visitId}/start-consultation`,
+        headers: { cookie: test.doctorCookie, "idempotency-key": "allergy-race-start-001" },
+        payload: { expectedRevisions: { visit: 1 }, payload: {} },
+      }),
+      review(test, {
+        patientId,
+        visitId,
+        cookie: test.assistantCookie,
+        key: "allergy-race-review-001",
+      }),
+    ]);
+
+    expect(started.statusCode).toBe(200);
+    expect(staleReview.statusCode).toBe(409);
+    expect(staleReview.json().error.code).toMatch(/REVISION_CONFLICT|INVALID_STATE/);
+    expect(test.database.db.select().from(patientAllergyRevisions).all()).toEqual([]);
+    expect(test.database.db.select().from(visits).get()).toMatchObject({ status: "CONSULTING", revision: 2 });
+  });
+});

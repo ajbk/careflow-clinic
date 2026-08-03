@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
-import type { PatientDto } from "../../../shared/contracts.js";
+import { and, asc, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
+import type { AllergyAssessmentDto, Actor, PatientDto, ReviewAllergyPayload } from "../../../shared/contracts.js";
 import type { DatabaseHandle } from "../../db/client.js";
 import { ApiError } from "../../errors.js";
 import {
@@ -11,8 +11,8 @@ import {
   type AuditAction,
   type AuditedTransaction,
 } from "../platform/index.js";
-import type { Actor } from "../../../shared/contracts.js";
-import { patients } from "./schema.js";
+import { staffAccounts } from "../platform/index.js";
+import { patientAllergyItems, patientAllergyRevisions, patients } from "./schema.js";
 
 const SYNTHETIC_COUNTER_KEY = "synthetic_patient";
 const SYNTHETIC_COUNTER_LIMIT = 999_999;
@@ -24,6 +24,14 @@ export interface PatientService {
   getPatientById(id: string): PatientDto | null;
   getPatientsByIds(ids: readonly string[]): Map<string, PatientDto>;
   assertPatientRevision(tx: AppTransaction, id: string, expected: number): PatientDto;
+  getAllergyAssessment(patientId: string): AllergyAssessmentDto;
+  reviewAllergy(
+    tx: AuditedTransaction,
+    actor: Actor,
+    patientId: string,
+    expectedPatientRevision: number,
+    payload: ReviewAllergyPayload,
+  ): { patient: PatientDto; allergy: AllergyAssessmentDto };
 }
 
 export interface PatientServiceOptions {
@@ -32,6 +40,7 @@ export interface PatientServiceOptions {
 }
 
 type PatientRow = typeof patients.$inferSelect;
+type AllergyRevisionRow = typeof patientAllergyRevisions.$inferSelect;
 
 function toDto(row: PatientRow): PatientDto {
   return {
@@ -66,6 +75,98 @@ function assertSearchQuery(query: string): string {
 
 function escapeLike(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
+}
+
+function initialAllergyAssessment(): AllergyAssessmentDto {
+  return {
+    id: null,
+    revision: 0,
+    state: "UNKNOWN",
+    items: [],
+    sourceText: null,
+    reason: null,
+    reviewedBy: null,
+    reviewedAt: null,
+  };
+}
+
+function readAllergyAssessment(
+  database: DatabaseHandle["db"],
+  patientId: string,
+): AllergyAssessmentDto {
+  const revision = database
+    .select({
+      id: patientAllergyRevisions.id,
+      revision: patientAllergyRevisions.revision,
+      state: patientAllergyRevisions.state,
+      sourceText: patientAllergyRevisions.sourceText,
+      reason: patientAllergyRevisions.reason,
+      reviewedAt: patientAllergyRevisions.reviewedAt,
+      reviewedById: staffAccounts.id,
+      reviewedByDisplayName: staffAccounts.displayName,
+    })
+    .from(patientAllergyRevisions)
+    .innerJoin(staffAccounts, eq(staffAccounts.id, patientAllergyRevisions.reviewedBy))
+    .where(and(eq(patientAllergyRevisions.patientId, patientId), eq(staffAccounts.clinicId, "clinic")))
+    .orderBy(desc(patientAllergyRevisions.revision))
+    .limit(1)
+    .get();
+  if (!revision) return initialAllergyAssessment();
+
+  const items = database
+    .select({
+      substance: patientAllergyItems.substance,
+      reaction: patientAllergyItems.reaction,
+      severity: patientAllergyItems.severity,
+      note: patientAllergyItems.note,
+    })
+    .from(patientAllergyItems)
+    .where(eq(patientAllergyItems.allergyRevisionId, revision.id))
+    .orderBy(asc(patientAllergyItems.position))
+    .all();
+  return {
+    id: revision.id,
+    revision: revision.revision,
+    state: revision.state,
+    items,
+    sourceText: revision.sourceText,
+    reason: revision.reason,
+    reviewedBy: { id: revision.reviewedById, displayName: revision.reviewedByDisplayName },
+    reviewedAt: revision.reviewedAt,
+  };
+}
+
+function toAllergyAssessment(
+  tx: AppTransaction,
+  row: AllergyRevisionRow,
+): AllergyAssessmentDto {
+  const reviewer = tx
+    .select({ id: staffAccounts.id, displayName: staffAccounts.displayName })
+    .from(staffAccounts)
+    .where(and(eq(staffAccounts.id, row.reviewedBy), eq(staffAccounts.clinicId, "clinic")))
+    .get();
+  if (!reviewer) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่พบผู้ทบทวนข้อมูลแพ้" });
+  const items = tx
+    .select({
+      substance: patientAllergyItems.substance,
+      reaction: patientAllergyItems.reaction,
+      severity: patientAllergyItems.severity,
+      note: patientAllergyItems.note,
+    })
+    .from(patientAllergyItems)
+    .where(eq(patientAllergyItems.allergyRevisionId, row.id))
+    .orderBy(asc(patientAllergyItems.position))
+    .all();
+  return {
+    id: row.id,
+    revision: row.revision,
+    state: row.state,
+    items,
+    sourceText: row.sourceText,
+    reason: row.reason,
+    reviewedBy: reviewer,
+    reviewedAt: row.reviewedAt,
+  };
 }
 
 function allocateSyntheticCounter(tx: AppTransaction): number {
@@ -194,6 +295,93 @@ export function createPatientService(input: PatientServiceOptions): PatientServi
       }
       assertExpectedRevision(row.revision, expected, "patient");
       return toDto(row);
+    },
+
+    getAllergyAssessment(patientId) {
+      return readAllergyAssessment(input.database.db, patientId);
+    },
+
+    reviewAllergy(tx, actor, patientId, expectedPatientRevision, payload) {
+      this.assertPatientRevision(tx, patientId, expectedPatientRevision);
+      const nextAllergyRevision = (tx
+        .select({ maximum: sql<number>`coalesce(max(${patientAllergyRevisions.revision}), 0)` })
+        .from(patientAllergyRevisions)
+        .where(eq(patientAllergyRevisions.patientId, patientId))
+        .get()?.maximum ?? 0) + 1;
+      const now = clock().toISOString();
+      const allergyRevisionId = idFactory();
+
+      tx.insert(patientAllergyRevisions)
+        .values({
+          id: allergyRevisionId,
+          patientId,
+          revision: nextAllergyRevision,
+          state: payload.state,
+          sourceText: payload.sourceText,
+          reason: payload.reason,
+          reviewedBy: actor.id,
+          reviewedAt: now,
+        })
+        .run();
+      if (payload.items.length > 0) {
+        tx.insert(patientAllergyItems)
+          .values(payload.items.map((item, position) => ({
+            id: idFactory(),
+            allergyRevisionId,
+            position,
+            substance: item.substance,
+            reaction: item.reaction,
+            severity: item.severity,
+            note: item.note,
+          })))
+          .run();
+      }
+
+      const nextPatientRevision = expectedPatientRevision + 1;
+      const updated = tx.update(patients)
+        .set({ revision: nextPatientRevision, updatedAt: now })
+        .where(and(
+          eq(patients.id, patientId),
+          eq(patients.clinicId, "clinic"),
+          eq(patients.revision, expectedPatientRevision),
+        ))
+        .run();
+      if (updated.changes !== 1) {
+        const latest = tx
+          .select()
+          .from(patients)
+          .where(and(eq(patients.id, patientId), eq(patients.clinicId, "clinic")))
+          .get();
+        if (!latest) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบผู้ป่วยสังเคราะห์" });
+        assertExpectedRevision(latest.revision, expectedPatientRevision, "patient");
+        throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "อัปเดตข้อมูลแพ้ไม่สำเร็จ" });
+      }
+      const patient = tx
+        .select()
+        .from(patients)
+        .where(and(eq(patients.id, patientId), eq(patients.clinicId, "clinic")))
+        .get();
+      const created = tx
+        .select()
+        .from(patientAllergyRevisions)
+        .where(eq(patientAllergyRevisions.id, allergyRevisionId))
+        .get();
+      if (!patient || !created) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "บันทึกข้อมูลแพ้ไม่สำเร็จ" });
+
+      appendAuditEvent({
+        tx,
+        actor,
+        id: idFactory(),
+        action: "allergy.updated",
+        entityType: "patient",
+        entityId: patientId,
+        entityRevision: nextAllergyRevision,
+        reason: payload.reason,
+        occurredAt: now,
+        metadata: { allergyRevisionId, state: payload.state, itemCount: payload.items.length },
+      });
+
+      return { patient: toDto(patient), allergy: toAllergyAssessment(tx, created) };
     },
   };
 

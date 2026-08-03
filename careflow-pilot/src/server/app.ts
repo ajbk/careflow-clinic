@@ -15,6 +15,8 @@ import {
 import { createSessionService } from "./modules/platform/index.js";
 import { createPatientService, registerPatientRoutes } from "./modules/patient/index.js";
 import { createVisitService, registerVisitRoutes } from "./modules/visit/index.js";
+import { createClinicalWorkflow } from "./workflows/clinical.js";
+import { registerClinicalRoutes } from "./workflows/clinical-routes.js";
 import { isApiPath, registerClientAssets } from "./static.js";
 
 export interface BuildAppOptions {
@@ -102,6 +104,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     clock: options.clock,
   });
   registerVisitRoutes({ app, database: options.db, visits: visitService });
+  const clinicalWorkflow = createClinicalWorkflow({ patients: patientService, visits: visitService });
+  registerClinicalRoutes({ app, database: options.db, clinical: clinicalWorkflow });
 
   const requestStartedAt = new WeakMap<object, number>();
   app.addHook("onRequest", async (request) => {
