@@ -456,6 +456,9 @@
 .signed-evidence { display: grid; gap: 12px; padding: 24px; border-radius: 16px; background: var(--surface-container-low); }
 .signed-evidence p { margin: 0; }
 .signed-evidence code { overflow-wrap: anywhere; color: var(--on-surface-variant); font-size: 11px; }
+.signed-evidence-record { display: grid; gap: 6px; border-top: 1px solid rgba(112,121,116,.14); padding-top: 12px; }
+.signed-evidence-record h3 { margin: 0; color: var(--primary); font-size: 14px; }
+.signed-evidence-record time { color: var(--on-surface-variant); font-size: 12px; }
 .signed-next-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 16px; border-radius: 14px; background: var(--surface-container); }
 .clinical-note-placeholder-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .clinical-note-placeholder-grid > div { display: grid; min-height: 96px; align-content: start; gap: 5px; border: 1px solid rgba(112, 121, 116, .14); border-radius: 12px; padding: 14px; background: var(--surface-container-low); }

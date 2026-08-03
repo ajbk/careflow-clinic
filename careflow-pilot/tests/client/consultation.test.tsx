@@ -86,6 +86,12 @@ describe("Doctor consultation authoring", () => {
       http.get("/api/medications", () => HttpResponse.json({ data: [medication] })),
     );
     renderRoute();
+    const noteEvidence = await screen.findByLabelText("หลักฐาน Clinical Note ที่ลงนาม");
+    const decisionEvidence = screen.getByLabelText("หลักฐานการตัดสินใจยา ที่ลงนาม");
+    expect(noteEvidence).toHaveTextContent("พญ. ทดสอบ");
+    expect(noteEvidence).toHaveTextContent("a".repeat(64));
+    expect(decisionEvidence).toHaveTextContent("พญ. ทดสอบ");
+    expect(decisionEvidence).toHaveTextContent("b".repeat(64));
     await user.click(await screen.findByRole("button", { name: "แก้ไขการตัดสินใจยา" }));
     expect(screen.getByRole("button", { name: "สั่งยาจากรายการทดสอบ" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "ไม่สั่งยา" })).toBeInTheDocument();

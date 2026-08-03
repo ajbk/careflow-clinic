@@ -36,7 +36,7 @@ async function completeNote(page: Page): Promise<void> {
   await page.getByRole("textbox", { name: "การวินิจฉัย", exact: true }).fill("การวินิจฉัยสังเคราะห์");
 }
 
-async function signDecision(page: Page, kind: DecisionKind): Promise<{ noteHash: string; decisionVersion: string }> {
+async function signDecision(page: Page, kind: DecisionKind): Promise<{ noteHash: string; decisionHash: string; decisionVersion: string }> {
   await completeNote(page);
   if (kind === "ORDER") {
     await page.getByRole("button", { name: "สั่งยาจากรายการทดสอบ" }).click();
@@ -53,13 +53,17 @@ async function signDecision(page: Page, kind: DecisionKind): Promise<{ noteHash:
   const dialog = page.getByRole("dialog", { name: "ยืนยันการลงนาม" });
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "ยืนยันการลงนาม" }).click();
-  const evidence = page.getByRole("region", { name: "หลักฐานลงนาม" });
-  await expect(evidence).toBeVisible();
-  const noteHash = await evidence.locator("code").innerText();
-  const decisionVersion = (await evidence.getByText(/การตัดสินใจยา:/).innerText()).match(/เวอร์ชัน (\d+)/)?.[1] ?? "";
+  const noteEvidence = page.getByRole("region", { name: "หลักฐาน Clinical Note ที่ลงนาม" });
+  const decisionEvidence = page.getByRole("region", { name: "หลักฐานการตัดสินใจยา ที่ลงนาม" });
+  await expect(noteEvidence).toBeVisible();
+  await expect(decisionEvidence).toBeVisible();
+  const noteHash = await noteEvidence.locator("code").innerText();
+  const decisionHash = await decisionEvidence.locator("code").innerText();
+  const decisionVersion = (await decisionEvidence.innerText()).match(/เวอร์ชัน (\d+)/)?.[1] ?? "";
   expect(noteHash).toMatch(/^[a-f0-9]{64}$/);
+  expect(decisionHash).toMatch(/^[a-f0-9]{64}$/);
   expect(decisionVersion).toBe("1");
-  return { noteHash, decisionVersion };
+  return { noteHash, decisionHash, decisionVersion };
 }
 
 for (const journey of [
@@ -83,12 +87,15 @@ for (const journey of [
       await doctorCard.getByRole("button", { name: "เริ่มการตรวจ" }).click();
       await expect(doctorPage).toHaveURL(/\/consultations\/[^/]+$/);
       const consultationPath = new URL(doctorPage.url()).pathname;
+      await expect(doctorPage.locator(".allergy-summary")).toContainText(journey.allergy);
       const signed = await signDecision(doctorPage, journey.name);
 
       await doctorPage.reload();
-      const evidence = doctorPage.getByRole("region", { name: "หลักฐานลงนาม" });
-      await expect(evidence.locator("code")).toHaveText(signed.noteHash);
-      await expect(evidence.getByText(/การตัดสินใจยา:/)).toContainText(`เวอร์ชัน ${signed.decisionVersion}`);
+      const noteEvidence = doctorPage.getByRole("region", { name: "หลักฐาน Clinical Note ที่ลงนาม" });
+      const decisionEvidence = doctorPage.getByRole("region", { name: "หลักฐานการตัดสินใจยา ที่ลงนาม" });
+      await expect(noteEvidence.locator("code")).toHaveText(signed.noteHash);
+      await expect(decisionEvidence.locator("code")).toHaveText(signed.decisionHash);
+      await expect(decisionEvidence).toContainText(`เวอร์ชัน ${signed.decisionVersion}`);
 
       const workspaceDenied = await assistantPage.request.get(`${server.baseURL}/api/visits/${patient.visitId}/workspace`);
       expect(workspaceDenied.status()).toBe(403);
@@ -98,9 +105,14 @@ for (const journey of [
       await expect(assistantPage.getByText(patient.hn, { exact: false })).toHaveCount(0);
 
       await assistantPage.goto(`${server.baseURL}/queue`);
-      await expect(assistantPage.locator(".queue-card").filter({ hasText: patient.hn })).toContainText(journey.expectedStatus);
+      const queueGroup = assistantPage.locator(".queue-column").filter({ has: assistantPage.getByRole("heading", { name: journey.expectedStatus }) });
+      await expect(queueGroup).toHaveCount(1);
+      await expect(queueGroup.locator(".queue-card")).toHaveCount(1);
+      await expect(queueGroup.locator(".queue-card").filter({ hasText: patient.hn })).toHaveCount(1);
       await assistantPage.goto(`${server.baseURL}/overview`);
-      await expect(assistantPage.getByLabel("สรุปสถานะคลินิก")).toContainText(journey.expectedStatus);
+      const metric = assistantPage.locator(".metric-card").filter({ hasText: journey.expectedStatus });
+      await expect(metric).toHaveCount(1);
+      await expect(metric.locator("strong")).toHaveText("1");
     } finally {
       await assistantContext.close();
       await doctorContext.close();
