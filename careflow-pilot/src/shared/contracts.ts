@@ -49,7 +49,7 @@ export const changePasswordBodySchema = z.strictObject({
 export type ChangePasswordBody = z.infer<typeof changePasswordBodySchema>;
 
 export const createSyntheticPatientBodySchema = z.strictObject({
-  expectedRevisions: z.record(z.string().min(1), z.number().int().min(1)),
+  expectedRevisions: z.strictObject({}),
   payload: z.strictObject({}),
 });
 export type CreateSyntheticPatientBody = z.infer<typeof createSyntheticPatientBodySchema>;
