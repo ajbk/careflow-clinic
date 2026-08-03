@@ -184,3 +184,209 @@
     font-size: 12px;
   }
 }
+
+/* Server-connected Intake keeps the frozen card rhythm while making the
+   Patient search/generation boundary explicit. */
+.patient-selection-card {
+  display: grid;
+  gap: 18px;
+}
+
+.patient-search-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 14px;
+}
+
+.patient-search-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.patient-search-input-wrap > svg {
+  position: absolute;
+  left: 14px;
+  z-index: 1;
+  color: var(--on-surface-variant);
+  pointer-events: none;
+}
+
+.patient-search-input {
+  padding-left: 42px;
+}
+
+.synthetic-generation-note,
+.selected-patient-revision,
+.intake-form-hint,
+.patient-search-empty {
+  margin: 0;
+  color: var(--on-surface-variant);
+  font-size: 12px;
+}
+
+.patient-search-results {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  background: var(--surface-container-lowest);
+}
+
+.patient-search-result {
+  display: flex;
+  min-height: 64px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 0;
+  border-bottom: 1px solid rgba(112, 121, 116, 0.14);
+  padding: 10px 14px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.patient-search-result:last-child {
+  border-bottom: 0;
+}
+
+.patient-search-result:hover,
+.patient-search-result:focus-visible {
+  background: var(--surface-container-low);
+}
+
+.patient-search-result-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.patient-search-result-main strong {
+  overflow: hidden;
+  color: var(--primary);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.patient-search-result-main small {
+  color: var(--on-surface-variant);
+  font-size: 11px;
+}
+
+.patient-search-result-action {
+  flex: 0 0 auto;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.selected-patient-panel {
+  overflow: hidden;
+  border: 1px solid rgba(112, 121, 116, 0.16);
+  border-radius: var(--radius-md);
+  background: var(--surface-container-low);
+}
+
+.selected-patient-panel .patient-header {
+  border-bottom-color: rgba(112, 121, 116, 0.12);
+}
+
+.selected-patient-revision {
+  padding: 9px 22px 12px;
+  font-size: 11px;
+}
+
+.patient-selection-empty {
+  display: flex;
+  min-height: 62px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px dashed var(--outline-variant);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  color: var(--on-surface-variant);
+  font-size: 13px;
+  text-align: center;
+}
+
+.intake-error-summary {
+  display: grid;
+  gap: 4px;
+  margin: -8px 0 22px;
+  border: 1px solid rgba(186, 26, 26, 0.22);
+  border-left: 4px solid var(--error);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  background: var(--error-container);
+  color: var(--error);
+  font-size: 13px;
+}
+
+.intake-error-summary > span {
+  color: #712323;
+}
+
+.intake-error-active {
+  border-color: rgba(121, 82, 13, 0.24);
+  border-left-color: #79520d;
+  background: #fff0cf;
+  color: #79520d;
+}
+
+.intake-error-active > span {
+  color: #79520d;
+}
+
+.queue-recovery-link,
+.inline-retry-button {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 40px;
+  align-items: center;
+  border: 0;
+  border-radius: 10px;
+  padding: 7px 11px;
+  background: rgba(255, 255, 255, 0.58);
+  color: inherit;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.queue-recovery-link:hover,
+.inline-retry-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.inline-retry-button {
+  justify-content: center;
+  color: var(--error);
+}
+
+@media (max-width: 620px) {
+  .patient-search-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .patient-search-row .care-button {
+    width: 100%;
+  }
+
+  .patient-search-result {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .patient-search-result-action {
+    font-size: 11px;
+  }
+
+  .selected-patient-revision {
+    padding-inline: 16px;
+  }
+}

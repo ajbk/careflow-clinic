@@ -5,6 +5,7 @@ import { ChangePasswordScreen } from "../auth/ChangePasswordScreen";
 import { AuthScreenLayout, LoginScreen } from "../auth/LoginScreen";
 import { PilotRulesScreen } from "../auth/PilotRulesScreen";
 import { AppShell } from "../components/careflow/AppShell";
+import { IntakeScreen } from "../screens/IntakeScreen";
 import { PilotUnavailableScreen } from "../screens/PilotUnavailableScreen";
 
 function ShellRoute() {
@@ -34,7 +35,7 @@ export const appRoutes: RouteObject[] = [
         element: <AuthGate><ShellRoute /></AuthGate>,
         children: [
           { index: true, element: <AuthGate requiredPermission="visit:read-queue"><PilotUnavailableScreen title="ภาพรวม" /></AuthGate> },
-          { path: "intake", element: <AuthGate requiredPermission="visit:submit-intake"><PilotUnavailableScreen title="รับผู้ป่วย" /></AuthGate> },
+          { path: "intake", element: <AuthGate requiredPermission="visit:submit-intake"><IntakeScreen /></AuthGate> },
           { path: "queue", element: <AuthGate requiredPermission="visit:read-queue"><PilotUnavailableScreen title="คิวผู้ป่วย" /></AuthGate> },
           { path: "consultations/:visitId", element: <AuthGate requiredPermission="visit:start-consultation"><PilotUnavailableScreen title="ห้องตรวจ" /></AuthGate> },
           { path: "dispensing/:visitId", element: <PilotUnavailableScreen title="จัดยา" /> },
