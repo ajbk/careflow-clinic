@@ -14,7 +14,8 @@ async function createQueuedPatient(page: Page, complaint: string): Promise<{ hn:
   await expect(page).toHaveURL(/\/queue$/);
   const card = page.locator(".queue-card").filter({ hasText: hn as string });
   await expect(card).toHaveCount(1);
-  const visitId = await card.getAttribute("aria-label");
+  const visitIdLabel = await card.getAttribute("aria-label");
+  const visitId = visitIdLabel?.trim().match(/\S+$/)?.[0];
   expect(visitId).toBeTruthy();
   return { hn: hn as string, visitId: visitId as string };
 }

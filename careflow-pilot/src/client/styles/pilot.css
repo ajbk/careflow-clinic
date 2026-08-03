@@ -426,7 +426,8 @@
 .consultation-skeleton-large { height: 300px; margin-top: 0; }
 .app-shell-clinical .consultation-page { max-width: var(--content-max); }
 .clinical-workspace-grid { display: grid; grid-template-columns: minmax(240px, 252px) minmax(0, 1fr); align-items: start; gap: 24px; }
-.consultation-patient-rail { position: sticky; top: 96px; display: grid; overflow: hidden; }
+.consultation-patient-rail { position: sticky; top: 96px; display: grid; gap: 16px; }
+.patient-identity { display: grid; overflow: hidden; }
 .consultation-patient-rail .patient-header { align-items: flex-start; flex-direction: column; padding: 20px; }
 .consultation-patient-rail .patient-header-copy { gap: 4px; margin-right: 0; }
 .consultation-patient-rail .status-pill { margin-left: 0; }
@@ -439,6 +440,20 @@
 .consultation-note-panel .section-heading { margin-bottom: 0; }
 .allergy-summary { display: grid; gap: 8px; padding: 16px; border-top: 1px solid rgba(112,121,116,.14); }
 .allergy-summary strong { color: var(--error); }
+.patient-snapshot { display: grid; gap: 12px; padding: 16px; }
+.snapshot-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding-bottom: 4px; }
+.snapshot-heading h2 { margin: 0; color: var(--primary); font-size: 16px; }
+.snapshot-heading > span { color: var(--on-surface-variant); font-size: 11px; }
+.snapshot-fact { display: grid; gap: 7px; border-top: 1px solid rgba(112,121,116,.14); padding-top: 11px; }
+.snapshot-fact-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--on-surface-variant); font-size: 11px; font-weight: 700; }
+.snapshot-fact-value { color: var(--on-surface); font-size: 12px; line-height: 1.5; }
+.snapshot-fact-value p { margin: 0; }
+.snapshot-fact-value ul, .snapshot-visits ul { display: grid; gap: 4px; margin: 0; padding-left: 18px; }
+.snapshot-source { display: flex; flex-wrap: wrap; gap: 5px 8px; color: var(--on-surface-variant); font-size: 10px; }
+.snapshot-source span { color: var(--primary); font-weight: 700; }
+.snapshot-visits li { display: grid; gap: 1px; }
+.snapshot-visits li strong { color: var(--primary); }
+.snapshot-visits li span, .snapshot-visits li time { color: var(--on-surface-variant); font-size: 10px; }
 .clinical-editor, .medication-editor { display: grid; gap: 14px; }
 .diagnosis-editor, .medication-order { display: grid; gap: 10px; }
 .diagnosis-row, .medication-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }

@@ -244,6 +244,54 @@ describe("versioned allergy review", () => {
     expect(stored?.responseJson).not.toContain(input.items[0].note ?? "");
   });
 
+  it("fails closed when a replayed allergy revision was superseded after the first response", async () => {
+    const test = await fixture();
+    const { patientId, visitId } = await createPatientAndVisit(test);
+    const first = await review(test, {
+      patientId,
+      visitId,
+      state: "PRESENT",
+      items: [{ substance: "ยาเดิม", reaction: "ผื่นเดิม", severity: "MILD", note: "บันทึกเดิม" }],
+      sourceText: "ข้อมูลเดิม",
+      reason: "เหตุผลเดิม",
+      key: "allergy-replay-history-001",
+    });
+    expect(first.statusCode).toBe(201);
+
+    const replacement = await review(test, {
+      patientId,
+      visitId,
+      patientRevision: 2,
+      state: "NONE_KNOWN",
+      items: [],
+      sourceText: "ข้อมูลใหม่หลังบันทึกแรก",
+      reason: "ทบทวนใหม่",
+      key: "allergy-replay-history-replacement-001",
+    });
+    expect(replacement.statusCode).toBe(201);
+
+    const replay = await review(test, {
+      patientId,
+      visitId,
+      state: "PRESENT",
+      items: [{ substance: "ยาเดิม", reaction: "ผื่นเดิม", severity: "MILD", note: "บันทึกเดิม" }],
+      sourceText: "ข้อมูลเดิม",
+      reason: "เหตุผลเดิม",
+      key: "allergy-replay-history-001",
+    });
+
+    expect(replay.statusCode).toBe(409);
+    expect(replay.json().error).toMatchObject({
+      code: "REVISION_CONFLICT",
+      currentRevisions: { patient: 3, allergy: 2 },
+    });
+    expect(replay.json().error.messageTh).not.toContain("ข้อมูลใหม่หลังบันทึกแรก");
+    const stored = test.database.db.select().from(idempotencyRecords).all()
+      .find((record) => record.actorId === test.assistant.actor.id && record.key === "allergy-replay-history-001");
+    expect(stored?.responseJson).not.toContain("ข้อมูลเดิม");
+    expect(stored?.responseJson).toContain("safe-replay-reference");
+  });
+
   it("redacts a matching legacy allergy envelope before rebuilding its replay", async () => {
     const test = await fixture();
     const { patientId, visitId } = await createPatientAndVisit(test);

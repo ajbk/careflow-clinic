@@ -218,6 +218,32 @@ describe("consultation draft workflow", () => {
       .toHaveLength(1);
   });
 
+  it("fails closed when a replayed draft revision was replaced after the first response", async () => {
+    const test = await fixture();
+    const visitId = await createConsultingVisit(test);
+    const first = await saveDraft(test, visitId);
+    expect(first.statusCode).toBe(200);
+
+    const replacement = draftBody();
+    replacement.expectedRevisions = { visit: 2, noteDraft: 1, medicationDraft: 1 };
+    replacement.payload.note.subjective = "ฉบับใหม่หลังบันทึกแรก";
+    replacement.payload.medicationDecision = { kind: "NO_MEDICATION", noMedicationReason: "เปลี่ยนการตัดสินใจ" };
+    expect((await saveDraft(test, visitId, replacement, "clinical-draft-replacement-001")).statusCode).toBe(200);
+
+    const replay = await saveDraft(test, visitId);
+
+    expect(replay.statusCode).toBe(409);
+    expect(replay.json().error).toMatchObject({
+      code: "REVISION_CONFLICT",
+      currentRevisions: { noteDraft: 2, medicationDraft: 2 },
+    });
+    expect(replay.json().error.messageTh).not.toContain("ฉบับใหม่หลังบันทึกแรก");
+    const stored = test.database.db.select().from(idempotencyRecords).all()
+      .find((record) => record.actorId === test.doctor.actor.id && record.key === "clinical-draft-001");
+    expect(stored?.responseJson).not.toContain("อาการทดสอบ");
+    expect(stored?.responseJson).toContain("safe-replay-reference");
+  });
+
   it("redacts a matching legacy draft envelope before rebuilding its replay", async () => {
     const test = await fixture();
     const visitId = await createConsultingVisit(test);

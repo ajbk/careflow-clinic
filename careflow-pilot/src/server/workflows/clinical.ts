@@ -387,6 +387,22 @@ export function createClinicalWorkflow(input: {
       if (!note || !medicationDecision) {
         throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่พบข้อมูลร่างสำหรับการเรียกซ้ำ" });
       }
+      // Draft prose is deliberately absent from the idempotency reference. Never replay a newer draft as if it were historical.
+      const currentRevisions: Record<string, number> = {};
+      if (note.revision !== reference.noteDraftRevision) currentRevisions.noteDraft = note.revision;
+      if (medicationDecision.revision !== reference.medicationDraftRevision) {
+        currentRevisions.medicationDraft = medicationDecision.revision;
+      }
+      if (medicationDecision.kind !== reference.medicationDecisionKind) {
+        currentRevisions.medicationDraft = medicationDecision.revision;
+      }
+      if (Object.keys(currentRevisions).length > 0) {
+        throw new ApiError({
+          code: "REVISION_CONFLICT",
+          messageTh: "ข้อมูลร่างสำหรับการเรียกซ้ำถูกแก้ไขแล้ว กรุณาส่งคำสั่งใหม่",
+          currentRevisions,
+        });
+      }
       return { note, medicationDecision };
     },
 
@@ -424,9 +440,26 @@ export function createClinicalWorkflow(input: {
       if (!patient || !visit) {
         throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่พบข้อมูลทบทวนสำหรับการเรียกซ้ำ" });
       }
+      // Allergy and Visit references are revision tokens; a changed token means the historical response is unavailable.
+      const allergy = input.patients.getAllergyAssessment(reference.patientId);
+      const currentRevisions: Record<string, number> = {};
+      if (patient.revision !== reference.patientRevision) currentRevisions.patient = patient.revision;
+      if (allergy.revision !== reference.allergyRevision || allergy.state !== reference.allergyState) {
+        currentRevisions.allergy = allergy.revision;
+      }
+      if (visit.revision !== reference.visitRevision || visit.status !== reference.visitStatus) {
+        currentRevisions.visit = visit.revision;
+      }
+      if (Object.keys(currentRevisions).length > 0) {
+        throw new ApiError({
+          code: "REVISION_CONFLICT",
+          messageTh: "ข้อมูลทบทวนสำหรับการเรียกซ้ำถูกแก้ไขแล้ว กรุณาส่งคำสั่งใหม่",
+          currentRevisions,
+        });
+      }
       return {
         patient,
-        allergy: input.patients.getAllergyAssessment(reference.patientId),
+        allergy,
         visit,
       };
     },

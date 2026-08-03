@@ -33,7 +33,7 @@ afterAll(() => server.close());
 describe("Doctor consultation authoring", () => {
   it("renders UNKNOWN Allergy and four labeled SOAP fields", async () => {
     renderRoute();
-    expect(await screen.findByText("UNKNOWN")).toBeInTheDocument();
+    expect((await screen.findAllByText("UNKNOWN")).length).toBeGreaterThan(0);
     expect(screen.getByLabelText("Subjective (ข้อมูลจากผู้ป่วย)")).toBeInTheDocument();
     expect(screen.getByLabelText("Objective (ผลตรวจ)")).toBeInTheDocument();
     expect(screen.getByLabelText("Assessment (การประเมิน)")).toBeInTheDocument();
@@ -49,6 +49,44 @@ describe("Doctor consultation authoring", () => {
     expect(visitPanel).toHaveTextContent("SpO₂ 98%");
     expect(visitPanel).toHaveTextContent("น้ำหนัก 64.5 กก.");
     expect(visitPanel).toHaveTextContent("ส่วนสูง 168 ซม.");
+  });
+
+  it("renders the complete source-linked patient snapshot, including UNKNOWN facts", async () => {
+    const snapshotWorkspace = {
+      ...workspace,
+      patientSnapshot: {
+        allergy: {
+          id: "allergy-1", revision: 2, state: "PRESENT" as const,
+          items: [{ substance: "เพนิซิลลิน", reaction: "ผื่น", severity: "MILD" as const, note: null }],
+          sourceText: "ผู้ป่วยแจ้งประวัติ", reason: "ทบทวนก่อนตรวจ",
+          reviewedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, reviewedAt: "2026-08-03T01:30:00.000Z",
+        },
+        activeProblems: { state: "VALUE" as const, value: ["ไข้หวัด"], source: { type: "CLINICAL_NOTE" as const, id: "note-previous", occurredAt: "2026-08-02T08:00:00.000Z" } },
+        currentMedicationContext: { state: "VALUE" as const, value: ["พาราเซตามอล 500 mg"], source: { type: "MEDICATION_DECISION" as const, id: "decision-previous", occurredAt: "2026-08-02T08:05:00.000Z" } },
+        latestRelevantPlan: { state: "VALUE" as const, value: "ติดตามอาการใน 7 วัน", source: { type: "CLINICAL_NOTE" as const, id: "note-previous", occurredAt: "2026-08-02T08:00:00.000Z" } },
+        pendingFollowUp: { state: "UNKNOWN" as const, value: null, source: null },
+        recentVisits: [{ visitId: "visit-previous", noteId: "note-previous", signedAt: "2026-08-02T08:00:00.000Z", diagnoses: ["ไข้หวัด"], plan: "ติดตามอาการใน 7 วัน" }],
+      },
+    };
+    server.use(http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: snapshotWorkspace })));
+
+    renderRoute();
+
+    const snapshot = await screen.findByRole("region", { name: "Patient Snapshot" });
+    expect(snapshot).toHaveTextContent("ประวัติแพ้ยา");
+    expect(snapshot).toHaveTextContent("เพนิซิลลิน");
+    expect(snapshot).toHaveTextContent("ปัญหาสำคัญ");
+    expect(snapshot).toHaveTextContent("ไข้หวัด");
+    expect(snapshot).toHaveTextContent("บริบทยาปัจจุบัน");
+    expect(snapshot).toHaveTextContent("พาราเซตามอล 500 mg");
+    expect(snapshot).toHaveTextContent("แผนล่าสุดที่เกี่ยวข้อง");
+    expect(snapshot).toHaveTextContent("ติดตามอาการใน 7 วัน");
+    expect(snapshot).toHaveTextContent("ติดตามต่อไป");
+    expect(snapshot).toHaveTextContent("UNKNOWN");
+    expect(snapshot).toHaveTextContent("CLINICAL_NOTE");
+    expect(snapshot).toHaveTextContent("MEDICATION_DECISION");
+    expect(snapshot).toHaveTextContent("2 สิงหาคม 2569 เวลา 15:00");
+    expect(snapshot).toHaveTextContent("Visit visit-previous");
   });
 
   it("requires an explicit medication decision and saves a selected catalog order", async () => {
@@ -69,6 +107,33 @@ describe("Doctor consultation authoring", () => {
     await user.type(screen.getByLabelText("วิธีใช้ยา"), "รับประทานหลังอาหาร");
     await user.click(screen.getByRole("button", { name: "บันทึกร่าง" }));
     await waitFor(() => expect(body).toMatchObject({ payload: { medicationDecision: { kind: "ORDER", items: [{ medicationId: "DEMO-MED-001", medicationRevision: 2, quantity: 10 }] } } }));
+  });
+
+  it("maps server fieldErrors into the Note and medication editors", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.post("/api/visits/visit-42/consultation-draft", () => HttpResponse.json({
+        error: {
+          code: "VALIDATION_FAILED", messageTh: "ข้อมูลไม่ถูกต้อง", requestId: "request-1",
+          fieldErrors: {
+            "payload.note.subjective": "กรุณาระบุข้อมูลจากผู้ป่วย",
+            "payload.medicationDecision.noMedicationReason": "กรุณาระบุเหตุผลที่ไม่สั่งยา",
+          },
+        },
+      }, { status: 422 })),
+    );
+    renderRoute();
+    await user.type(await screen.findByLabelText("Subjective (ข้อมูลจากผู้ป่วย)"), "อาการ");
+    await user.type(screen.getByLabelText("Objective (ผลตรวจ)"), "ผลตรวจ");
+    await user.type(screen.getByLabelText("Assessment (การประเมิน)"), "ประเมิน");
+    await user.type(screen.getByLabelText("Plan (แผนการดูแล)"), "แผน");
+    await user.type(screen.getByLabelText("การวินิจฉัย"), "โรคทดสอบ");
+    await user.click(screen.getByRole("button", { name: "ไม่สั่งยา" }));
+    await user.type(screen.getByLabelText("เหตุผลที่ไม่สั่งยา"), "เหตุผล");
+    await user.click(screen.getByRole("button", { name: "บันทึกร่าง" }));
+
+    expect(await screen.findByText("กรุณาระบุข้อมูลจากผู้ป่วย")).toBeInTheDocument();
+    expect(screen.getByText("กรุณาระบุเหตุผลที่ไม่สั่งยา")).toBeInTheDocument();
   });
 
   it("offers an explicit catalog-backed ORDER revision for signed evidence", async () => {
@@ -95,6 +160,27 @@ describe("Doctor consultation authoring", () => {
     await user.click(await screen.findByRole("button", { name: "แก้ไขการตัดสินใจยา" }));
     expect(screen.getByRole("button", { name: "สั่งยาจากรายการทดสอบ" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "ไม่สั่งยา" })).toBeInTheDocument();
+  });
+
+  it.each([
+    ["AWAITING_PREPARATION", "ไปหน้าจัดยา (ยังไม่พร้อม)", "/dispensing/visit-42", "จัดยา"],
+    ["AWAITING_CHARGE", "ไปหน้าชำระเงิน (ยังไม่พร้อม)", "/checkout/visit-42", "ชำระเงิน"],
+  ] as const)("offers truthful next-step navigation for %s", async (status, linkName, href, unavailableTitle) => {
+    const signedWorkspace = {
+      ...workspace,
+      visit: { ...visit, status, revision: 9 },
+      signedClinicalNote: { id: "note-1", visitId: visit.id, version: 1, subjective: "ไข้", objective: "38.2", assessment: "ไข้หวัด", plan: "พักผ่อน", diagnoses: ["ไข้หวัด"], sourceDraftRevision: 1, revisionReason: null, supersedesId: null, signedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, signedAt: "2026-08-03T02:00:00.000Z", contentHash: "a".repeat(64) },
+      medicationDecision: { id: "decision-1", visitId: visit.id, version: 1, kind: status === "AWAITING_PREPARATION" ? "ORDER" as const : "NO_MEDICATION" as const, noMedicationReason: status === "AWAITING_CHARGE" ? "ไม่จำเป็นต้องใช้ยา" : null, items: status === "AWAITING_PREPARATION" ? [{ id: "DEMO-MED-001", displayName: "พาราเซตามอล", strengthText: "500 mg", dosageFormText: "tablet", canonicalUnit: "tablet", revision: 1, quantity: 10, directionsTh: "รับประทานหลังอาหาร" }] : [], revisionReason: null, supersedesId: null, signedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, signedAt: "2026-08-03T02:00:00.000Z", contentHash: "b".repeat(64) },
+      allowedActions: ["AMEND_NOTE", "REVISE_MEDICATION_DECISION"] as const,
+    };
+    server.use(http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: signedWorkspace })));
+    const router = renderRoute();
+    const link = await screen.findByRole("link", { name: linkName });
+    expect(link).toHaveAttribute("href", href);
+    await userEvent.setup().click(link);
+    expect(await screen.findByRole("heading", { name: unavailableTitle })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(href);
+    expect(screen.getByText("ส่วนนี้ยังไม่เปิดใช้ใน Pilot milestone ปัจจุบัน")).toBeInTheDocument();
   });
 
   it("keeps an incomplete medication decision local and writes no browser storage", async () => {

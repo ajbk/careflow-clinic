@@ -442,7 +442,7 @@ describe("connected shared queue workflow", () => {
     expect(screen.getByRole("region", { name: "Clinical Note" })).toBeInTheDocument();
     expect(screen.getByText(patient.displayName)).toBeInTheDocument();
     expect(screen.getByText(/มีไข้และไอ/)).toBeInTheDocument();
-    expect(screen.getByText("UNKNOWN")).toBeInTheDocument();
+    expect(screen.getAllByText("UNKNOWN").length).toBeGreaterThan(0);
     expect(screen.getByLabelText("Subjective (ข้อมูลจากผู้ป่วย)")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "บันทึกร่าง" })).toBeInTheDocument();
   });
