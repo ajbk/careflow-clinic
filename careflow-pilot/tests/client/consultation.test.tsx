@@ -59,4 +59,34 @@ describe("Doctor consultation authoring", () => {
     await user.click(screen.getByRole("button", { name: "บันทึกร่าง" }));
     await waitFor(() => expect(body).toMatchObject({ payload: { medicationDecision: { kind: "ORDER", items: [{ medicationId: "DEMO-MED-001", medicationRevision: 2, quantity: 10 }] } } }));
   });
+
+  it("offers an explicit catalog-backed ORDER revision for signed evidence", async () => {
+    const user = userEvent.setup();
+    const medication = { id: "DEMO-MED-001", displayName: "พาราเซตามอล", strengthText: "500 mg", dosageFormText: "tablet", canonicalUnit: "tablet", revision: 2 };
+    const signedWorkspace = {
+      ...workspace,
+      visit: { ...visit, status: "AWAITING_ORDER_REVISION" as const, revision: 9 },
+      signedClinicalNote: { id: "note-1", visitId: visit.id, version: 1, subjective: "ไข้", objective: "38.2", assessment: "ไข้หวัด", plan: "พักผ่อน", diagnoses: ["ไข้หวัด"], sourceDraftRevision: 1, revisionReason: null, supersedesId: null, signedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, signedAt: "2026-08-03T02:00:00.000Z", contentHash: "a".repeat(64) },
+      medicationDecision: { id: "decision-1", visitId: visit.id, version: 1, kind: "ORDER" as const, noMedicationReason: null, items: [{ ...medication, quantity: 10, directionsTh: "รับประทานหลังอาหาร" }], revisionReason: null, supersedesId: null, signedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, signedAt: "2026-08-03T02:00:00.000Z", contentHash: "b".repeat(64) },
+      allowedActions: ["AMEND_NOTE", "REVISE_MEDICATION_DECISION"] as const,
+    };
+    server.use(
+      http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: signedWorkspace })),
+      http.get("/api/medications", () => HttpResponse.json({ data: [medication] })),
+    );
+    renderRoute();
+    await user.click(await screen.findByRole("button", { name: "แก้ไขการตัดสินใจยา" }));
+    expect(screen.getByRole("button", { name: "สั่งยาจากรายการทดสอบ" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ไม่สั่งยา" })).toBeInTheDocument();
+  });
+
+  it("keeps an incomplete medication decision local and writes no browser storage", async () => {
+    const user = userEvent.setup();
+    const localWrite = vi.spyOn(Storage.prototype, "setItem");
+    renderRoute();
+    await user.click(await screen.findByRole("button", { name: "สั่งยาจากรายการทดสอบ" }));
+    expect(screen.getByRole("button", { name: "บันทึกร่าง" })).toBeDisabled();
+    expect(screen.getByText("กรุณาระบุรายการยาและวิธีใช้ หรือเหตุผลที่ไม่สั่งยา")).toBeInTheDocument();
+    expect(localWrite).not.toHaveBeenCalled();
+  });
 });
