@@ -5,6 +5,7 @@ import { ChangePasswordScreen } from "../auth/ChangePasswordScreen";
 import { AuthScreenLayout, LoginScreen } from "../auth/LoginScreen";
 import { PilotRulesScreen } from "../auth/PilotRulesScreen";
 import { AppShell } from "../components/careflow/AppShell";
+import { RoleLandingScreen } from "../screens/RoleLandingScreen";
 import { OverviewScreen } from "../screens/OverviewScreen";
 import { QueueScreen } from "../screens/QueueScreen";
 import { ConsultationScreen } from "../screens/ConsultationScreen";
@@ -37,10 +38,11 @@ export const appRoutes: RouteObject[] = [
       {
         element: <AuthGate><ShellRoute /></AuthGate>,
         children: [
-          { index: true, element: <AuthGate requiredPermission="visit:read-queue"><OverviewScreen /></AuthGate> },
+          { index: true, element: <RoleLandingScreen /> },
           { path: "intake", element: <AuthGate requiredPermission="visit:submit-intake"><IntakeScreen /></AuthGate> },
           { path: "queue", element: <AuthGate requiredPermission="visit:read-queue"><QueueScreen /></AuthGate> },
-          { path: "consultations/:visitId", element: <AuthGate requiredPermission="visit:read-queue"><ConsultationScreen /></AuthGate> },
+          { path: "overview", element: <AuthGate requiredPermission="visit:read-queue"><OverviewScreen /></AuthGate> },
+          { path: "consultations/:visitId", element: <AuthGate requiredPermission="visit:start-consultation"><ConsultationScreen /></AuthGate> },
           { path: "dispensing/:visitId", element: <PilotUnavailableScreen title="จัดยา" /> },
           { path: "dispensing/:visitId/labels", element: <PilotUnavailableScreen title="ฉลากยา" /> },
           { path: "checkout/:visitId", element: <PilotUnavailableScreen title="ชำระเงิน" /> },

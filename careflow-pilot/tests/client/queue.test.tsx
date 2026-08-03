@@ -255,7 +255,7 @@ describe("connected shared queue workflow", () => {
   });
 
   it("shows live Overview counts and marks unsupported medication, payment, and stock cards unavailable", async () => {
-    renderRoute("/");
+    renderRoute("/overview");
     expect(await screen.findByRole("heading", { name: "ภาพรวมคลินิก" })).toBeInTheDocument();
     expect((await screen.findAllByText("รอตรวจ")).length).toBeGreaterThan(0);
     expect((await screen.findAllByText("กำลังตรวจ")).length).toBeGreaterThan(0);
@@ -266,7 +266,7 @@ describe("connected shared queue workflow", () => {
   it("keeps Overview intake unavailable while the queue read is pending", async () => {
     let resolveQueue!: (response: Response) => void;
     server.use(http.get("/api/queue", () => new Promise((resolve) => { resolveQueue = resolve; })));
-    renderRoute("/");
+    renderRoute("/overview");
     expect(await screen.findByRole("heading", { name: "ภาพรวมคลินิก" })).toBeInTheDocument();
     expect(await screen.findByText("กำลังโหลดคิวผู้ป่วย")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /รับผู้ป่วย/ })).not.toBeInTheDocument();
@@ -321,7 +321,7 @@ describe("connected shared queue workflow", () => {
 
   it("renders an explicit permission-denied state when Overview dashboard access is forbidden", async () => {
     server.use(http.get("/api/dashboard/today", () => jsonError("FORBIDDEN", "ไม่มีสิทธิ์ดูภาพรวม", 403)));
-    renderRoute("/");
+    renderRoute("/overview");
     expect(await screen.findByText("ไม่มีสิทธิ์ดูภาพรวม")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("บัญชีนี้ไม่มีสิทธิ์เข้าถึงข้อมูลคิวของคลินิก");
   });

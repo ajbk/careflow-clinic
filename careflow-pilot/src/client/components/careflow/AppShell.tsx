@@ -4,43 +4,32 @@ import {
   HeartPulse,
   LayoutDashboard,
   Menu,
-  PackageOpen,
   UsersRound,
   X,
 } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
+import { roleWorkspaceFor, type WorkspaceNavIcon } from "../../app/role-workspace";
 import { useAuth } from "../../auth/AuthProvider";
 
-type NavIcon = "dashboard" | "queue" | "intake" | "inventory";
-type NavPermission = "patient:create-synthetic" | "visit:read-queue" | "visit:submit-intake" | "visit:start-consultation";
-
-const icons: Record<NavIcon, typeof LayoutDashboard> = {
+const icons: Record<WorkspaceNavIcon, typeof LayoutDashboard> = {
   dashboard: LayoutDashboard,
   queue: UsersRound,
   intake: ClipboardPlus,
-  inventory: PackageOpen,
 };
-
-const navItems: Array<{ href: string; label: string; labelEn: string; icon: NavIcon; permission?: NavPermission }> = [
-  { href: "/", label: "ภาพรวม", labelEn: "Overview", icon: "dashboard", permission: "visit:read-queue" },
-  { href: "/queue", label: "คิวผู้ป่วย", labelEn: "Queue", icon: "queue", permission: "visit:read-queue" },
-  { href: "/intake", label: "รับผู้ป่วย", labelEn: "Intake", icon: "intake", permission: "visit:submit-intake" },
-];
 
 export function AppShell({ children }: { children: ReactNode }) {
   const auth = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const { pathname } = useLocation();
-  const permissions = auth.session?.permissions ?? [];
-  const visibleNavItems = navItems.filter((item) => !item.permission || permissions.includes(item.permission));
+  const workspace = roleWorkspaceFor(auth.session?.user.role ?? "assistant");
   const roleLabel = auth.session?.user.role === "doctor" ? "แพทย์" : "ผู้ช่วย";
 
   const nav = (
     <nav aria-label="เมนูหลัก" className="sidebar-nav">
-      {visibleNavItems.map((item) => {
+      {workspace.navItems.map((item) => {
         const Icon = icons[item.icon];
-        const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+        const active = pathname.startsWith(item.href);
         return (
           <Link
             className={`sidebar-link ${active ? "sidebar-link-active" : ""}`}

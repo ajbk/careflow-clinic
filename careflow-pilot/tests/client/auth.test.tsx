@@ -28,6 +28,15 @@ const session = {
   },
 };
 
+const assistantSession = {
+  ...session,
+  data: {
+    ...session.data,
+    user: { ...session.data.user, id: "assistant-1", username: "assistant", displayName: "ผู้ช่วยทดสอบ", role: "assistant" as const },
+    permissions: ["patient:read", "visit:read-queue", "visit:submit-intake" as const],
+  },
+};
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -99,17 +108,20 @@ describe("auth boundary", () => {
     expect(screen.getByRole("heading", { name: /เปลี่ยนรหัสผ่าน/ })).toBeInTheDocument();
   });
 
-  it("shows permission denied for an Assistant opening the Doctor consultation route", async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      ...session,
-      data: {
-        ...session.data,
-        user: { ...session.data.user, role: "assistant" },
-        permissions: ["patient:read", "visit:read-queue", "visit:submit-intake"],
-      },
-    }), { status: 200 }));
+  it("denies Assistant Consultation before requesting clinical data", async () => {
+    let workspaceRequests = 0;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/auth/session") return new Response(JSON.stringify(assistantSession), { status: 200 });
+      if (path === "/api/visits/visit-1/workspace") {
+        workspaceRequests += 1;
+        return new Response(JSON.stringify({ error: { code: "FORBIDDEN", messageTh: "ไม่มีสิทธิ์", requestId: "r" } }), { status: 403 });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
     renderApp("/consultations/visit-1", fetchImpl);
-    await waitFor(() => expect(screen.getByRole("heading", { name: /ไม่มีสิทธิ์/ })).toBeInTheDocument());
+    expect(await screen.findByRole("heading", { name: /ไม่มีสิทธิ์/ })).toBeInTheDocument();
+    expect(workspaceRequests).toBe(0);
   });
 
   it("clears protected cache when the session query itself returns 401", async () => {
