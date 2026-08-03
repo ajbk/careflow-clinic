@@ -129,6 +129,29 @@ describe("synthetic patient registry", () => {
     expect(fixture.database.db.select().from(auditEvents).all()).toHaveLength(0);
   });
 
+  it("rejects deeply nested JSON without overflowing the validation guard", async () => {
+    const fixture = await authenticatedPatientApp();
+    let nested = "{}";
+    for (let depth = 0; depth < 5_000; depth += 1) nested = `{"nested":${nested}}`;
+    const rawBody = `{"expectedRevisions":{},"payload":${nested}}`;
+
+    const response = await fixture.app.inject({
+      method: "POST",
+      url: "/api/patients/synthetic",
+      payload: rawBody,
+      headers: {
+        cookie: fixture.cookie,
+        "idempotency-key": "patient-deep-001",
+        "content-type": "application/json",
+      },
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json().error.code).toBe("VALIDATION_FAILED");
+    expect(fixture.database.db.select().from(patients).all()).toHaveLength(0);
+    expect(fixture.database.db.select().from(auditEvents).all()).toHaveLength(0);
+  });
+
   it("bounds search queries by Unicode code points rather than UTF-16 units", () => {
     expect(patientSearchQuerySchema.safeParse({ q: "😀".repeat(80) }).success).toBe(true);
     expect(patientSearchQuerySchema.safeParse({ q: "😀".repeat(81) }).success).toBe(false);

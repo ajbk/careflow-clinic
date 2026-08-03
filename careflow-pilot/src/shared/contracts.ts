@@ -3,13 +3,23 @@ import { z } from "zod";
 const invalidPrototypeKey = Symbol("invalid-prototype-key");
 
 function hasOwnPrototypeKey(value: unknown, seen = new Set<object>()): boolean {
-  if (typeof value !== "object" || value === null) return false;
-  if (Object.prototype.hasOwnProperty.call(value, "__proto__")) return true;
-  if (seen.has(value)) return false;
-  seen.add(value);
-  if (Array.isArray(value)) return value.some((item) => hasOwnPrototypeKey(item, seen));
-  const record = value as Record<string, unknown>;
-  return Object.keys(record).some((key) => hasOwnPrototypeKey(record[key], seen));
+  const pending: unknown[] = [value];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (typeof current !== "object" || current === null) continue;
+    if (Object.prototype.hasOwnProperty.call(current, "__proto__")) return true;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    if (Array.isArray(current)) {
+      for (let index = current.length - 1; index >= 0; index -= 1) {
+        pending.push(current[index]);
+      }
+      continue;
+    }
+    const record = current as Record<string, unknown>;
+    for (const key of Object.keys(record)) pending.push(record[key]);
+  }
+  return false;
 }
 
 function rejectOwnPrototypeKeys<T extends z.ZodType>(schema: T) {
