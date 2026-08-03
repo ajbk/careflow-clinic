@@ -48,6 +48,40 @@ export const changePasswordBodySchema = z.strictObject({
 });
 export type ChangePasswordBody = z.infer<typeof changePasswordBodySchema>;
 
+export const createSyntheticPatientBodySchema = z.strictObject({
+  expectedRevisions: z.record(z.string().min(1), z.number().int().min(1)),
+  payload: z.strictObject({}),
+});
+export type CreateSyntheticPatientBody = z.infer<typeof createSyntheticPatientBodySchema>;
+
+export const patientSchema = z.strictObject({
+  id: z.string().min(1),
+  hn: z.string().regex(/^DEMO-[0-9]{6}$/),
+  displayName: z.string().min(1),
+  phone: z.string().regex(/^000000[0-9]{4}$/),
+  birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  sex: z.enum(["female", "male", "unknown"]),
+  revision: z.number().int().min(1),
+  createdAt: z.string().datetime(),
+});
+export type PatientDto = z.infer<typeof patientSchema>;
+
+export const patientCommandResponseSchema = z.strictObject({
+  data: patientSchema,
+  replayed: z.boolean(),
+});
+export type PatientCommandResponse = z.infer<typeof patientCommandResponseSchema>;
+
+export const patientSearchQuerySchema = z.strictObject({
+  q: z.string().trim().min(2).max(80),
+});
+export type PatientSearchQuery = z.infer<typeof patientSearchQuerySchema>;
+
+export const patientSearchResponseSchema = z.strictObject({
+  data: z.array(patientSchema),
+});
+export type PatientSearchResponse = z.infer<typeof patientSearchResponseSchema>;
+
 export type Permission = z.infer<typeof permissionSchema>;
 
 export interface IdempotentEnvelope<T> {

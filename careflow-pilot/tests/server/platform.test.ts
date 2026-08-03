@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import { eq } from "drizzle-orm";
 import * as auditModule from "../../src/server/modules/platform/audit.js";
 import * as platform from "../../src/server/modules/platform/index.js";
 import {
@@ -140,7 +141,9 @@ describe("idempotent audited transactions", () => {
       body: { data: { id: "entity-001", revision: 1 }, replayed: true },
     });
     expect(work).toHaveBeenCalledTimes(1);
-    expect(database.db.select().from(clinicCounters).all()).toHaveLength(1);
+    expect(
+      database.db.select().from(clinicCounters).all().filter((row) => row.key !== "synthetic_patient"),
+    ).toHaveLength(1);
     expect(database.db.select().from(auditEvents).all()).toHaveLength(1);
     expect(database.db.select().from(idempotencyRecords).get()).toMatchObject({
       requestHash: "3e3bd32ed1c1c3f075d297d066e534e737d85a8dc6c63bcaa31e3c625711031a",
@@ -188,7 +191,9 @@ describe("idempotent audited transactions", () => {
       expect.objectContaining({ code: "IDEMPOTENCY_CONFLICT", statusCode: 409 }),
     );
     expect(work).toHaveBeenCalledTimes(1);
-    expect(database.db.select().from(clinicCounters).all()).toHaveLength(1);
+    expect(
+      database.db.select().from(clinicCounters).all().filter((row) => row.key !== "synthetic_patient"),
+    ).toHaveLength(1);
     expect(database.db.select().from(auditEvents).all()).toHaveLength(1);
     expect(database.db.select().from(idempotencyRecords).all()).toHaveLength(1);
   });
@@ -231,7 +236,11 @@ describe("idempotent audited transactions", () => {
         operation: "test.update.v1",
         requestBody: { expectedRevisions: { entity: 1 }, payload: { value: 3 } },
         work: (tx) => {
-          const target = tx.select().from(clinicCounters).get();
+          const target = tx
+            .select()
+            .from(clinicCounters)
+            .where(eq(clinicCounters.key, "revision-target"))
+            .get();
           assertExpectedRevision(target?.value, 1);
           tx.update(clinicCounters).set({ value: 3 }).run();
           appendTestAudit(tx, actor, "revision-target");
@@ -245,7 +254,13 @@ describe("idempotent audited transactions", () => {
         currentRevisions: { entity: 2 },
       }),
     );
-    expect(database.db.select().from(clinicCounters).get()).toMatchObject({ value: 2 });
+    expect(
+      database.db
+        .select()
+        .from(clinicCounters)
+        .where(eq(clinicCounters.key, "revision-target"))
+        .get(),
+    ).toMatchObject({ value: 2 });
     expect(database.db.select().from(auditEvents).all()).toHaveLength(0);
     expect(database.db.select().from(idempotencyRecords).all()).toHaveLength(0);
   });
@@ -276,7 +291,9 @@ describe("idempotent audited transactions", () => {
         },
       }),
     ).toThrow("injected work failure");
-    expect(database.db.select().from(clinicCounters).all()).toHaveLength(0);
+    expect(
+      database.db.select().from(clinicCounters).all().filter((row) => row.key !== "synthetic_patient"),
+    ).toHaveLength(0);
     expect(database.db.select().from(auditEvents).all()).toHaveLength(0);
     expect(database.db.select().from(idempotencyRecords).all()).toHaveLength(0);
   });
@@ -312,7 +329,9 @@ describe("idempotent audited transactions", () => {
         },
       }),
     ).toThrow("Named actor required");
-    expect(database.db.select().from(clinicCounters).all()).toHaveLength(0);
+    expect(
+      database.db.select().from(clinicCounters).all().filter((row) => row.key !== "synthetic_patient"),
+    ).toHaveLength(0);
     expect(database.db.select().from(auditEvents).all()).toHaveLength(0);
     expect(database.db.select().from(idempotencyRecords).all()).toHaveLength(0);
   });

@@ -13,6 +13,7 @@ import {
   type PasswordVerifier,
 } from "./auth/routes.js";
 import { createSessionService } from "./modules/platform/index.js";
+import { createPatientService, registerPatientRoutes } from "./modules/patient/index.js";
 
 export interface BuildAppOptions {
   db: DatabaseHandle;
@@ -81,6 +82,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     passwordVerifier: options.passwordVerifier,
     passwordHasher: options.passwordHasher,
   });
+  const patientService = createPatientService({ database: options.db, clock: options.clock });
+  registerPatientRoutes({ app, database: options.db, patients: patientService });
 
   const requestStartedAt = new WeakMap<object, number>();
   app.addHook("onRequest", async (request) => {
