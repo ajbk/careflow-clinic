@@ -47,6 +47,12 @@ function errorResponse(code: "VALIDATION_FAILED" | "IDEMPOTENCY_CONFLICT", messa
   return HttpResponse.json({ error: { code, messageTh, requestId: "request-1" } }, { status: code === "VALIDATION_FAILED" ? 422 : 409 });
 }
 
+function tomorrowInBangkok(): string {
+  const tomorrow = new Date();
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit" }).format(tomorrow);
+}
+
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 beforeEach(() => server.resetHandlers(
   http.get("/api/inventory", () => HttpResponse.json({ data: inventory })),
@@ -83,16 +89,23 @@ describe("Inventory screens", () => {
     ["IDEMPOTENCY_CONFLICT", "คำขอรับยานี้ขัดแย้งกับรายการเดิม"],
   ] as const)("preserves the receiving draft after %s", async (code, messageTh) => {
     const user = userEvent.setup();
-    server.use(http.post("/api/inventory/receipts", () => errorResponse(code, messageTh)));
+    const idempotencyKeys: string[] = [];
+    server.use(http.post("/api/inventory/receipts", ({ request }) => {
+      idempotencyKeys.push(request.headers.get("Idempotency-Key") ?? "");
+      return errorResponse(code, messageTh);
+    }));
     renderInventory("/inventory/receive");
 
     const medicationSearch = await screen.findByRole("combobox", { name: "ค้นหายา" });
     await user.type(medicationSearch, "พารา");
+    expect(await screen.findByRole("listbox", { name: "ผลการค้นหายา" })).toHaveClass("stock-medication-results");
     await user.click(await screen.findByRole("option", { name: /พาราเซตามอล/ }));
     await user.type(screen.getByRole("spinbutton", { name: "จำนวนที่รับ" }), "25");
     await user.type(screen.getByRole("textbox", { name: "เลขที่ล็อต" }), "PCM-2608");
     await user.type(screen.getByRole("textbox", { name: /ผู้ผลิต|ผู้จัดจำหน่าย/ }), "องค์การเภสัชกรรม");
-    await user.type(screen.getByLabelText("วันหมดอายุ"), "2026-10-01");
+    const expiry = screen.getByLabelText("วันหมดอายุ");
+    expect(expiry).toHaveAttribute("min", tomorrowInBangkok());
+    await user.type(expiry, "2026-10-01");
     await user.click(screen.getByRole("button", { name: "ยืนยันการรับยา" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(messageTh);
@@ -101,5 +114,9 @@ describe("Inventory screens", () => {
     expect(screen.getByRole("textbox", { name: "เลขที่ล็อต" })).toHaveValue("PCM-2608");
     expect(screen.getByRole("textbox", { name: /ผู้ผลิต|ผู้จัดจำหน่าย/ })).toHaveValue("องค์การเภสัชกรรม");
     expect(screen.getByLabelText("วันหมดอายุ")).toHaveValue("2026-10-01");
+    await user.click(screen.getByRole("button", { name: "ยืนยันการรับยา" }));
+    await screen.findByRole("alert");
+    expect(idempotencyKeys).toHaveLength(2);
+    expect(idempotencyKeys[1]).toBe(idempotencyKeys[0]);
   });
 });

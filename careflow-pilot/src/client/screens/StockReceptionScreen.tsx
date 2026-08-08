@@ -21,6 +21,12 @@ function todayInBangkok(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 }
 
+function tomorrowInBangkok(): string {
+  const tomorrow = new Date();
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit" }).format(tomorrow);
+}
+
 function messageFor(error: unknown): string {
   if (isApiError(error)) return error.messageTh;
   return "ยังบันทึกรับยาไม่ได้ กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่";
@@ -89,13 +95,13 @@ export function StockReceptionScreen(): ReactElement {
             <label className="field" htmlFor="inventory-medication-search"><span className="field-label">ค้นหายา</span><div className="medication-search"><Search aria-hidden="true" size={18} /><input id="inventory-medication-search" className="care-input" role="combobox" aria-autocomplete="list" aria-expanded={Boolean(search.data?.length && !selected)} aria-controls="inventory-medication-options" value={draft.medicationSearch} onChange={(event) => change("medicationSearch", event.target.value)} placeholder="พิมพ์อย่างน้อย 2 ตัวอักษร" disabled={receive.isPending} /></div>
               {search.isFetching ? <span className="field-hint">กำลังค้นหาทะเบียนยา…</span> : null}
               {search.error ? <span className="field-error">{messageFor(search.error)}</span> : null}
-              {search.data?.length && !selected ? <div id="inventory-medication-options" className="medication-results" role="listbox" aria-label="ผลการค้นหายา">{search.data.map((medication) => <button key={medication.id} role="option" aria-selected="false" type="button" onClick={() => chooseMedication(medication)}><strong>{medication.displayName}</strong><small>{medication.strengthText} · {medication.dosageFormText} · {medication.canonicalUnit}</small></button>)}</div> : null}
+              {search.data?.length && !selected ? <div id="inventory-medication-options" className="stock-medication-results" role="listbox" aria-label="ผลการค้นหายา">{search.data.map((medication) => <button key={medication.id} role="option" aria-selected="false" type="button" onClick={() => chooseMedication(medication)}><strong>{medication.displayName}</strong><small>{medication.strengthText} · {medication.dosageFormText} · {medication.canonicalUnit}</small></button>)}</div> : null}
             </label>
             <Field label="จำนวนที่รับ" type="number" min="1" step="1" value={draft.quantity} onChange={(event) => change("quantity", event.target.value)} placeholder="เช่น 100" disabled={receive.isPending} />
             <Field label="หน่วยนับ (ตามทะเบียนยา)" value={selected?.canonicalUnit ?? ""} readOnly placeholder="เลือกยาเพื่อแสดงหน่วยนับ" />
             <Field label="ผู้ผลิต / ผู้จัดจำหน่าย" value={draft.supplierName} onChange={(event) => change("supplierName", event.target.value)} placeholder="เช่น องค์การเภสัชกรรม" disabled={receive.isPending} />
             <Field label="เลขที่ล็อต" value={draft.lotNumber} onChange={(event) => change("lotNumber", event.target.value)} placeholder="เช่น PCM-2608" disabled={receive.isPending} />
-            <Field label="วันหมดอายุ" type="date" min={todayInBangkok()} value={draft.expiryDate} onChange={(event) => change("expiryDate", event.target.value)} disabled={receive.isPending} />
+            <Field label="วันหมดอายุ" type="date" min={tomorrowInBangkok()} value={draft.expiryDate} onChange={(event) => change("expiryDate", event.target.value)} disabled={receive.isPending} />
             <TextAreaField className="form-span-full" label="หมายเหตุ" value={draft.note} onChange={(event) => change("note", event.target.value)} placeholder="ถ้ามี" disabled={receive.isPending} />
           </div>
           {error ? <p className="stock-error" role="alert">{error}</p> : null}
