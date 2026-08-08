@@ -165,6 +165,104 @@ describe("Doctor consultation authoring", () => {
     expect(screen.getByRole("button", { name: "ทบทวนประวัติแพ้" })).toBeEnabled();
   });
 
+  it("requires the latest local edits to be saved before signing persisted drafts", async () => {
+    const user = userEvent.setup();
+    const persistedWorkspace = {
+      ...workspace,
+      consultationDraft: {
+        note: {
+          id: "note-draft", visitId: visit.id, revision: 1,
+          subjective: "มีไข้", objective: "38.2 องศา", assessment: "ไข้หวัด", plan: "พักผ่อน", diagnoses: ["ไข้หวัด"],
+          updatedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, updatedAt: "2026-08-03T02:00:00.000Z",
+        },
+        medicationDecision: {
+          id: "med-draft", visitId: visit.id, revision: 1, kind: "NO_MEDICATION" as const,
+          noMedicationReason: "ดูแลตามอาการ", items: [] as const,
+          updatedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, updatedAt: "2026-08-03T02:00:00.000Z",
+        },
+      },
+    };
+    server.use(http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: persistedWorkspace })));
+    renderRoute();
+
+    const sign = await screen.findByRole("button", { name: "ลงนามและส่งต่อ" });
+    expect(sign).toBeEnabled();
+    await user.type(screen.getByLabelText("Subjective (ข้อมูลจากผู้ป่วย)"), " และไอมากขึ้น");
+
+    expect(sign).toBeDisabled();
+    expect(screen.getByText(/มีการแก้ไขที่ยังไม่บันทึก/)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "ยืนยันการลงนาม" })).not.toBeInTheDocument();
+  });
+
+  it("keeps signing disabled when persisted note evidence is incomplete", async () => {
+    const incompleteWorkspace = {
+      ...workspace,
+      consultationDraft: {
+        note: {
+          id: "note-draft", visitId: visit.id, revision: 1,
+          subjective: "มีไข้", objective: "", assessment: "ไข้หวัด", plan: "พักผ่อน", diagnoses: ["ไข้หวัด"],
+          updatedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, updatedAt: "2026-08-03T02:00:00.000Z",
+        },
+        medicationDecision: {
+          id: "med-draft", visitId: visit.id, revision: 1, kind: "NO_MEDICATION" as const,
+          noMedicationReason: "ดูแลตามอาการ", items: [] as const,
+          updatedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, updatedAt: "2026-08-03T02:00:00.000Z",
+        },
+      },
+    };
+    server.use(http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: incompleteWorkspace })));
+    renderRoute();
+
+    expect(await screen.findByRole("button", { name: "ลงนามและส่งต่อ" })).toBeDisabled();
+  });
+
+  it("resets visit-specific form state when navigating between visits with matching draft revisions", async () => {
+    const user = userEvent.setup();
+    let savedBody: unknown;
+    const nextPatient = { ...patient, id: "patient-43", hn: "DEMO-000043", displayName: "ผู้ป่วยสังเคราะห์ 000043" };
+    const nextVisit = { ...visit, id: "visit-43" };
+    const nextWorkspace = {
+      ...workspace,
+      patient: nextPatient,
+      visit: nextVisit,
+      intake: { ...workspace.intake, id: "intake-43", chiefComplaint: "เวียนศีรษะ" },
+    };
+    server.use(
+      http.get("/api/visits/visit-43/workspace", () => HttpResponse.json({ data: nextWorkspace })),
+      http.post("/api/visits/visit-43/consultation-draft", async ({ request }) => {
+        savedBody = await request.json();
+        return HttpResponse.json({
+          data: {
+            note: {
+              id: "note-draft-43", visitId: nextVisit.id, revision: 1,
+              subjective: "ข้อความของ Visit B", objective: "", assessment: "", plan: "", diagnoses: [],
+              updatedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, updatedAt: "2026-08-03T02:10:00.000Z",
+            },
+            medicationDecision: {
+              id: "med-draft-43", visitId: nextVisit.id, revision: 1, kind: "UNDECIDED", noMedicationReason: null, items: [],
+              updatedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, updatedAt: "2026-08-03T02:10:00.000Z",
+            },
+          },
+          replayed: false,
+        });
+      }),
+    );
+    const router = renderRoute();
+    await user.type(await screen.findByLabelText("Subjective (ข้อมูลจากผู้ป่วย)"), "ข้อความของ Visit A");
+
+    await act(async () => { await router.navigate("/consultations/visit-43"); });
+
+    expect(await screen.findByText("ผู้ป่วยสังเคราะห์ 000043")).toBeInTheDocument();
+    const subjective = screen.getByLabelText("Subjective (ข้อมูลจากผู้ป่วย)");
+    expect(subjective).toHaveValue("");
+    await user.type(subjective, "ข้อความของ Visit B");
+    await user.click(screen.getByRole("button", { name: "บันทึกร่าง" }));
+    await waitFor(() => expect(savedBody).toMatchObject({
+      expectedRevisions: { visit: 8, noteDraft: 0, medicationDraft: 0 },
+      payload: { note: { subjective: "ข้อความของ Visit B" } },
+    }));
+  });
+
   it("renders the complete source-linked patient snapshot, including UNKNOWN facts", async () => {
     const snapshotWorkspace = {
       ...workspace,

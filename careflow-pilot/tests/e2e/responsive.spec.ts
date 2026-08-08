@@ -67,6 +67,10 @@ for (const viewport of viewports) {
       await assistantPage.keyboard.press("Space");
       const allergyDialog = assistantPage.getByRole("dialog", { name: "ทบทวนประวัติแพ้ยา" });
       await expect(allergyDialog).toBeVisible();
+      await expect.poll(() => assistantPage.evaluate(() => {
+        const topLayer = document.elementFromPoint(window.innerWidth / 2, 32);
+        return Boolean(topLayer?.closest(".dialog-backdrop"));
+      })).toBe(true);
       await allergyDialog.getByRole("button", { name: "ยกเลิก" }).click();
 
       await loginAndAcknowledge(doctorPage, server.baseURL, "doctor");
