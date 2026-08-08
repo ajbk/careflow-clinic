@@ -135,7 +135,7 @@
 **Interfaces:**
 - Consumes the running pilot routes and seeded synthetic accounts/medications from Tasks 1–3.
 
-- [ ] **Step 1: Write the failing Playwright flow.** Add one test that logs in as assistant, acknowledges the pilot if needed, opens Inventory, visits Receive, searches `DEMO`, selects a medication, enters quantity `12`, lot `E2E-2608`, a future expiry, and supplier, submits, then asserts the dashboard shows `12` and `LOW`. In a second browser context, log in as doctor, assert Inventory is visible/readable, and direct receipt submission is rejected by the server.
+- [ ] **Step 1: Write the failing Playwright flow.** Add one test that logs in as assistant, acknowledges the pilot if needed, opens Inventory, visits Receive, searches `DEMO`, selects a medication, enters quantity `10`, lot `E2E-2608`, a future expiry, and supplier, submits, then asserts the dashboard shows `10` and `LOW`. In a second browser context, log in as doctor, assert Inventory is visible/readable, and direct receipt submission is rejected by the server.
 
 - [ ] **Step 2: Run the new E2E test and verify RED.** Run `npm run test:e2e -- tests/e2e/inventory-foundation.spec.ts`; expected failure is the unavailable inventory routes or missing API.
 
