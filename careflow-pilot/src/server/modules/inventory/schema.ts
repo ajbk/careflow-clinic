@@ -75,18 +75,21 @@ export const inventoryStockMovements = sqliteTable(
     id: text("id").primaryKey(),
     clinicId: text("clinic_id").notNull().references(() => clinicConfig.id),
     lotId: text("lot_id").notNull().references(() => inventoryLots.id),
-    movementType: text("movement_type", { enum: ["RECEIPT"] }).notNull(),
+    movementType: text("movement_type", { enum: ["RECEIPT", "DISPENSE"] }).notNull(),
     quantityDelta: integer("quantity_delta").notNull(),
-    sourceType: text("source_type", { enum: ["RECEIPT"] }).notNull(),
-    sourceId: text("source_id").notNull().references(() => inventoryReceipts.id),
+    sourceType: text("source_type", { enum: ["RECEIPT", "DISPENSE"] }).notNull(),
+    // Polymorphic source validated by database triggers. A static FK here would
+    // incorrectly force DISPENSE movements to reference receipts.
+    sourceId: text("source_id").notNull(),
     reason: text("reason").notNull().default(""),
     occurredAt: text("occurred_at").notNull(),
     actorId: text("actor_id").notNull().references(() => staffAccounts.id),
   },
   (table) => [
-    check("inventory_stock_movements_movement_type_check", sql`${table.movementType} = 'RECEIPT'`),
-    check("inventory_stock_movements_quantity_delta_check", sql`${table.quantityDelta} BETWEEN 1 AND 999999`),
-    check("inventory_stock_movements_source_type_check", sql`${table.sourceType} = 'RECEIPT'`),
+    check("inventory_stock_movements_movement_type_check", sql`${table.movementType} IN ('RECEIPT', 'DISPENSE')`),
+    check("inventory_stock_movements_quantity_delta_check", sql`${table.quantityDelta} BETWEEN -999999 AND 999999 AND ${table.quantityDelta} <> 0`),
+    check("inventory_stock_movements_source_type_check", sql`${table.sourceType} IN ('RECEIPT', 'DISPENSE')`),
+    check("inventory_stock_movements_shape_check", sql`(${table.movementType} = 'RECEIPT' AND ${table.sourceType} = 'RECEIPT' AND ${table.quantityDelta} > 0) OR (${table.movementType} = 'DISPENSE' AND ${table.sourceType} = 'DISPENSE' AND ${table.quantityDelta} < 0)`),
     check("inventory_stock_movements_reason_check", sql`length(${table.reason}) <= 500`),
   ],
 );

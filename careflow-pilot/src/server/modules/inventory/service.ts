@@ -66,6 +66,16 @@ export interface InventoryService {
     visitId: string,
     reason: string,
   ): InventoryReservationDto | null;
+  consumeReservationForDispense(
+    tx: AppTransaction,
+    actor: Actor,
+    input: {
+      visitId: string;
+      reservationId: string;
+      dispenseId: string;
+      lines: Array<{ id: string; lotId: string; quantity: number }>;
+    },
+  ): void;
 }
 
 export interface InventoryServiceOptions {
@@ -458,6 +468,8 @@ function assertReason(reason: string): string {
 export function createInventoryService(input: InventoryServiceOptions): InventoryService {
   const clock = input.clock ?? (() => new Date());
   const idFactory = input.idFactory ?? randomUUID;
+  let generatedInventoryId = 0;
+  const nextInventoryId = () => `${idFactory()}:inventory:${++generatedInventoryId}`;
   const medicationService = input.medicationService ?? createMedicationService({
     database: input.database,
     clock,
@@ -619,7 +631,9 @@ export function createInventoryService(input: InventoryServiceOptions): Inventor
       }
 
       const now = clock().toISOString();
-      const reservationId = idFactory();
+      const reservationCandidate = idFactory();
+      const reservationId = tx.select({ id: inventoryReservations.id }).from(inventoryReservations)
+        .where(eq(inventoryReservations.id, reservationCandidate)).get() ? nextInventoryId() : reservationCandidate;
       tx.insert(inventoryReservations).values({
         id: reservationId,
         clinicId: "clinic",
@@ -633,8 +647,12 @@ export function createInventoryService(input: InventoryServiceOptions): Inventor
         releasedBy: null,
         releaseReason: null,
       }).run();
-      tx.insert(inventoryReservationAllocations).values(allocations.map((allocation, position) => ({
-        id: idFactory(),
+      tx.insert(inventoryReservationAllocations).values(allocations.map((allocation, position) => {
+        const candidate = position === 0 ? idFactory() : nextInventoryId();
+        const allocationId = tx.select({ id: inventoryReservationAllocations.id }).from(inventoryReservationAllocations)
+          .where(eq(inventoryReservationAllocations.id, candidate)).get() ? nextInventoryId() : candidate;
+        return {
+        id: allocationId,
         reservationId,
         medicationOrderItemId: allocation.orderItem.id,
         medicationId: allocation.orderItem.medicationId,
@@ -645,7 +663,7 @@ export function createInventoryService(input: InventoryServiceOptions): Inventor
         expiryDateSnapshot: allocation.lot.expiryDate,
         unitSnapshot: allocation.orderItem.unitSnapshot,
         allocatedAt: now,
-      }))).run();
+      }; })).run();
       const changed = tx.update(visits)
         .set({ status: "PREPARING", revision: visit.revision + 1 })
         .where(and(
@@ -721,6 +739,48 @@ export function createInventoryService(input: InventoryServiceOptions): Inventor
       const released = tx.select().from(inventoryReservations).where(eq(inventoryReservations.id, reservation.id)).get();
       if (!released) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ยกเลิกรายการจองไม่สำเร็จ" });
       return readReservation(tx, released);
+    },
+
+    consumeReservationForDispense(tx, actor, input) {
+      const reservation = tx.select().from(inventoryReservations).where(and(
+        eq(inventoryReservations.id, input.reservationId),
+        eq(inventoryReservations.clinicId, "clinic"),
+        eq(inventoryReservations.visitId, input.visitId),
+        eq(inventoryReservations.status, "ACTIVE"),
+      )).get();
+      if (!reservation) throw reservationError("รายการจองยานี้ไม่พร้อมส่งมอบ");
+      const allocations = tx.select().from(inventoryReservationAllocations)
+        .where(eq(inventoryReservationAllocations.reservationId, reservation.id))
+        .orderBy(asc(inventoryReservationAllocations.position), asc(inventoryReservationAllocations.id)).all();
+      if (allocations.length === 0 || allocations.length !== input.lines.length) {
+        throw reservationError("รายการจองยาไม่ครบสำหรับการส่งมอบ");
+      }
+      const linesById = new Map(input.lines.map((line) => [line.id, line]));
+      const allocationTotals = new Map<string, number>();
+      for (const allocation of allocations) allocationTotals.set(allocation.lotId, (allocationTotals.get(allocation.lotId) ?? 0) + allocation.quantity);
+      const lineTotals = new Map<string, number>();
+      for (const line of input.lines) lineTotals.set(line.lotId, (lineTotals.get(line.lotId) ?? 0) + line.quantity);
+      if ([...allocationTotals.entries()].some(([lotId, quantity]) => lineTotals.get(lotId) !== quantity) || linesById.size !== input.lines.length) {
+        throw reservationError("รายการส่งมอบไม่ตรงกับรายการจองยา");
+      }
+      const date = clinicDate(clock());
+      const balances = readLotBalances(tx);
+      for (const [lotId, quantity] of allocationTotals) {
+        const balance = balances.find((entry) => entry.lot.id === lotId);
+        if (!balance || balance.lot.status !== "AVAILABLE" || balance.lot.expiryDate <= date || balance.onHand < quantity || balance.onHand < balance.reserved) {
+          throw reservationError("ล็อตยาสำหรับส่งมอบไม่พร้อมใช้งาน");
+        }
+      }
+      const now = clock().toISOString();
+      tx.insert(inventoryStockMovements).values(input.lines.map((line) => ({
+        id: nextInventoryId(), clinicId: "clinic", lotId: line.lotId, movementType: "DISPENSE" as const,
+        quantityDelta: -line.quantity, sourceType: "DISPENSE" as const, sourceId: line.id,
+        reason: "", occurredAt: now, actorId: actor.id,
+      }))).run();
+      const changed = tx.update(inventoryReservations).set({
+        status: "CONSUMED", consumedAt: now, consumedBy: actor.id, consumedDispenseId: input.dispenseId,
+      }).where(and(eq(inventoryReservations.id, reservation.id), eq(inventoryReservations.status, "ACTIVE"))).run();
+      if (changed.changes !== 1) throw reservationError("รายการจองยาถูกเปลี่ยนแปลงแล้ว");
     },
   };
 }

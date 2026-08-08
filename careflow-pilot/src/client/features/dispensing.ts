@@ -8,6 +8,9 @@ import {
   type FulfillmentConfirmationBody,
   type FulfillmentPickListDto,
   type FulfillmentPrintBody,
+  type FulfillmentReleaseBody,
+  type FulfillmentRejectBody,
+  type FulfillmentHandoffBody,
 } from "../../shared/contracts";
 import { queryKeys } from "../app/query-client";
 import { ApiClient, apiClient as defaultApiClient } from "../lib/api-client";
@@ -22,6 +25,9 @@ export type PrintLabelAttempt = CommandAttempt<FulfillmentPrintBody["payload"], 
 export type ConfirmAllocationAttempt = CommandAttempt<FulfillmentConfirmationBody["payload"], FulfillmentConfirmationBody["expectedRevisions"]>;
 export type CompletePreparationAttempt = CommandAttempt<FulfillmentCompletePreparationBody["payload"], FulfillmentCompletePreparationBody["expectedRevisions"]>;
 export type AbandonPreparationAttempt = CommandAttempt<FulfillmentAbandonPreparationBody["payload"], FulfillmentAbandonPreparationBody["expectedRevisions"]>;
+export type ReleaseAttempt = CommandAttempt<FulfillmentReleaseBody["payload"], FulfillmentReleaseBody["expectedRevisions"]>;
+export type RejectAttempt = CommandAttempt<FulfillmentRejectBody["payload"], FulfillmentRejectBody["expectedRevisions"]>;
+export type HandoffAttempt = CommandAttempt<FulfillmentHandoffBody["payload"], FulfillmentHandoffBody["expectedRevisions"]>;
 
 export function getDispensingPickList(client: ApiClient = defaultApiClient, visitId: string, signal?: AbortSignal): Promise<FulfillmentPickListDto> {
   return client.get(`/api/dispensing/${encodeURIComponent(visitId)}`, pickListResponseSchema, signal).then((result) => result.data);
@@ -59,6 +65,25 @@ export function createCompletePreparationAttempt(data: FulfillmentPickListDto): 
 export function createAbandonPreparationAttempt(data: FulfillmentPickListDto, reason: string): AbandonPreparationAttempt {
   const preparation = requiredPreparation(data);
   return createCommandAttempt({ visit: data.visit.revision, preparation: preparation.revision }, { preparationId: preparation.id, reason: reason.trim() });
+}
+
+function requiredCompletedPreparation(data: FulfillmentPickListDto) {
+  if (!data.preparation || data.preparation.status !== "COMPLETED") throw new Error("A completed preparation is required");
+  return data.preparation;
+}
+
+export function createReleaseAttempt(data: FulfillmentPickListDto): ReleaseAttempt {
+  const preparation = requiredCompletedPreparation(data);
+  return createCommandAttempt({ visit: data.visit.revision, preparation: preparation.revision }, { preparationId: preparation.id });
+}
+
+export function createRejectAttempt(data: FulfillmentPickListDto, reason: string): RejectAttempt {
+  const preparation = requiredCompletedPreparation(data);
+  return createCommandAttempt({ visit: data.visit.revision, preparation: preparation.revision }, { preparationId: preparation.id, reason: reason.trim() });
+}
+
+export function createHandoffAttempt(data: FulfillmentPickListDto): HandoffAttempt {
+  return createCommandAttempt({ visit: data.visit.revision }, {});
 }
 
 function invalidateAfterCommand(queryClient: ReturnType<typeof useQueryClient>, visitId: string, data: FulfillmentPickListDto): void {
@@ -106,3 +131,6 @@ export function usePrintLabel(client: ApiClient = defaultApiClient) {
 export function useConfirmAllocation(client: ApiClient = defaultApiClient) { return useCommandMutation<FulfillmentConfirmationBody["payload"], FulfillmentConfirmationBody["expectedRevisions"]>(client, (visitId) => `/api/dispensing/${encodeURIComponent(visitId)}/preparation-confirmations`); }
 export function useCompletePreparation(client: ApiClient = defaultApiClient) { return useCommandMutation<FulfillmentCompletePreparationBody["payload"], FulfillmentCompletePreparationBody["expectedRevisions"]>(client, (visitId) => `/api/dispensing/${encodeURIComponent(visitId)}/complete-preparation`); }
 export function useAbandonPreparation(client: ApiClient = defaultApiClient) { return useCommandMutation<FulfillmentAbandonPreparationBody["payload"], FulfillmentAbandonPreparationBody["expectedRevisions"]>(client, (visitId) => `/api/dispensing/${encodeURIComponent(visitId)}/reservation-release`); }
+export function useRelease(client: ApiClient = defaultApiClient) { return useCommandMutation<FulfillmentReleaseBody["payload"], FulfillmentReleaseBody["expectedRevisions"]>(client, (visitId) => `/api/dispensing/${encodeURIComponent(visitId)}/release`); }
+export function useReject(client: ApiClient = defaultApiClient) { return useCommandMutation<FulfillmentRejectBody["payload"], FulfillmentRejectBody["expectedRevisions"]>(client, (visitId) => `/api/dispensing/${encodeURIComponent(visitId)}/reject`); }
+export function useHandoff(client: ApiClient = defaultApiClient) { return useCommandMutation<FulfillmentHandoffBody["payload"], FulfillmentHandoffBody["expectedRevisions"]>(client, (visitId) => `/api/dispensing/${encodeURIComponent(visitId)}/handoff`); }

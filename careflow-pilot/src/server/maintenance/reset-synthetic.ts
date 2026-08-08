@@ -93,7 +93,7 @@ const appendOnlyTables = [
 ] as const;
 
 function appendOnlyTriggerSql(table: (typeof appendOnlyTables)[number], operation: "update" | "delete"): string {
-  const indent = table === "inventory_reservation_allocations" || table.startsWith("fulfillment_") ? "  " : "\t";
+  const indent = table === "inventory_reservation_allocations" || table === "inventory_stock_movements" || table.startsWith("fulfillment_") ? "  " : "\t";
   return `CREATE TRIGGER \`${table}_block_${operation}\`
 BEFORE ${operation.toUpperCase()} ON \`${table}\`
 BEGIN

@@ -46,6 +46,18 @@ function copyMigrationsThrough0008(target: string): string {
   return oldPath;
 }
 
+function copyMigrationsThrough0010(target: string): string {
+  const source = join(process.cwd(), "drizzle");
+  const oldPath = join(target, "drizzle-0010");
+  cpSync(source, oldPath, { recursive: true });
+  rmSync(join(oldPath, "0011_dispense_ledger.sql"));
+  const journalPath = join(oldPath, "meta", "_journal.json");
+  const journal = JSON.parse(readFileSync(journalPath, "utf8")) as { entries: Array<{ idx: number }> };
+  journal.entries = journal.entries.filter((entry) => entry.idx < 11);
+  writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+  return oldPath;
+}
+
 function seedPopulated0008Database(sqlite: Database.Database): void {
   const now = "2026-08-09T00:00:00.000Z";
   const hash = "a".repeat(64);
@@ -116,6 +128,26 @@ it("migrates a populated 0008 database to current fulfillment persistence with f
     expect(sqlite.prepare("SELECT count(*) FROM fulfillment_label_versions WHERE medication_decision_id = 'upgrade-decision'").pluck().get()).toBe(1);
     expect(sqlite.prepare("SELECT count(*) FROM fulfillment_label_items WHERE medication_order_item_id = 'upgrade-order-item'").pluck().get()).toBe(1);
     expect(sqlite.prepare("SELECT status, revision FROM fulfillment_preparations WHERE reservation_id = 'upgrade-reservation'").get()).toEqual({ status: "ACTIVE", revision: 1 });
+  } finally {
+    sqlite.close();
+  }
+});
+
+it("migrates a populated 0010 ledger to DISPENSE support without disabling foreign keys or changing receipt rows", () => {
+  const { directory, databasePath } = temporaryDatabase();
+  const oldMigrations = copyMigrationsThrough0010(directory);
+  const sqlite = new Database(databasePath);
+  try {
+    sqlite.pragma("foreign_keys = ON");
+    const db = drizzle(sqlite);
+    migrate(db, { migrationsFolder: oldMigrations });
+    seedPopulated0008Database(sqlite);
+    const before = sqlite.prepare("SELECT id, lot_id, movement_type, quantity_delta, source_type, source_id FROM inventory_stock_movements WHERE id = 'upgrade-movement'").get();
+    migrate(db, { migrationsFolder: join(process.cwd(), "drizzle") });
+    expect(sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
+    expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(sqlite.prepare("SELECT id, lot_id, movement_type, quantity_delta, source_type, source_id FROM inventory_stock_movements WHERE id = 'upgrade-movement'").get()).toEqual(before);
+    expect(() => sqlite.prepare("UPDATE inventory_stock_movements SET quantity_delta = 4 WHERE id = 'upgrade-movement'").run()).toThrow(/append-only/i);
   } finally {
     sqlite.close();
   }

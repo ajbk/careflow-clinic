@@ -908,6 +908,24 @@ export const fulfillmentAbandonPreparationBodySchema = rejectOwnPrototypeKeys(z.
 }));
 export type FulfillmentAbandonPreparationBody = z.infer<typeof fulfillmentAbandonPreparationBodySchema>;
 
+export const fulfillmentReleaseBodySchema = rejectOwnPrototypeKeys(z.strictObject({
+  expectedRevisions: z.strictObject({ visit: z.number().int().min(1), preparation: z.number().int().min(1) }),
+  payload: z.strictObject({ preparationId: fulfillmentIdSchema }),
+}));
+export type FulfillmentReleaseBody = z.infer<typeof fulfillmentReleaseBodySchema>;
+
+export const fulfillmentRejectBodySchema = rejectOwnPrototypeKeys(z.strictObject({
+  expectedRevisions: z.strictObject({ visit: z.number().int().min(1), preparation: z.number().int().min(1) }),
+  payload: z.strictObject({ preparationId: fulfillmentIdSchema, reason: fulfillmentTextSchema(500) }),
+}));
+export type FulfillmentRejectBody = z.infer<typeof fulfillmentRejectBodySchema>;
+
+export const fulfillmentHandoffBodySchema = rejectOwnPrototypeKeys(z.strictObject({
+  expectedRevisions: z.strictObject({ visit: z.number().int().min(1) }),
+  payload: z.strictObject({}),
+}));
+export type FulfillmentHandoffBody = z.infer<typeof fulfillmentHandoffBodySchema>;
+
 export const snapshotSourceSchema = z.strictObject({
   type: z.enum(["ALLERGY_REVIEW", "INTAKE", "CLINICAL_NOTE", "MEDICATION_DECISION"]),
   id: z.string().min(1),

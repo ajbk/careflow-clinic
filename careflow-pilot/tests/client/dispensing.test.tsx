@@ -185,16 +185,16 @@ describe("Preparation and label workflow", () => {
     expect(document.querySelector(".print-area")).toHaveClass("non-printable");
   });
 
-  it("keeps an Assistant read-only while a Doctor sees allowed release controls", async () => {
+  it("keeps an Assistant read-only while a Doctor can release", async () => {
     const releasePickList = { ...basePickList, visit: { ...visit, status: "AWAITING_RELEASE" as const }, allowedActions: ["RELEASE", "REJECT"] as const };
     server.resetHandlers(http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: releasePickList })));
     renderDispensing("/dispensing/visit-42", "assistant");
     expect(await screen.findByText("รอแพทย์ตรวจปล่อยยา")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "ตรวจปล่อยยา (ยังไม่พร้อม)" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "ปล่อยยา" })).not.toBeInTheDocument();
 
     cleanup();
-    renderDispensing("/dispensing/visit-42", "doctor");
-    expect(await screen.findByRole("button", { name: "ตรวจปล่อยยา (ยังไม่พร้อม)" })).toBeDisabled();
+    renderDispensing("/dispensing/visit-42", "doctor", ["fulfillment:read", "fulfillment:release"]);
+    expect(await screen.findByRole("button", { name: "ปล่อยยา" })).toBeEnabled();
   });
 
   it("hides preparation commands when the Assistant has only read permission", async () => {

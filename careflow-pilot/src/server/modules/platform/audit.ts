@@ -49,6 +49,9 @@ const auditActionPolicyEntries = [
   ["preparation.allocation-confirmed", "optional"],
   ["visit.preparation-completed", "optional"],
   ["fulfillment.artifacts-invalidated", "required"],
+  ["fulfillment.released", "optional"],
+  ["fulfillment.rejected", "required"],
+  ["fulfillment.handed-off", "optional"],
 ] as const;
 
 type AuditActionPolicyEntry = (typeof auditActionPolicyEntries)[number];
