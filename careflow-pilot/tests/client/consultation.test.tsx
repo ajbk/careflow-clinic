@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
@@ -178,6 +178,38 @@ describe("Doctor consultation authoring", () => {
     expect(snapshot).toHaveTextContent("2 สิงหาคม 2569 เวลา 15:00");
     expect(snapshot).toHaveTextContent("Visit visit-previous");
     expect(snapshot).toHaveTextContent("Clinical Note source");
+  });
+
+  it("shows Allergy conflicts in the Doctor dialog and reloads without losing values", async () => {
+    const user = userEvent.setup();
+    let workspaceRequests = 0;
+    const refreshedWorkspace = { ...workspace, patient: { ...patient, revision: 4 }, visit: { ...visit, revision: 9 } };
+    server.use(
+      http.get("/api/visits/visit-42/workspace", () => {
+        workspaceRequests += 1;
+        return HttpResponse.json({ data: workspaceRequests === 1 ? workspace : refreshedWorkspace });
+      }),
+      http.post("/api/patients/patient-42/allergy-revisions", () => HttpResponse.json({
+        error: { code: "REVISION_CONFLICT", messageTh: "ข้อมูลประวัติแพ้ยาเปลี่ยนแปลงแล้ว", requestId: "request-allergy" },
+      }, { status: 409 })),
+    );
+    renderRoute();
+    await user.click(await screen.findByRole("button", { name: "ทบทวนประวัติแพ้" }));
+    const source = screen.getByLabelText("แหล่งข้อมูล");
+    await user.clear(source);
+    await user.type(source, "ข้อมูลจากบัตรแพ้ยาฉบับล่าสุด");
+    await user.click(screen.getByRole("button", { name: "บันทึกการทบทวน" }));
+
+    expect(await screen.findByText("ข้อมูลประวัติแพ้ยาเปลี่ยนแปลงแล้ว")).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "ทบทวนประวัติแพ้ยา" });
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByLabelText("แหล่งข้อมูล")).toHaveValue("ข้อมูลจากบัตรแพ้ยาฉบับล่าสุด");
+    expect(screen.getByRole("button", { name: "บันทึกการทบทวน" })).toBeDisabled();
+
+    await user.click(within(dialog).getByRole("button", { name: "โหลดข้อมูลล่าสุด" }));
+    await waitFor(() => expect(workspaceRequests).toBeGreaterThan(1));
+    expect(screen.getByLabelText("แหล่งข้อมูล")).toHaveValue("ข้อมูลจากบัตรแพ้ยาฉบับล่าสุด");
+    expect(screen.getByRole("button", { name: "บันทึกการทบทวน" })).toBeEnabled();
   });
 
   it("requires an explicit medication decision and saves a selected catalog order", async () => {

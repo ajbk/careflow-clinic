@@ -172,6 +172,73 @@ describe("connected shared queue workflow", () => {
     expect(row.queryByRole("link", { name: "เปิดห้องตรวจ" })).not.toBeInTheDocument();
   });
 
+  it("preserves and submits every item in a PRESENT Allergy assessment", async () => {
+    const user = userEvent.setup();
+    let body: unknown;
+    const presentAllergy = {
+      id: "allergy-2", revision: 2, state: "PRESENT" as const,
+      items: [
+        { substance: "ยา A", reaction: "ผื่น", severity: "MILD" as const, note: "หลีกเลี่ยง" },
+        { substance: "ยา B", reaction: "หายใจลำบาก", severity: "MODERATE" as const, note: "เคยรักษาในโรงพยาบาล" },
+      ],
+      sourceText: "บัตรแพ้ยา", reason: "ทบทวนก่อนพบแพทย์",
+      reviewedBy: { id: "assistant-1", displayName: "ผู้ช่วยทดสอบ" }, reviewedAt: "2026-08-03T01:20:00.000Z",
+    };
+    const presentItem = { ...waitingItem, allergy: presentAllergy };
+    server.use(
+      http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))),
+      http.get("/api/queue", () => HttpResponse.json({ data: [presentItem] })),
+      http.post("/api/patients/patient-42/allergy-revisions", async ({ request }) => {
+        body = await request.json();
+        return HttpResponse.json({ data: { patient, allergy: presentAllergy, visit: waitingItem.visit }, replayed: false });
+      }),
+    );
+    renderRoute("/queue");
+    await user.click(await screen.findByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" }));
+
+    expect(screen.getAllByLabelText("สารที่แพ้")).toHaveLength(2);
+    expect(screen.getAllByLabelText("อาการแพ้")).toHaveLength(2);
+    expect(screen.getAllByLabelText("ความรุนแรง")).toHaveLength(2);
+    expect(screen.getAllByLabelText("หมายเหตุ")).toHaveLength(2);
+    await user.selectOptions(screen.getAllByLabelText("ความรุนแรง")[1], "SEVERE");
+    await user.clear(screen.getAllByLabelText("หมายเหตุ")[1]);
+    await user.type(screen.getAllByLabelText("หมายเหตุ")[1], "ต้องส่งต่อทันทีหากเกิดซ้ำ");
+    await user.click(screen.getByRole("button", { name: "บันทึกการทบทวน" }));
+
+    await waitFor(() => expect(body).toMatchObject({
+      payload: {
+        state: "PRESENT",
+        items: [
+          { substance: "ยา A", reaction: "ผื่น", severity: "MILD", note: "หลีกเลี่ยง" },
+          { substance: "ยา B", reaction: "หายใจลำบาก", severity: "SEVERE", note: "ต้องส่งต่อทันทีหากเกิดซ้ำ" },
+        ],
+      },
+    }));
+  });
+
+  it("adds and removes Allergy items without changing sibling values", async () => {
+    const user = userEvent.setup();
+    server.use(http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))));
+    renderRoute("/queue");
+    await user.click(await screen.findByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" }));
+    await user.click(screen.getByRole("button", { name: "PRESENT" }));
+    await user.type(screen.getByLabelText("สารที่แพ้"), "ยา A");
+    await user.type(screen.getByLabelText("อาการแพ้"), "ผื่น");
+    await user.click(screen.getByRole("button", { name: "เพิ่มรายการแพ้" }));
+
+    const substances = screen.getAllByLabelText("สารที่แพ้");
+    const reactions = screen.getAllByLabelText("อาการแพ้");
+    expect(substances).toHaveLength(2);
+    await user.type(substances[1], "ยา B");
+    await user.type(reactions[1], "บวม");
+    expect(substances[0]).toHaveValue("ยา A");
+    expect(substances[1]).toHaveValue("ยา B");
+
+    await user.click(screen.getByRole("button", { name: "ลบรายการแพ้ 2" }));
+    expect(screen.getAllByLabelText("สารที่แพ้")).toHaveLength(1);
+    expect(screen.getByLabelText("สารที่แพ้")).toHaveValue("ยา A");
+  });
+
   it("keeps Assistant Queue clinical-link free across all five server states", async () => {
     server.use(
       http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))),
@@ -234,7 +301,7 @@ describe("connected shared queue workflow", () => {
     await user.click(screen.getByRole("button", { name: "บันทึกการทบทวน" }));
     expect((await screen.findAllByText("ข้อมูลประวัติแพ้ยาเปลี่ยนแปลงแล้ว")).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "บันทึกการทบทวน" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "โหลดข้อมูลล่าสุด" }));
+    await user.click(within(screen.getByRole("dialog", { name: "ทบทวนประวัติแพ้ยา" })).getByRole("button", { name: "โหลดข้อมูลล่าสุด" }));
     await waitFor(() => expect(queueRequests).toBeGreaterThanOrEqual(2));
     expect(screen.getByLabelText("แหล่งข้อมูล")).toHaveValue("ผู้ช่วยทบทวนจากบัตรแพ้ยา");
     expect(screen.getByRole("button", { name: "บันทึกการทบทวน" })).toBeEnabled();

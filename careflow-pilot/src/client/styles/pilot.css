@@ -472,6 +472,10 @@
 .conflict-alert { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 12px; border-radius: 12px; background: var(--error-container); color: var(--on-error-container); }
 .dialog-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px; background: rgba(20,30,25,.52); }
 .allergy-dialog, .sign-dialog { width: min(560px, 100%); display: grid; gap: 16px; max-height: calc(100vh - 32px); overflow: auto; padding: 24px; }
+.allergy-items { display: grid; gap: 12px; }
+.allergy-item-editor { display: grid; gap: 10px; padding: 14px; border: 1px solid rgba(112,121,116,.18); border-radius: 12px; background: var(--surface-container-low); }
+.allergy-item-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.allergy-item-heading strong { color: var(--primary); font-size: 13px; }
 .signed-evidence { display: grid; gap: 12px; padding: 24px; border-radius: 16px; background: var(--surface-container-low); }
 .signed-evidence p { margin: 0; }
 .signed-evidence code { overflow-wrap: anywhere; color: var(--on-surface-variant); font-size: 11px; }
