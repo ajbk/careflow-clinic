@@ -2,6 +2,8 @@ export {
   inventoryLots,
   inventoryReceiptLines,
   inventoryReceipts,
+  inventoryReservationAllocations,
+  inventoryReservations,
   inventoryStockMovements,
 } from "./schema.js";
 export {

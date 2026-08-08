@@ -1,7 +1,8 @@
 import { sql } from "drizzle-orm";
-import { check, integer, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
-import { medications } from "../medication/schema.js";
+import { check, index, integer, sqliteTable, text, unique, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { medicationDecisions, medicationOrderItems, medications } from "../medication/schema.js";
 import { clinicConfig, staffAccounts } from "../platform/schema.js";
+import { visits } from "../visit/schema.js";
 
 export const inventoryLots = sqliteTable(
   "inventory_lots",
@@ -87,5 +88,67 @@ export const inventoryStockMovements = sqliteTable(
     check("inventory_stock_movements_quantity_delta_check", sql`${table.quantityDelta} BETWEEN 1 AND 999999`),
     check("inventory_stock_movements_source_type_check", sql`${table.sourceType} = 'RECEIPT'`),
     check("inventory_stock_movements_reason_check", sql`length(${table.reason}) <= 500`),
+  ],
+);
+
+export const inventoryReservationStatuses = ["ACTIVE", "RELEASED", "CONSUMED"] as const;
+
+export const inventoryReservations = sqliteTable(
+  "inventory_reservations",
+  {
+    id: text("id").primaryKey(),
+    clinicId: text("clinic_id").notNull().references(() => clinicConfig.id),
+    visitId: text("visit_id").notNull().references(() => visits.id),
+    medicationDecisionId: text("medication_decision_id").notNull().references(() => medicationDecisions.id),
+    medicationDecisionVersion: integer("medication_decision_version").notNull(),
+    status: text("status", { enum: [...inventoryReservationStatuses] as [string, ...string[]] })
+      .notNull().default("ACTIVE"),
+    createdAt: text("created_at").notNull(),
+    createdBy: text("created_by").notNull().references(() => staffAccounts.id),
+    releasedAt: text("released_at"),
+    releasedBy: text("released_by").references(() => staffAccounts.id),
+    releaseReason: text("release_reason"),
+  },
+  (table) => [
+    uniqueIndex("inventory_reservations_active_visit_decision_unique")
+      .on(table.clinicId, table.visitId, table.medicationDecisionId, table.medicationDecisionVersion)
+      .where(sql`${table.status} = 'ACTIVE'`),
+    index("inventory_reservations_visit_created_index").on(table.clinicId, table.visitId, table.createdAt),
+    check("inventory_reservations_decision_version_check", sql`${table.medicationDecisionVersion} >= 1`),
+    check("inventory_reservations_status_check", sql`${table.status} IN ('ACTIVE', 'RELEASED', 'CONSUMED')`),
+    check(
+      "inventory_reservations_release_fields_check",
+      sql`(${table.status} <> 'RELEASED' AND ${table.releasedAt} IS NULL AND ${table.releasedBy} IS NULL AND ${table.releaseReason} IS NULL)
+        OR (${table.status} = 'RELEASED' AND ${table.releasedAt} IS NOT NULL AND ${table.releasedBy} IS NOT NULL AND length(trim(${table.releaseReason})) BETWEEN 1 AND 500)`,
+    ),
+    check("inventory_reservations_release_reason_check", sql`${table.releaseReason} IS NULL OR length(${table.releaseReason}) <= 500`),
+  ],
+);
+
+export const inventoryReservationAllocations = sqliteTable(
+  "inventory_reservation_allocations",
+  {
+    id: text("id").primaryKey(),
+    reservationId: text("reservation_id").notNull().references(() => inventoryReservations.id),
+    medicationOrderItemId: text("medication_order_item_id").notNull().references(() => medicationOrderItems.id),
+    lotId: text("lot_id").notNull().references(() => inventoryLots.id),
+    position: integer("position").notNull(),
+    quantity: integer("quantity").notNull(),
+    medicationId: text("medication_id").notNull().references(() => medications.id),
+    lotNumberSnapshot: text("lot_number_snapshot").notNull(),
+    expiryDateSnapshot: text("expiry_date_snapshot").notNull(),
+    unitSnapshot: text("unit_snapshot").notNull(),
+    allocatedAt: text("allocated_at").notNull(),
+  },
+  (table) => [
+    unique("inventory_reservation_allocations_reservation_item_lot_unique")
+      .on(table.reservationId, table.medicationOrderItemId, table.lotId),
+    index("inventory_reservation_allocations_lot_index").on(table.lotId),
+    check("inventory_reservation_allocations_position_check", sql`${table.position} >= 0`),
+    check("inventory_reservation_allocations_quantity_check", sql`${table.quantity} BETWEEN 1 AND 999999`),
+    check("inventory_reservation_allocations_medication_id_check", sql`length(${table.medicationId}) > 0`),
+    check("inventory_reservation_allocations_lot_number_snapshot_check", sql`length(trim(${table.lotNumberSnapshot})) BETWEEN 1 AND 100`),
+    check("inventory_reservation_allocations_expiry_date_snapshot_check", sql`${table.expiryDateSnapshot} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`),
+    check("inventory_reservation_allocations_unit_snapshot_check", sql`length(${table.unitSnapshot}) BETWEEN 1 AND 100`),
   ],
 );

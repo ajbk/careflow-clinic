@@ -237,6 +237,67 @@ export const receiveInventoryResponseSchema = z.strictObject({
 });
 export type ReceiveInventoryResponse = z.infer<typeof receiveInventoryResponseSchema>;
 
+export const inventoryReservationStatusSchema = z.enum(["ACTIVE", "RELEASED", "CONSUMED"]);
+export type InventoryReservationStatus = z.infer<typeof inventoryReservationStatusSchema>;
+
+const inventoryReservationStaffSchema = z.strictObject({
+  id: z.string().min(1),
+  displayName: z.string().min(1),
+});
+
+export const inventoryReservationAllocationSchema = z.strictObject({
+  id: z.string().min(1),
+  reservationId: z.string().min(1),
+  medicationOrderItemId: z.string().min(1),
+  medicationId: z.string().regex(/^DEMO-MED-\d{3}$/),
+  lotId: z.string().min(1),
+  position: z.number().int().min(0),
+  quantity: z.number().int().min(1).max(999_999),
+  lotNumberSnapshot: z.string().trim().min(1).max(100),
+  expiryDateSnapshot: z.iso.date(),
+  unitSnapshot: z.string().min(1).max(100),
+  allocatedAt: z.string().datetime(),
+});
+export type InventoryReservationAllocationDto = z.infer<typeof inventoryReservationAllocationSchema>;
+
+export const inventoryReservationSchema = z.strictObject({
+  id: z.string().min(1),
+  clinicId: z.string().min(1),
+  visitId: z.string().min(1),
+  medicationDecisionId: z.string().min(1),
+  medicationDecisionVersion: z.number().int().min(1),
+  status: inventoryReservationStatusSchema,
+  createdAt: z.string().datetime(),
+  createdBy: inventoryReservationStaffSchema,
+  releasedAt: z.string().datetime().nullable(),
+  releasedBy: inventoryReservationStaffSchema.nullable(),
+  releaseReason: z.string().max(500).nullable(),
+  allocations: z.array(inventoryReservationAllocationSchema),
+});
+export type InventoryReservationDto = z.infer<typeof inventoryReservationSchema>;
+
+export const reserveInventoryBodySchema = rejectOwnPrototypeKeys(
+  z.strictObject({
+    expectedRevisions: z.strictObject({ visit: z.number().int().min(1), medicationDecision: z.number().int().min(1) }),
+    payload: z.strictObject({}),
+  }),
+);
+export type ReserveInventoryBody = z.infer<typeof reserveInventoryBodySchema>;
+
+export const releaseInventoryBodySchema = rejectOwnPrototypeKeys(
+  z.strictObject({
+    expectedRevisions: z.strictObject({ visit: z.number().int().min(1), reservation: z.number().int().min(1) }),
+    payload: z.strictObject({ reason: requiredClinicalText(500) }),
+  }),
+);
+export type ReleaseInventoryBody = z.infer<typeof releaseInventoryBodySchema>;
+
+export const inventoryReservationResponseSchema = z.strictObject({
+  data: z.lazy(() => inventoryPickListSchema),
+  replayed: z.boolean(),
+});
+export type InventoryReservationResponse = z.infer<typeof inventoryReservationResponseSchema>;
+
 export const visitStatuses = [
   "WAITING",
   "CONSULTING",
@@ -632,6 +693,15 @@ export const signedMedicationDecisionSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 export type SignedMedicationDecisionDto = z.infer<typeof signedMedicationDecisionSchema>;
+
+export const inventoryPickListSchema = z.strictObject({
+  visit: visitSummarySchema,
+  patient: patientSchema,
+  medicationDecision: signedMedicationDecisionSchema,
+  reservation: inventoryReservationSchema.nullable(),
+  inventory: z.array(inventorySummarySchema),
+});
+export type InventoryPickListDto = z.infer<typeof inventoryPickListSchema>;
 
 export const snapshotSourceSchema = z.strictObject({
   type: z.enum(["ALLERGY_REVIEW", "INTAKE", "CLINICAL_NOTE", "MEDICATION_DECISION"]),
