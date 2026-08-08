@@ -107,7 +107,7 @@
 
 **Interfaces:**
 
-- createFulfillmentService({ database, inventory, medications, visits, clock, idFactory }) returns getPickList, getCurrentLabel, startPreparation, recordPrintRequest, confirmAllocation, completePreparation, abandonPreparation, invalidateCurrentArtifacts, and readHandoffChain.
+- createFulfillmentService({ database, inventory, clock, idFactory }) returns getPickList, getCurrentLabel, startPreparation, recordPrintRequest, confirmAllocation, completePreparation, abandonPreparation, invalidateCurrentArtifacts, and readHandoffChain. Later release/handoff work may add typed dependencies only when those services consume them.
 - registerFulfillmentRoutes registers GET /api/dispensing/:visitId, GET /api/dispensing/:visitId/labels, POST /api/dispensing/:visitId/reservations, POST /api/dispensing/:visitId/labels/:labelVersionId/print-events, POST /api/dispensing/:visitId/preparation-confirmations, POST /api/dispensing/:visitId/complete-preparation, and POST /api/dispensing/:visitId/reservation-release.
 - The inventory module remains the owner of reserve/release/FEFO primitives; fulfillment composes them inside the caller-supplied transaction.
 
