@@ -99,6 +99,7 @@ describe("role permissions", () => {
         "patient:update-allergy",
         "inventory:read",
         "inventory:receive",
+        "inventory:reserve",
       ],
       doctor: [
         "patient:read",
@@ -114,6 +115,7 @@ describe("role permissions", () => {
         "medication:read-catalog",
         "medication:sign-decision",
         "inventory:read",
+        "inventory:reserve",
       ],
     });
   });

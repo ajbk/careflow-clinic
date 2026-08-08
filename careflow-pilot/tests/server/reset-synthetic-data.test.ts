@@ -171,6 +171,8 @@ describe("guarded synthetic reset", () => {
         "inventory_stock_movements",
         "inventory_receipt_lines",
         "inventory_receipts",
+        "inventory_reservation_allocations",
+        "inventory_reservations",
         "inventory_lots",
       ]) {
         expect(database.prepare(`SELECT count(*) FROM ${table}`).pluck().get()).toBe(0);

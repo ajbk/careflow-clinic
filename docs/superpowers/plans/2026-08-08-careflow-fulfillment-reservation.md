@@ -17,7 +17,7 @@
 - Reserve is all-or-nothing across every item in the signed `ORDER`; insufficient, expired, quarantined, or already-held stock leaves no partial rows and no Visit transition.
 - FEFO ordering is expiry ascending, then lot id ascending; clinic-date comparisons use `Asia/Bangkok`.
 - A reservation is tied to a Visit, signed decision id/version, and order item. Allocation rows are immutable; release updates only reservation state and records a reason.
-- Reserve/release commands require strict bodies, expected revisions, and an `Idempotency-Key`; the original full `{ data, replayed }` envelope is stored and replayed exactly.
+- Reserve/release commands require strict bodies, the expected Visit revision, and an `Idempotency-Key`; release selects the active reservation transactionally and the original full `{ data, replayed }` envelope is stored and replayed exactly.
 - Assistant has `inventory:read`, `inventory:receive`, and `inventory:reserve`; Doctor has `inventory:read` and `inventory:reserve`. The existing `/api/medications` permission behavior must not change.
 - Clinical allergy/order invalidation hooks and inventory reservation writes must share the enclosing audited transaction.
 - UI must reuse the existing CareFlow visual shell and CSS classes; do not redesign or copy the frozen prototype.

@@ -466,7 +466,9 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
       }
       assertExpectedRevision(visit.revision, body.expectedRevisions.visit, "visit");
       const allowed = visit.status === "WAITING" || (
-        actor.role === "doctor" && (visit.status === "CONSULTING" || visit.status === "AWAITING_PREPARATION")
+        actor.role === "doctor" && (
+          visit.status === "CONSULTING" || visit.status === "AWAITING_PREPARATION" || visit.status === "PREPARING"
+        )
       );
       if (!allowed) {
         throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่อนุญาตให้ทบทวนข้อมูลแพ้" });
@@ -567,6 +569,7 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
       if (
         visit.status !== "AWAITING_ORDER_REVISION" &&
         visit.status !== "AWAITING_PREPARATION" &&
+        visit.status !== "PREPARING" &&
         visit.status !== "AWAITING_CHARGE"
       ) {
         throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่อนุญาตให้แก้ไขคำสั่งยา" });
@@ -609,7 +612,10 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
     },
 
     transitionAllergySafety(tx, actor, visit, reason) {
-      if (actor.role !== "doctor" || visit.status !== "AWAITING_PREPARATION") {
+      if (
+        actor.role !== "doctor" ||
+        (visit.status !== "AWAITING_PREPARATION" && visit.status !== "PREPARING")
+      ) {
         throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่อนุญาตให้ทบทวนข้อมูลแพ้" });
       }
       const nextRevision = visit.revision + 1;
@@ -618,7 +624,7 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
         .where(and(
           eq(visits.id, visit.id),
           eq(visits.clinicId, "clinic"),
-          eq(visits.status, "AWAITING_PREPARATION"),
+          inArray(visits.status, ["AWAITING_PREPARATION", "PREPARING"]),
           eq(visits.revision, visit.revision),
         )).run();
       if (changed.changes !== 1) {
@@ -632,7 +638,7 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
       writeAudit({
         tx, actor, id: idFactory(), action: "visit.allergy-safety-changed", entityType: "visit",
         entityId: updated.id, entityRevision: nextRevision, reason, occurredAt: clock().toISOString(),
-        metadata: { previousStatus: "AWAITING_PREPARATION", nextStatus: "AWAITING_ORDER_REVISION" },
+        metadata: { previousStatus: visit.status, nextStatus: "AWAITING_ORDER_REVISION" },
       });
       return {
         id: updated.id,

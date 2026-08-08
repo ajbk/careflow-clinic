@@ -795,7 +795,7 @@ describe("signed evidence amendments and safety revisions", () => {
     expect(firstRevisionReplay.json()).toEqual({ data: firstRevisionData, replayed: true });
   });
 
-  it.each(["AWAITING_ORDER_REVISION", "AWAITING_PREPARATION", "AWAITING_CHARGE"] as const)(
+  it.each(["AWAITING_ORDER_REVISION", "AWAITING_PREPARATION", "PREPARING", "AWAITING_CHARGE"] as const)(
     "accepts an ORDER decision revision only from %s",
     async (status) => {
       const test = await fixture();
@@ -809,7 +809,7 @@ describe("signed evidence amendments and safety revisions", () => {
     },
   );
 
-  it("rejects stale Visit, safety, decision, and catalog tokens, prohibited states, and Assistant decision revisions", async () => {
+  it("rejects stale Visit, safety, decision, and catalog tokens and Assistant decision revisions", async () => {
     const test = await fixture();
     const { visitId } = await finalizeOrder(test);
     const staleVisit = await reviseDecision(test, visitId, { visit: 99, key: "clinical-revision-stale-visit" });
@@ -820,15 +820,16 @@ describe("signed evidence amendments and safety revisions", () => {
     test.database.sqlite.prepare("UPDATE medications SET revision=1 WHERE id='DEMO-MED-001'").run();
     const assistant = await reviseDecision(test, visitId, { cookie: test.assistantCookie, key: "clinical-revision-assistant" });
     test.database.sqlite.prepare("UPDATE visits SET status='PREPARING' WHERE id=?").run(visitId);
-    const prohibited = await reviseDecision(test, visitId, { key: "clinical-revision-prohibited" });
+    const preparingRevision = await reviseDecision(test, visitId, { key: "clinical-revision-preparing" });
 
     expect(staleVisit.json().error).toMatchObject({ code: "REVISION_CONFLICT", currentRevisions: { visit: 3 } });
     expect(stalePatient.json().error).toMatchObject({ code: "REVISION_CONFLICT", currentRevisions: { patient: 1 } });
     expect(staleDecision.json().error).toMatchObject({ code: "REVISION_CONFLICT", currentRevisions: { medicationDecision: 1 } });
     expect(staleCatalog.json().error).toMatchObject({ code: "REVISION_CONFLICT", currentRevisions: { "medication.DEMO-MED-001": 2 } });
     expect(assistant.statusCode).toBe(403);
-    expect(prohibited.json().error.code).toBe("INVALID_STATE");
-    expect(test.database.db.select().from(medicationDecisions).all()).toHaveLength(1);
+    expect(preparingRevision.statusCode).toBe(201);
+    expect(preparingRevision.json().data.visit).toMatchObject({ status: "AWAITING_CHARGE", revision: 4 });
+    expect(test.database.db.select().from(medicationDecisions).all()).toHaveLength(2);
   });
 
   it("rolls back a decision revision, its audit, and its idempotency record when the Visit transition fails", async () => {

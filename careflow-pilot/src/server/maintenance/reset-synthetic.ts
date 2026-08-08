@@ -29,6 +29,8 @@ const expectedTables = new Set([
   "inventory_lots",
   "inventory_receipt_lines",
   "inventory_receipts",
+  "inventory_reservation_allocations",
+  "inventory_reservations",
   "inventory_stock_movements",
   "medication_decision_drafts",
   "medication_decisions",
@@ -68,13 +70,15 @@ const appendOnlyTables = [
   "inventory_receipts",
   "inventory_receipt_lines",
   "inventory_stock_movements",
+  "inventory_reservation_allocations",
 ] as const;
 
 function appendOnlyTriggerSql(table: (typeof appendOnlyTables)[number], operation: "update" | "delete"): string {
+  const indent = table === "inventory_reservation_allocations" ? "  " : "\t";
   return `CREATE TRIGGER \`${table}_block_${operation}\`
 BEFORE ${operation.toUpperCase()} ON \`${table}\`
 BEGIN
-\tSELECT RAISE(ABORT, '${table} are append-only');
+${indent}SELECT RAISE(ABORT, '${table} are append-only');
 END;`;
 }
 
@@ -240,6 +244,8 @@ function verifyReset(sqlite: Database.Database): void {
     ["clinical_notes", "count(*)"],
     ["intake_observations", "count(*)"],
     ["inventory_stock_movements", "count(*)"],
+    ["inventory_reservation_allocations", "count(*)"],
+    ["inventory_reservations", "count(*)"],
     ["inventory_receipt_lines", "count(*)"],
     ["inventory_receipts", "count(*)"],
     ["inventory_lots", "count(*)"],
@@ -337,6 +343,8 @@ export function runResetSyntheticData(deps: ResetSyntheticDependencies): number 
     sqlite.exec("DELETE FROM sessions;");
     sqlite.exec("DELETE FROM idempotency_records;");
     sqlite.exec("DELETE FROM inventory_stock_movements;");
+    sqlite.exec("DELETE FROM inventory_reservation_allocations;");
+    sqlite.exec("DELETE FROM inventory_reservations;");
     sqlite.exec("DELETE FROM inventory_receipt_lines;");
     sqlite.exec("DELETE FROM inventory_receipts;");
     sqlite.exec("DELETE FROM inventory_lots;");

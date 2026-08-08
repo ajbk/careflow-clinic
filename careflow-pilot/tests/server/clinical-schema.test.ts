@@ -112,6 +112,8 @@ describe("clinical evidence schema", () => {
       "inventory_lots",
       "inventory_receipt_lines",
       "inventory_receipts",
+      "inventory_reservation_allocations",
+      "inventory_reservations",
       "inventory_stock_movements",
       "medication_decision_drafts",
       "medication_decisions",

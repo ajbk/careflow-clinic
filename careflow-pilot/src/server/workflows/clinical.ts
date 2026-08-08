@@ -20,6 +20,7 @@ import { ApiError } from "../errors.js";
 import type { MedicationService } from "../modules/medication/index.js";
 import type { NoteService } from "../modules/note/index.js";
 import type { PatientService } from "../modules/patient/index.js";
+import type { InventoryService } from "../modules/inventory/index.js";
 import { appendAuditEvent, hasPermission, type AuditedTransaction } from "../modules/platform/index.js";
 import type { VisitService } from "../modules/visit/index.js";
 
@@ -142,6 +143,7 @@ export function createClinicalWorkflow(input: {
   visits: VisitService;
   notes: NoteService;
   medications: MedicationService;
+  inventory?: InventoryService;
   clock?: () => Date;
   idFactory?: () => string;
   /** Test seam for proving the enclosing transaction rolls back before the Visit write. */
@@ -153,6 +155,42 @@ export function createClinicalWorkflow(input: {
 }): ClinicalWorkflow {
   const clock = input.clock ?? (() => new Date());
   const idFactory = input.idFactory ?? randomUUID;
+  const releasePreparationReservation = (
+    tx: AuditedTransaction,
+    actor: Actor,
+    visit: VisitSummaryDto,
+    reason: string,
+    trigger: "allergy-safety" | "medication-revision",
+  ): void => {
+    if (visit.status !== "PREPARING") return;
+    const released = input.inventory?.releaseActiveReservation(tx, actor, visit.id, reason);
+    if (!released) return;
+    const occurredAt = released.releasedAt ?? clock().toISOString();
+    appendAuditEvent({
+      tx,
+      actor,
+      id: idFactory(),
+      action: "inventory.reservation-released",
+      entityType: "inventory_reservation",
+      entityId: released.id,
+      entityRevision: 1,
+      reason,
+      occurredAt,
+      metadata: { visitId: visit.id, trigger },
+    });
+    appendAuditEvent({
+      tx,
+      actor,
+      id: idFactory(),
+      action: "visit.preparation-abandoned",
+      entityType: "visit",
+      entityId: visit.id,
+      entityRevision: visit.revision + 1,
+      reason,
+      occurredAt,
+      metadata: { previousStatus: "PREPARING", nextStatus: "AWAITING_ORDER_REVISION", trigger },
+    });
+  };
   const normalizeFinalizedReference = (reference: unknown): CurrentFinalizationReplayReference => {
     if (!isRecord(reference)) return invalidReplayReference();
     if ("visit" in reference) {
@@ -322,11 +360,12 @@ export function createClinicalWorkflow(input: {
         body.expectedRevisions.patient,
         body.payload,
       );
-      if (visit.status !== "AWAITING_PREPARATION") return { patient, allergy, visit };
+      if (visit.status !== "AWAITING_PREPARATION" && visit.status !== "PREPARING") return { patient, allergy, visit };
       const decision = input.medications.getSignedDecision(visit.id);
       if (!decision || decision.kind !== "ORDER") {
         throw new ApiError({ code: "INVALID_STATE", messageTh: "Visit นี้ไม่มีคำสั่งยาที่ต้องทบทวน" });
       }
+      releasePreparationReservation(tx, actor, visit, body.payload.reason, "allergy-safety");
       input.beforeAllergySafetyTransition?.();
       return { patient, allergy, visit: input.visits.transitionAllergySafety(tx, actor, visit, body.payload.reason) };
     },
@@ -351,6 +390,7 @@ export function createClinicalWorkflow(input: {
         tx, actor, visitId, body.expectedRevisions.medicationDecision,
         body.payload.decision, body.payload.revisionReason,
       );
+      releasePreparationReservation(tx, actor, visit, body.payload.revisionReason, "medication-revision");
       input.beforeDecisionRevisionTransition?.();
       return {
         visit: input.visits.transitionDecisionRevision(tx, actor, visit, medicationDecision.kind),

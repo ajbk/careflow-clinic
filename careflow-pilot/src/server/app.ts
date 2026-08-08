@@ -122,6 +122,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     visits: visitService,
     notes: noteService,
     medications: medicationService,
+    inventory: inventoryService,
     clock: options.clock,
   });
   registerClinicalRoutes({ app, database: options.db, clinical: clinicalWorkflow });

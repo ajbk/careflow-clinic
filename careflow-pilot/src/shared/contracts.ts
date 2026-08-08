@@ -51,6 +51,7 @@ export const permissionSchema = z.enum([
   "medication:sign-decision",
   "inventory:read",
   "inventory:receive",
+  "inventory:reserve",
 ]);
 
 export const loginBodySchema = z.strictObject({
@@ -286,7 +287,7 @@ export type ReserveInventoryBody = z.infer<typeof reserveInventoryBodySchema>;
 
 export const releaseInventoryBodySchema = rejectOwnPrototypeKeys(
   z.strictObject({
-    expectedRevisions: z.strictObject({ visit: z.number().int().min(1), reservation: z.number().int().min(1) }),
+    expectedRevisions: z.strictObject({ visit: z.number().int().min(1) }),
     payload: z.strictObject({ reason: requiredClinicalText(500) }),
   }),
 );

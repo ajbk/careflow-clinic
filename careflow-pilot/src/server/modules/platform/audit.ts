@@ -40,6 +40,10 @@ const auditActionPolicyEntries = [
   ["medication.decision-revised", "required"],
   ["visit.allergy-safety-changed", "required"],
   ["inventory.stock-received", "optional"],
+  ["inventory.reservation-created", "optional"],
+  ["inventory.reservation-released", "required"],
+  ["visit.preparation-started", "optional"],
+  ["visit.preparation-abandoned", "required"],
 ] as const;
 
 type AuditActionPolicyEntry = (typeof auditActionPolicyEntries)[number];
