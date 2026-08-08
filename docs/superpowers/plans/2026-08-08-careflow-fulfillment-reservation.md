@@ -14,6 +14,7 @@
 - The frozen `careflow-webapp/` and `stitch_careflow_clinic_management_system/` directories are read-only design references and must not be modified.
 - Existing Phase 2A receipt movements remain append-only and receipt-only. Do not add mutable stock balances or browser-supplied lot allocations.
 - Active reserved quantity is derived only from `inventory_reservation_allocations` joined to `inventory_reservations.status = 'ACTIVE'`.
+- When active reservations fully hold future-dated sellable stock, the inventory aggregate reports `RESERVED` rather than mislabeling that stock as `EXPIRED`.
 - Reserve is all-or-nothing across every item in the signed `ORDER`; insufficient, expired, quarantined, or already-held stock leaves no partial rows and no Visit transition.
 - FEFO ordering is expiry ascending, then lot id ascending; clinic-date comparisons use `Asia/Bangkok`.
 - A reservation is tied to a Visit, signed decision id/version, and order item. Allocation rows are immutable; release updates only reservation state and records a reason.

@@ -107,10 +107,11 @@ The client hides receive actions for doctors, but the server remains authoritati
 
 ## Aggregate status
 
-The server returns `OK`, `LOW`, `OUT`, or `EXPIRED`:
+The server returns `OK`, `LOW`, `OUT`, `EXPIRED`, or (once Phase 2B reservations are active) `RESERVED`:
 
 - `OUT`: available is `0` and on-hand is `0`.
-- `EXPIRED`: available is `0` while on-hand is greater than `0`.
+- `EXPIRED`: available is `0` while on-hand is greater than `0` and no future-dated sellable lot has positive on-hand.
+- `RESERVED`: available is `0` while on-hand is greater than `0` and future-dated sellable on-hand is fully held by active reservations.
 - `LOW`: available is `1..10` canonical units.
 - `OK`: available is greater than `10`.
 
