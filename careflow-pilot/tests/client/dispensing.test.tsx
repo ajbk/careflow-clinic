@@ -20,6 +20,16 @@ const reservation = {
 };
 const pickList = { visit, patient, medicationDecision: decision, reservation: null, inventory };
 const reservedPickList = { ...pickList, visit: { ...visit, status: "PREPARING" as const, revision: 10 }, reservation };
+const releasedPickList = {
+  ...pickList,
+  reservation: {
+    ...reservation,
+    status: "RELEASED" as const,
+    releasedAt: "2026-08-03T02:10:00.000Z",
+    releasedBy: { id: "assistant-1", displayName: "ผู้ช่วยทดสอบ" },
+    releaseReason: "ทบทวนรายการก่อนจัดยา",
+  },
+};
 
 function session(role: "assistant" | "doctor", reserve = true) {
   return { data: {
@@ -49,7 +59,7 @@ describe("Dispensing Pick List", () => {
     expect(await screen.findByRole("heading", { name: "จัดยา" })).toBeInTheDocument();
     expect(await screen.findByText("พาราเซตามอล")).toBeInTheDocument();
     expect(screen.getByText(/วิธีใช้: รับประทานหลังอาหาร/)).toBeInTheDocument();
-    expect(screen.getByText(/ยังไม่มีการจองล็อต/)).toBeInTheDocument();
+    expect(await screen.findByText(/ยังไม่มีการจองล็อต/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "เริ่มจองล็อตตาม FEFO" })).toBeInTheDocument();
   });
 
@@ -63,6 +73,7 @@ describe("Dispensing Pick List", () => {
     expect((await screen.findAllByText(/Hard Reservation/)).length).toBeGreaterThan(0);
     expect(screen.getByText("PCM-EARLY")).toBeInTheDocument();
     expect(screen.getByText(/หมดอายุ 20 สิงหาคม 2569/)).toBeInTheDocument();
+    expect(screen.getByText(/ระบบตรวจสอบวันหมดอายุเมื่อเริ่มจอง/)).toBeInTheDocument();
     await user.type(screen.getByLabelText("เหตุผลการยกเลิกการจอง"), "ทบทวนรายการก่อนจัดยา");
     await user.click(screen.getByRole("button", { name: "ยกเลิกการจอง" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("ข้อมูล Visit เปลี่ยนแปลงแล้ว");
@@ -89,5 +100,14 @@ describe("Dispensing Pick List", () => {
     await waitFor(() => expect(body).toMatchObject({ expectedRevisions: { visit: 9, medicationDecision: 1 }, payload: {} }));
     expect((await screen.findAllByText(/Hard Reservation/)).length).toBeGreaterThan(0);
     expect(screen.getByText("PCM-EARLY")).toBeInTheDocument();
+  });
+
+  it("hides released historical allocations and returns to a clean reserve state", async () => {
+    server.use(http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: releasedPickList })));
+    renderDispensing();
+    expect(await screen.findByRole("heading", { name: "จัดยา" })).toBeInTheDocument();
+    expect(screen.queryByText("PCM-EARLY")).not.toBeInTheDocument();
+    expect(await screen.findByText(/ยังไม่มีการจองล็อต/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "เริ่มจองล็อตตาม FEFO" })).toBeInTheDocument();
   });
 });

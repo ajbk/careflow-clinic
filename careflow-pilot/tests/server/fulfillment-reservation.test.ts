@@ -227,9 +227,11 @@ describe("fulfillment reservation persistence and FEFO service", () => {
   it("does not duplicate an active reservation and release restores derived availability without editing allocations", async () => {
     const { database, inventory } = fixture();
     const doctor = await actor(database);
-    addVisitOrder(database, { visitId: "visit-release", decisionId: "decision-release", orderItemId: "order-release", quantity: 6 });
+    addVisitOrder(database, { visitId: "visit-release", decisionId: "decision-release", orderItemId: "order-release", quantity: 9 });
     receiveLot(database, { id: "lot-release", lotNumber: "LOT-RELEASE", expiryDate: "2026-08-10", quantity: 9 });
     const first = database.db.transaction((tx) => inventory.reserveForVisit(tx, doctor, "visit-release", 3, 1));
+    expect(first.inventory.find((row) => row.medication.id === "DEMO-MED-001"))
+      .toMatchObject({ onHand: 9, reserved: 9, available: 0, status: "RESERVED" });
     const duplicate = database.db.transaction((tx) => inventory.reserveForVisit(tx, doctor, "visit-release", 4, 1));
     expect(duplicate.reservation?.id).toBe(first.reservation?.id);
     expect(database.db.select().from(inventoryReservations).all()).toHaveLength(1);

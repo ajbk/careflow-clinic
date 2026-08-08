@@ -10,6 +10,7 @@ import {
 } from "../../src/server/modules/medication/index.js";
 import { clinicalNoteAmendments, clinicalNoteDrafts, clinicalNotes, createNoteService } from "../../src/server/modules/note/index.js";
 import { createPatientService } from "../../src/server/modules/patient/index.js";
+import { inventoryReservationAllocations, inventoryReservations } from "../../src/server/modules/inventory/index.js";
 import { auditEvents, executeIdempotent, hashEvidence, idempotencyRecords } from "../../src/server/modules/platform/index.js";
 import { visits } from "../../src/server/modules/visit/index.js";
 import { createVisitService } from "../../src/server/modules/visit/index.js";
@@ -885,5 +886,49 @@ describe("signed evidence amendments and safety revisions", () => {
     expect(response.json().data.visit).toMatchObject({ status: "AWAITING_ORDER_REVISION", revision: 4 });
     expect(test.database.db.select().from(auditEvents).all().find((event) => event.action === "visit.allergy-safety-changed"))
       .toMatchObject({ reason: "ป้องกันการจ่ายยา" });
+  });
+
+  it("releases a real active reservation before a medication revision and preserves its allocations", async () => {
+    const test = await fixture();
+    const { visitId } = await finalizeOrder(test);
+    const receipt = await test.app.inject({
+      method: "POST",
+      url: "/api/inventory/receipts",
+      headers: { cookie: test.assistantCookie, "idempotency-key": "clinical-reservation-receipt-001" },
+      payload: {
+        expectedRevisions: { medication: 1 },
+        payload: {
+          medicationId: "DEMO-MED-001", quantity: 10, lotNumber: "CLINICAL-RESERVATION-001",
+          expiryDate: "2030-08-20", supplierName: "ผู้จำหน่ายสังเคราะห์", note: "เตรียมทดสอบ safety release",
+        },
+      },
+    });
+    expect(receipt.statusCode).toBe(201);
+    const reserved = await test.app.inject({
+      method: "POST",
+      url: `/api/dispensing/${visitId}/reservations`,
+      headers: { cookie: test.assistantCookie, "idempotency-key": "clinical-reservation-create-001" },
+      payload: { expectedRevisions: { visit: 3, medicationDecision: 1 }, payload: {} },
+    });
+    expect(reserved.statusCode).toBe(201);
+    const allocationsBefore = test.database.db.select().from(inventoryReservationAllocations).all();
+    expect(allocationsBefore).toHaveLength(1);
+
+    const revised = await reviseDecision(test, visitId, {
+      visit: 4,
+      kind: "NO_MEDICATION",
+      key: "clinical-reservation-decision-revision-001",
+    });
+
+    expect(revised.statusCode).toBe(201);
+    expect(revised.json().data.visit).toMatchObject({ status: "AWAITING_CHARGE", revision: 5 });
+    expect(test.database.db.select().from(inventoryReservations).all()).toMatchObject([{ status: "RELEASED" }]);
+    expect(test.database.db.select().from(inventoryReservationAllocations).all()).toEqual(allocationsBefore);
+    expect(test.database.db.select().from(auditEvents).all().find((event) => event.action === "inventory.reservation-released"))
+      .toMatchObject({ reason: "ปรับคำสั่งตามข้อมูลใหม่" });
+    expect(JSON.parse(test.database.db.select().from(auditEvents).all()
+      .find((event) => event.action === "visit.preparation-abandoned")?.metadataJson ?? "{}")).toMatchObject({
+      previousStatus: "PREPARING", nextStatus: "AWAITING_CHARGE",
+    });
   });
 });

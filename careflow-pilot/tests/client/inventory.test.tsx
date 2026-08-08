@@ -11,12 +11,14 @@ const medications = {
   paracetamol: { id: "DEMO-MED-001", displayName: "พาราเซตามอล", strengthText: "500 mg", dosageFormText: "เม็ด", canonicalUnit: "เม็ด", revision: 1 },
   amoxicillin: { id: "DEMO-MED-002", displayName: "อะม็อกซีซิลลิน", strengthText: "500 mg", dosageFormText: "แคปซูล", canonicalUnit: "แคปซูล", revision: 2 },
   ors: { id: "DEMO-MED-003", displayName: "ผงเกลือแร่", strengthText: "5.5 g", dosageFormText: "ซอง", canonicalUnit: "ซอง", revision: 1 },
+  reserved: { id: "DEMO-MED-004", displayName: "ยาที่ถูกจอง", strengthText: "250 mg", dosageFormText: "เม็ด", canonicalUnit: "เม็ด", revision: 1 },
 };
 
 const inventory = [
   { medication: medications.paracetamol, onHand: 8, reserved: 0, available: 8, lotCount: 1, nearestExpiry: "2026-10-01", status: "LOW" },
   { medication: medications.amoxicillin, onHand: 0, reserved: 0, available: 0, lotCount: 0, nearestExpiry: null, status: "OUT" },
   { medication: medications.ors, onHand: 12, reserved: 0, available: 12, lotCount: 1, nearestExpiry: "2026-08-04", status: "EXPIRED" },
+  { medication: medications.reserved, onHand: 12, reserved: 12, available: 0, lotCount: 1, nearestExpiry: "2026-08-20", status: "RESERVED" },
 ] as const;
 
 function session(role: "assistant" | "doctor") {
@@ -70,6 +72,7 @@ describe("Inventory screens", () => {
     expect(screen.getAllByText("ใกล้หมด").length).toBeGreaterThan(0);
     expect(screen.getAllByText("หมด").length).toBeGreaterThan(0);
     expect(screen.getAllByText("หมดอายุ").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("ถูกจอง").length).toBeGreaterThan(0);
     await user.type(screen.getByRole("searchbox", { name: "ค้นหายา" }), "อะม็อก");
     expect(screen.getByText("อะม็อกซีซิลลิน")).toBeInTheDocument();
     expect(screen.queryByText("พาราเซตามอล")).not.toBeInTheDocument();

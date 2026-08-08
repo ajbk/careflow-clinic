@@ -103,8 +103,11 @@ function toMedicationDto(row: typeof medications.$inferSelect): MedicationDto {
   };
 }
 
-function inventoryStatus(onHand: number, available: number): InventorySummaryDto["status"] {
-  if (available === 0) return onHand === 0 ? "OUT" : "EXPIRED";
+function inventoryStatus(onHand: number, available: number, hasSellableStock: boolean): InventorySummaryDto["status"] {
+  if (available === 0) {
+    if (onHand === 0) return "OUT";
+    return hasSellableStock ? "RESERVED" : "EXPIRED";
+  }
   if (available <= SYNTHETIC_PILOT_LOW_STOCK_THRESHOLD) return "LOW";
   return "OK";
 }
@@ -166,7 +169,7 @@ function readInventory(tx: InventoryTransaction, currentClinicDate: string): Inv
       available: availableValue,
       lotCount: medicationLots.length,
       nearestExpiry: sellableLots.map((balance) => balance.lot.expiryDate).sort()[0] ?? null,
-      status: inventoryStatus(onHandValue, availableValue),
+      status: inventoryStatus(onHandValue, availableValue, sellableLots.some((balance) => balance.onHand > 0)),
     };
   });
 }

@@ -159,7 +159,7 @@ export const medicationSearchResponseSchema = z.strictObject({
 });
 export type MedicationSearchResponse = z.infer<typeof medicationSearchResponseSchema>;
 
-export const inventoryStatusSchema = z.enum(["OK", "LOW", "OUT", "EXPIRED"]);
+export const inventoryStatusSchema = z.enum(["OK", "LOW", "OUT", "EXPIRED", "RESERVED"]);
 export type InventoryStatus = z.infer<typeof inventoryStatusSchema>;
 
 export const inventoryLotSchema = z.strictObject({

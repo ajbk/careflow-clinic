@@ -8,10 +8,11 @@ import { useInventory } from "../features/inventory";
 import { isApiError } from "../lib/api-error";
 import { formatThaiDate } from "../lib/thai-date";
 
-function badge(status: InventoryStatus): { label: string; tone: "success" | "warning" | "error" } {
+function badge(status: InventoryStatus): { label: string; tone: "success" | "warning" | "error" | "info" } {
   if (status === "OK") return { label: "พร้อมใช้", tone: "success" };
   if (status === "LOW") return { label: "ใกล้หมด", tone: "warning" };
   if (status === "EXPIRED") return { label: "หมดอายุ", tone: "error" };
+  if (status === "RESERVED") return { label: "ถูกจอง", tone: "info" };
   return { label: "หมด", tone: "error" };
 }
 
