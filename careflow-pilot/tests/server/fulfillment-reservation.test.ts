@@ -189,6 +189,9 @@ describe("fulfillment reservation persistence and FEFO service", () => {
 
     expect(pickList.visit).toMatchObject({ id: "visit-fefo", status: "PREPARING", revision: 4 });
     expect(pickList.medicationDecision).toMatchObject({ id: "decision-fefo", version: 1, kind: "ORDER" });
+    expect(pickList.medicationDecision.kind === "ORDER" ? pickList.medicationDecision.items : []).toMatchObject([
+      { id: "DEMO-MED-001", orderItemId: "order-fefo", quantity: 15 },
+    ]);
     expect(pickList.reservation).toMatchObject({
       visitId: "visit-fefo", medicationDecisionId: "decision-fefo", status: "ACTIVE",
     });

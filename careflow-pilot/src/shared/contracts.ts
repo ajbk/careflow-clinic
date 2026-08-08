@@ -694,6 +694,8 @@ const signedMedicationDecisionBaseSchema = z.strictObject({
   contentHash: contentHashSchema,
 });
 const signedMedicationItemSchema = medicationSchema.extend({
+  /** Stable link back to the immutable medication_order_items row when this DTO comes from the server. */
+  orderItemId: z.string().min(1).optional(),
   quantity: z.number().int().min(1).max(9999),
   directionsTh: requiredClinicalText(500),
 });

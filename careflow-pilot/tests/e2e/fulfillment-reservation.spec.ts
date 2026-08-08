@@ -101,6 +101,31 @@ test("reserves a signed Order across future lots in FEFO order and shares the Pi
     await expect(doctorPage.getByText("E2E-FEFO-EARLY", { exact: true })).toBeVisible();
     await expect(doctorPage.getByText("E2E-FEFO-LATE", { exact: true })).toBeVisible();
     await expect(doctorPage.getByRole("button", { name: "เริ่มจองล็อตตาม FEFO" })).toHaveCount(0);
+
+    // A second signed Order asks for eight units while only seven remain available.
+    // The all-or-nothing command must leave that Visit and every allocation untouched.
+    await assistantPage.goto(`${server.baseURL}/intake`);
+    const secondPatient = await createQueuedPatient(assistantPage, "อาการสังเคราะห์สต็อกไม่พอ");
+    await reviewAllergy(assistantPage);
+    await doctorPage.goto(`${server.baseURL}/queue`);
+    const secondDoctorCard = doctorPage.locator(".queue-card").filter({ hasText: secondPatient.hn });
+    await expect(secondDoctorCard).toHaveCount(1);
+    await secondDoctorCard.getByRole("button", { name: "เริ่มการตรวจ" }).click();
+    await expect(doctorPage).toHaveURL(/\/consultations\/[^/]+$/);
+    await signOrder(doctorPage);
+
+    await assistantPage.goto(`${server.baseURL}/dispensing/${secondPatient.visitId}`);
+    await assistantPage.getByRole("button", { name: "เริ่มจองล็อตตาม FEFO" }).click();
+    await expect(assistantPage.getByRole("alert")).toContainText("ไม่เพียงพอ");
+    await expect(assistantPage.getByText("AWAITING_PREPARATION", { exact: true })).toBeVisible();
+    await expect(assistantPage.getByText("E2E-FEFO-EARLY", { exact: true })).toHaveCount(0);
+    await expect(assistantPage.getByText("E2E-FEFO-LATE", { exact: true })).toHaveCount(0);
+    const insufficientPickList = await assistantPage.request.get(`${server.baseURL}/api/dispensing/${secondPatient.visitId}`);
+    expect(insufficientPickList.status()).toBe(200);
+    await expect(insufficientPickList.json()).resolves.toMatchObject({ data: {
+      visit: { status: "AWAITING_PREPARATION" },
+      reservation: null,
+    } });
   } finally {
     await assistantContext.close();
     await doctorContext.close();

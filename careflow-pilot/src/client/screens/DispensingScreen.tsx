@@ -19,13 +19,19 @@ function statusTone(status: InventoryPickListDto["visit"]["status"]): "waiting" 
   return "info";
 }
 
-function allocationsFor(allocationRows: InventoryReservationAllocationDto[], medicationId: string): InventoryReservationAllocationDto[] {
-  // Signed order DTOs intentionally omit internal order-item ids; medication id is the stable display key.
-  return allocationRows.filter((allocation) => allocation.medicationId === medicationId);
+function allocationsFor(
+  allocationRows: InventoryReservationAllocationDto[],
+  item: { id: string; orderItemId?: string },
+): InventoryReservationAllocationDto[] {
+  // Server-backed signed items carry the immutable order-item id. The medication fallback keeps older
+  // synthetic fixtures readable while never weakening the server-side allocation association.
+  return allocationRows.filter((allocation) => item.orderItemId
+    ? allocation.medicationOrderItemId === item.orderItemId
+    : allocation.medicationId === item.id);
 }
 
-function allocationRows(allocations: InventoryReservationAllocationDto[], medicationId: string): ReactElement | null {
-  const rows = allocationsFor(allocations, medicationId);
+function allocationRows(allocations: InventoryReservationAllocationDto[], item: { id: string; orderItemId?: string }): ReactElement | null {
+  const rows = allocationsFor(allocations, item);
   if (rows.length === 0) return null;
   return <div className="medication-allocations" aria-label="รายการล็อตตาม FEFO">{rows.map((allocation) => <div className="medication-allocation" key={allocation.id}><span><strong>{allocation.lotNumberSnapshot}</strong><small>หมดอายุ {formatThaiDate(allocation.expiryDateSnapshot)}</small></span><b>{allocation.quantity.toLocaleString("th-TH")} {allocation.unitSnapshot}</b></div>)}</div>;
 }
@@ -33,7 +39,7 @@ function allocationRows(allocations: InventoryReservationAllocationDto[], medica
 function orderCards(data: InventoryPickListDto): ReactElement {
   if (data.medicationDecision.kind !== "ORDER") return <p className="empty-detail">ไม่พบรายการยาแบบ ORDER</p>;
   const allocations = data.reservation?.allocations ?? [];
-  return <div className="medication-list">{data.medicationDecision.items.map((item, index) => <article className="medication-card" key={`${item.id}-${index}`}><span className="medication-check" aria-hidden="true"><PackageCheck size={17} /></span><div className="medication-copy"><strong>{item.displayName}</strong><small>{item.strengthText} · {item.dosageFormText}</small><em>จำนวน {item.quantity.toLocaleString("th-TH")} {item.canonicalUnit}</em><i>วิธีใช้: {item.directionsTh}</i>{allocationRows(allocations, item.id)}</div><StatusBadge tone={data.reservation?.status === "ACTIVE" ? "success" : "waiting"}>{data.reservation?.status === "ACTIVE" ? "จองแล้ว" : "รอจอง"}</StatusBadge></article>)}</div>;
+  return <div className="medication-list">{data.medicationDecision.items.map((item, index) => <article className="medication-card" key={`${item.id}-${item.orderItemId ?? index}`}><span className="medication-check" aria-hidden="true"><PackageCheck size={17} /></span><div className="medication-copy"><strong>{item.displayName}</strong><small>{item.strengthText} · {item.dosageFormText}</small><em>จำนวน {item.quantity.toLocaleString("th-TH")} {item.canonicalUnit}</em><i>วิธีใช้: {item.directionsTh}</i>{allocationRows(allocations, item)}</div><StatusBadge tone={data.reservation?.status === "ACTIVE" ? "success" : "waiting"}>{data.reservation?.status === "ACTIVE" ? "จองแล้ว" : "รอจอง"}</StatusBadge></article>)}</div>;
 }
 
 export function DispensingScreen(): ReactElement {

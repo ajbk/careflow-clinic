@@ -322,6 +322,7 @@ function readSignedDecision(
       noMedicationReason: null,
       items: items.map((item) => ({
         id: item.medicationId,
+        orderItemId: item.id,
         displayName: item.displayNameSnapshot,
         strengthText: item.strengthSnapshot,
         dosageFormText: item.dosageFormSnapshot,
