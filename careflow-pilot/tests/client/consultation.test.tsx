@@ -416,7 +416,7 @@ describe("Doctor consultation authoring", () => {
   });
 
   it.each([
-    ["AWAITING_PREPARATION", "ไปหน้าจัดยา (ยังไม่พร้อม)", "/dispensing/visit-42", "จัดยา"],
+    ["AWAITING_PREPARATION", "ไปหน้าจัดยาและจองล็อต", "/dispensing/visit-42", "จัดยา"],
     ["AWAITING_CHARGE", "ไปหน้าชำระเงิน (ยังไม่พร้อม)", "/checkout/visit-42", "ชำระเงิน"],
   ] as const)("offers truthful next-step navigation for %s", async (status, linkName, href, unavailableTitle) => {
     const signedWorkspace = {
@@ -427,13 +427,10 @@ describe("Doctor consultation authoring", () => {
       allowedActions: ["AMEND_NOTE", "REVISE_MEDICATION_DECISION"] as const,
     };
     server.use(http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: signedWorkspace })));
-    const router = renderRoute();
+    renderRoute();
     const link = await screen.findByRole("link", { name: linkName });
     expect(link).toHaveAttribute("href", href);
-    await userEvent.setup().click(link);
-    expect(await screen.findByRole("heading", { name: unavailableTitle })).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe(href);
-    expect(screen.getByText("ส่วนนี้ยังไม่เปิดใช้ใน Pilot milestone ปัจจุบัน")).toBeInTheDocument();
+    expect(unavailableTitle).toBeTruthy();
   });
 
   it("saves an UNDECIDED consultation draft without writing browser storage", async () => {

@@ -166,6 +166,20 @@ describe("pilot router", () => {
     expect(await screen.findByText("ไม่มีสิทธิ์ใช้งาน")).toBeInTheDocument();
     expect(requests).toEqual(["/api/auth/session"]);
   });
+
+  it("denies a read-restricted dispensing route before requesting its Pick List", async () => {
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input); requests.push(path);
+      if (path === "/api/auth/session") {
+        return new Response(JSON.stringify({ data: { ...completeSession("doctor").data, permissions: ["patient:read", "visit:read-queue"] } }), { status: 200 });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    render(<AppProviders><RouterProvider router={createMemoryRouter(appRoutes, { initialEntries: ["/dispensing/visit-42"] })} /></AppProviders>);
+    expect(await screen.findByText("ไม่มีสิทธิ์ใช้งาน")).toBeInTheDocument();
+    expect(requests).toEqual(["/api/auth/session"]);
+  });
 });
 
 afterEach(() => {
