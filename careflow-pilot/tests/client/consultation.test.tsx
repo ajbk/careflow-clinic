@@ -392,6 +392,7 @@ describe("Doctor consultation authoring", () => {
   it("offers an explicit catalog-backed ORDER revision for signed evidence", async () => {
     const user = userEvent.setup();
     const medication = { id: "DEMO-MED-001", displayName: "พาราเซตามอล", strengthText: "500 mg", dosageFormText: "tablet", canonicalUnit: "tablet", revision: 2 };
+    const catalogMedication = { ...medication, internalBarcode: "PARA-500" };
     const signedWorkspace = {
       ...workspace,
       visit: { ...visit, status: "AWAITING_ORDER_REVISION" as const, revision: 9 },
@@ -401,7 +402,7 @@ describe("Doctor consultation authoring", () => {
     };
     server.use(
       http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: signedWorkspace })),
-      http.get("/api/medications", () => HttpResponse.json({ data: [medication] })),
+      http.get("/api/medications", () => HttpResponse.json({ data: [catalogMedication] })),
     );
     renderRoute();
     const noteEvidence = await screen.findByLabelText("หลักฐาน Clinical Note ที่ลงนาม");
