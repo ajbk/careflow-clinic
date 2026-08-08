@@ -155,7 +155,7 @@
 - Modify: careflow-pilot/src/server/modules/inventory/schema.ts, service.ts, routes.ts
 - Modify: careflow-pilot/src/server/modules/platform/audit.ts, permissions.ts
 - Modify: careflow-pilot/src/server/modules/visit/service.ts and workflows/clinical.ts
-- Create: careflow-pilot/drizzle/0010_dispense_ledger.sql and matching metadata
+- Create: careflow-pilot/drizzle/0011_dispense_ledger.sql and matching metadata
 - Modify: careflow-pilot/src/client/features/dispensing.ts, screens/DispensingScreen.tsx, shared/contracts.ts
 - Test: careflow-pilot/tests/server/fulfillment-completion.test.ts, fulfillment-routes.test.ts, clinical-workflow.test.ts, tests/client/dispensing.test.tsx
 
@@ -170,7 +170,7 @@
 - [ ] **Step 2: Write RED handoff tests.** Assert handoff creates one Dispense Line and one negative movement per allocation, available/on-hand/reserved totals are correct, duplicate handoff is blocked, insufficient/expired/quarantined stock rolls back every row, and reservation becomes terminal CONSUMED.
 - [ ] **Step 3: Run RED.** Run npm run test:server -- tests/server/fulfillment-completion.test.ts tests/server/fulfillment-routes.test.ts. Expected failures are missing release/handoff endpoints, movement constraints, and consumption fields.
 - [ ] **Step 4: Implement Release and Reject.** Add exact chain checks and immutable evidence. Use fulfillment.artifact_invalidations for old artifacts. Add Doctor-only permission and required reasons. Ensure rejected Label reuse is explicit and print sequence is enforced.
-- [ ] **Step 5: Generalize the movement ledger safely.** Add DISPENSE with negative delta and source checks. Rebuild only the leaf inventory_stock_movements table under foreign_keys=ON; copy every existing receipt row unchanged; create triggers validating receipt/dispense sources and append-only updates/deletes; add a populated 0009-to-0010 migration test.
+- [ ] **Step 5: Generalize the movement ledger safely.** Add DISPENSE with negative delta and source checks. Rebuild only the leaf inventory_stock_movements table under foreign_keys=ON; copy every existing receipt row unchanged; create triggers validating receipt/dispense sources and append-only updates/deletes; add a populated 0010-to-0011 migration test.
 - [ ] **Step 6: Implement atomic Handoff.** Insert Dispense and Lines before movement trigger validation, write movement rows using generated line IDs as sources, set reservation CONSUMED with dispense metadata, increment touched lot revisions once, append audit events, and advance Visit only after every precondition is re-read.
 - [ ] **Step 7: Wire client final-check and handoff.** Show Release/Reject only to Doctor, Handoff to Assistant/Doctor only at AWAITING_HANDOFF, preserve reject reason, and render post-handoff stock/Visit state from the API.
 - [ ] **Step 8: Run GREEN and full affected suites.** Run focused tests, npm run test:server, npm run test:client, npm run typecheck, npm run lint, and migration upgrade tests. Commit with feat: complete release handoff and dispense.
@@ -182,7 +182,7 @@
 - Modify: careflow-pilot/src/server/modules/inventory/schema.ts, service.ts, routes.ts, index.ts
 - Modify: careflow-pilot/src/server/modules/platform/permissions.ts, audit.ts
 - Modify: careflow-pilot/src/server/modules/visit/service.ts
-- Create: careflow-pilot/drizzle/0011_inventory_integrity.sql and matching metadata
+- Create: careflow-pilot/drizzle/0012_inventory_integrity.sql and matching metadata
 - Modify: careflow-pilot/src/client/features/inventory.ts, screens/InventoryScreen.tsx, screens/QueueScreen.tsx, screens/OverviewScreen.tsx
 - Modify: careflow-pilot/src/client/styles/globals.css
 - Test: careflow-pilot/tests/server/inventory.test.ts, fulfillment-completion.test.ts, reset-synthetic-data.test.ts, tests/client/inventory.test.tsx, queue.test.tsx
@@ -217,7 +217,7 @@
 - [ ] **Step 4: Run complete verification fresh.** From careflow-pilot run npm test, npm run lint, npm run typecheck, npm run build, npm run test:e2e, and git diff --check. Record exact pass counts, build result, migration upgrade result, and any non-blocking bundle warnings.
 - [ ] **Step 5: Review requirements line by line.** Confirm PRD criteria for ORDER/NO_MEDICATION, invalidation, barcode/manual evidence, FEFO/race/rollback, idempotency, restart, role denial, audit, print size, and adjustment/quarantine are each covered by a named test or persisted evidence.
 - [ ] **Step 6: Request a final GPT-5.6 Sol Max read-only review.** Give the reviewer the spec, plan, implementation reports, full diff, migration upgrade evidence, and fresh verification output. Fix every Critical/Important finding through a focused RED→GREEN loop and scoped re-review.
-- [ ] **Step 7: Update the ledger and commit documentation.** Record the complete path, routes, migrations 0009–0011, permissions, audit actions, pass counts, and deferred Milestone 4 boundary. Commit documentation/test evidence with test: cover fulfillment completion pilot flow.
+- [ ] **Step 7: Update the ledger and commit documentation.** Record the complete path, routes, migrations 0009–0012, permissions, audit actions, pass counts, and deferred Milestone 4 boundary. Commit documentation/test evidence with test: cover fulfillment completion pilot flow.
 - [ ] **Step 8: Stop for user acceptance.** Report what is implemented, what was verified, the final Sol Max verdict, and that Finance & Close remains the next milestone. Do not start Milestone 4 without a new user request.
 
 ## Execution and review protocol
