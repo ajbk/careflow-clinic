@@ -94,7 +94,7 @@ Allow `saveDraft` whenever the workspace is editable and current values satisfy 
 
 Run: `npm run test:client -- tests/client/consultation.test.tsx`
 
-Run: `npm run test:server -- tests/server/clinical.test.ts`
+Run: `npm run test:server -- tests/server/clinical-workflow.test.ts`
 
 Expected: both pass and finalization still rejects incomplete evidence.
 
@@ -177,7 +177,7 @@ Expected: stale warning, retained text, blocked commands, and recovery behavior 
 
 **Files:**
 - Modify: `careflow-pilot/src/server/workflows/clinical.ts`
-- Test: `careflow-pilot/tests/server/visit.test.ts`
+- Test: `careflow-pilot/tests/server/clinical-workflow.test.ts`
 - Test: `careflow-pilot/tests/server/restart.test.ts`
 
 **Interfaces:**
@@ -202,7 +202,7 @@ expect(workspace.patientSnapshot.currentMedicationContext).toEqual({
 
 - [ ] **Step 2: Run the server test and confirm RED**
 
-Run: `npm run test:server -- tests/server/visit.test.ts`
+Run: `npm run test:server -- tests/server/clinical-workflow.test.ts`
 
 Expected: Snapshot returns `UNKNOWN`.
 
@@ -212,7 +212,7 @@ Keep ORDER mapping unchanged. Map NO_MEDICATION to one Thai summary string conta
 
 - [ ] **Step 4: Run server tests and confirm GREEN**
 
-Run: `npm run test:server -- tests/server/visit.test.ts tests/server/restart.test.ts`
+Run: `npm run test:server -- tests/server/clinical-workflow.test.ts tests/server/restart.test.ts`
 
 Expected: both pass.
 

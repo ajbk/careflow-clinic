@@ -4,6 +4,7 @@ import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
+import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { AppProviders } from "../../src/client/app/providers";
 import { appRoutes } from "../../src/client/app/router";
 
@@ -18,7 +19,8 @@ const workspace = {
 };
 const doctorSession = { data: { user: { id: "doctor-1", username: "doctor", displayName: "พญ. ทดสอบ", role: "doctor" }, clinic: { id: "clinic", name: "คลินิกทดสอบ" }, permissions: ["patient:read", "visit:read-queue", "visit:start-consultation", "clinical:read", "clinical:save-draft", "clinical:sign", "clinical:amend", "patient:update-allergy", "medication:read-catalog", "medication:sign-decision"], pilotAcknowledgedAt: "2026-08-03T00:00:00.000Z", mustChangePassword: false, idleExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() } };
 const server = setupServer();
-function renderRoute(path = "/consultations/visit-42") { const router = createMemoryRouter(appRoutes, { initialEntries: [path] }); render(<AppProviders><RouterProvider router={router} /></AppProviders>); return router; }
+function QueryClientCapture({ capture }: { capture: (client: QueryClient) => void }) { capture(useQueryClient()); return null; }
+function renderRoute(path = "/consultations/visit-42", capture?: (client: QueryClient) => void) { const router = createMemoryRouter(appRoutes, { initialEntries: [path] }); render(<AppProviders>{capture ? <QueryClientCapture capture={capture} /> : null}<RouterProvider router={router} /></AppProviders>); return router; }
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 beforeEach(() => server.resetHandlers(
@@ -131,6 +133,36 @@ describe("Doctor consultation authoring", () => {
       expectedRevisions: { visit: 8, noteDraft: 2, medicationDraft: 0 },
       payload: { note: { subjective: "ต้นฉบับที่แก้ในเครื่อง" }, medicationDecision: { kind: "UNDECIDED" } },
     }));
+  });
+
+  it("warns on a stale workspace, blocks commands, and recovers without losing text", async () => {
+    const user = userEvent.setup();
+    let workspaceRequests = 0;
+    let failRefresh = true;
+    let queryClient: QueryClient | null = null;
+    server.use(http.get("/api/visits/visit-42/workspace", () => {
+      workspaceRequests += 1;
+      if (workspaceRequests > 1 && failRefresh) return HttpResponse.error();
+      return HttpResponse.json({ data: workspace });
+    }));
+    renderRoute("/consultations/visit-42", (client) => { queryClient = client; });
+    const subjective = await screen.findByLabelText("Subjective (ข้อมูลจากผู้ป่วย)");
+    await user.type(subjective, "ข้อความระหว่างสัญญาณขาดหาย");
+    if (!queryClient) throw new Error("missing query client");
+    await act(async () => { await queryClient!.refetchQueries({ queryKey: ["visit", "visit-42"] }); });
+
+    expect(await screen.findByText(/ข้อมูลห้องตรวจอาจไม่เป็นปัจจุบัน/)).toBeInTheDocument();
+    expect(subjective).toHaveValue("ข้อความระหว่างสัญญาณขาดหาย");
+    expect(screen.getByRole("button", { name: "บันทึกร่าง" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "ทบทวนประวัติแพ้" })).toBeDisabled();
+
+    failRefresh = false;
+    await user.click(screen.getByRole("button", { name: "โหลดข้อมูลล่าสุด" }));
+    await waitFor(() => expect(workspaceRequests).toBeGreaterThan(2));
+    await waitFor(() => expect(screen.queryByText(/ข้อมูลห้องตรวจอาจไม่เป็นปัจจุบัน/)).not.toBeInTheDocument());
+    expect(subjective).toHaveValue("ข้อความระหว่างสัญญาณขาดหาย");
+    expect(screen.getByRole("button", { name: "บันทึกร่าง" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "ทบทวนประวัติแพ้" })).toBeEnabled();
   });
 
   it("renders the complete source-linked patient snapshot, including UNKNOWN facts", async () => {

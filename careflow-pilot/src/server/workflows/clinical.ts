@@ -282,8 +282,14 @@ export function createClinicalWorkflow(input: {
           activeProblems: latestNote
             ? { state: "VALUE" as const, value: latestNote.diagnoses, source: noteSource! }
             : unknown,
-          currentMedicationContext: latestDecision?.kind === "ORDER"
-            ? { state: "VALUE" as const, value: latestDecision.items.map((item) => item.displayName), source: decisionSource! }
+          currentMedicationContext: latestDecision
+            ? {
+                state: "VALUE" as const,
+                value: latestDecision.kind === "ORDER"
+                  ? latestDecision.items.map((item) => item.displayName)
+                  : [`ไม่สั่งยา: ${latestDecision.noMedicationReason}`],
+                source: decisionSource!,
+              }
             : unknown,
           latestRelevantPlan: latestNote
             ? { state: "VALUE" as const, value: latestNote.plan, source: noteSource! }

@@ -393,6 +393,50 @@ describe("consultation finalization", () => {
       .toHaveLength(1);
   });
 
+  it("returns a sourced medication Snapshot for a signed NO_MEDICATION decision on a later Visit", async () => {
+    const test = await fixture();
+    const visitId = await createConsultingVisit(test);
+    await saveCompleteDraft(test, visitId, "NO_MEDICATION");
+    const finalized = await finalize(test, visitId, completeFinalizationBody(), "clinical-finalize-no-medication-snapshot");
+    expect(finalized.statusCode).toBe(200);
+    const patientId = test.database.db.select().from(visits).where(eq(visits.id, visitId)).get()?.patientId;
+    if (!patientId) throw new Error("missing fixture patient");
+    test.database.sqlite.prepare("UPDATE visits SET status='CLOSED', closed_at=? WHERE id=?")
+      .run("2026-08-03T01:00:00.000Z", visitId);
+    const laterIntake = await test.app.inject({
+      method: "POST",
+      url: "/api/visits/intake",
+      headers: { cookie: test.assistantCookie, "idempotency-key": "clinical-later-intake-no-medication" },
+      payload: {
+        expectedRevisions: { patient: 1 },
+        payload: {
+          patientId,
+          chiefComplaint: "ติดตามอาการ",
+          vitals: { weightKg: 60, heightCm: 165, temperatureC: 37, systolicMmhg: 120, diastolicMmhg: 80, heartRateBpm: 80, spo2Percent: 98 },
+        },
+      },
+    });
+    expect(laterIntake.statusCode).toBe(201);
+    const laterVisitId = laterIntake.json().data.visit.id as string;
+
+    const workspace = await test.app.inject({
+      method: "GET",
+      url: `/api/visits/${laterVisitId}/workspace`,
+      headers: { cookie: test.doctorCookie },
+    });
+
+    expect(workspace.statusCode).toBe(200);
+    expect(workspace.json().data.patientSnapshot.currentMedicationContext).toEqual({
+      state: "VALUE",
+      value: ["ไม่สั่งยา: ไม่มีข้อบ่งชี้ในการจ่ายยา"],
+      source: {
+        type: "MEDICATION_DECISION",
+        id: finalized.json().data.medicationDecision.id,
+        occurredAt: finalized.json().data.medicationDecision.signedAt,
+      },
+    });
+  });
+
   it.each([
     ["subjective", { subjective: "", objective: "O", assessment: "A", plan: "P", diagnoses: ["D"] }],
     ["objective", { subjective: "S", objective: "  ", assessment: "A", plan: "P", diagnoses: ["D"] }],

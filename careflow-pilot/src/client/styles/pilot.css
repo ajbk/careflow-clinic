@@ -470,6 +470,7 @@
 .catalog-result { min-height: 48px; padding: 10px 14px; border: 1px solid var(--outline); border-radius: 10px; background: var(--surface-container-lowest); color: var(--on-surface); text-align: left; cursor: pointer; }
 .catalog-result:hover, .catalog-result:focus-visible { border-color: var(--primary); outline: 2px solid var(--primary); outline-offset: 2px; }
 .conflict-alert { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 12px; border-radius: 12px; background: var(--error-container); color: var(--on-error-container); }
+.workspace-stale-alert { justify-content: space-between; }
 .dialog-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px; background: rgba(20,30,25,.52); }
 .allergy-dialog, .sign-dialog { width: min(560px, 100%); display: grid; gap: 16px; max-height: calc(100vh - 32px); overflow: auto; padding: 24px; }
 .allergy-items { display: grid; gap: 12px; }
