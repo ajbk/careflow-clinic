@@ -2,9 +2,9 @@
 
 > **PILOT — ข้อมูลสังเคราะห์เท่านั้น ห้ามกรอกข้อมูลผู้ป่วยจริง**
 
-This is a runnable local, single-host pilot for the CareFlow rural-clinic workflow. It is deliberately limited to synthetic Patient generation, Intake, a shared Queue, and the Doctor Consultation workspace. The enabled clinical slice records an append-only Allergy review, a SOAP Note and diagnosis draft, then an immutable signed clinical Note and exactly one synthetic medication decision: `ORDER` from the four repository-seeded `[DEMO]` medicines, or `NO_MEDICATION` with a reason.
+This is a runnable local, single-host pilot for the CareFlow rural-clinic workflow. It is deliberately limited to synthetic Patient generation, Intake, a shared Queue, the Doctor Consultation workspace, and the Phase 2A medication inventory dashboard/receiving flow. The enabled clinical slice records an append-only Allergy review, a SOAP Note and diagnosis draft, then an immutable signed clinical Note and exactly one synthetic medication decision: `ORDER` from the four repository-seeded `[DEMO]` medicines, or `NO_MEDICATION` with a reason.
 
-Signing an `ORDER` moves the Visit to `รอจัดยา`; signing `NO_MEDICATION` moves it to `รอคิดเงิน`. These are deliberately pending states only: this pilot does not prepare, dispense, charge, or close a Visit. Signed hashes, revisions, and Queue/dashboard status survive a restart because they are stored in the local SQLite file.
+Signing an `ORDER` moves the Visit to `รอจัดยา`; signing `NO_MEDICATION` moves it to `รอคิดเงิน`. These are deliberately pending states only: this pilot does not prepare, dispense, charge, or close a Visit. Assistants can receive synthetic medication lots from the Inventory screen; stock reservation, FEFO allocation, preparation, dispensing, and handoff remain later phases. Signed hashes, revisions, Queue/dashboard status, and received inventory survive a restart because they are stored in the local SQLite file.
 
 ## Quick start (Node 22)
 
@@ -38,6 +38,7 @@ npm start
    - `ORDER`: select `[DEMO] ยาทดสอบชนิด A`, set a synthetic quantity and directions, save the draft, then sign.
    - `NO_MEDICATION`: enter a synthetic reason, save the draft, then sign.
 3. Reload Browser B and confirm the signed hash and decision version remain. Reload Browser A and confirm the same HN/Visit is `รอจัดยา` for `ORDER`, or `รอคิดเงิน` for `NO_MEDICATION`. Assistant must not open the Doctor Consultation URL; the server returns `403` before clinical data is read.
+4. In Browser A, open `คลังยา`, choose `รับยาเข้าคลัง`, search `DEMO`, select a seeded medication, enter a positive quantity, a unique lot number, a future expiry date, and a synthetic supplier, then confirm the dashboard shows the new quantity and status. In Browser B, open `คลังยา` to verify the same stock is readable; the doctor has no receive action and the server rejects a direct receipt request with `403`.
 
 The browser is not an authority for Patient or Visit state; the server database is. Never enter real clinical prose, real medication directions, or real Patient identity in this rehearsal.
 
@@ -75,4 +76,4 @@ The E2E fixture creates a temporary synthetic-only SQLite file and two isolated 
 
 ## Explicitly unavailable
 
-Inventory, stock reservation, preparation, labeling, dispensing, Finance/payment, Visit close, backup/restore, deployment, HTTPS/Caddy, external integrations, analytics, and real Patient data are **disabled** for this local pilot. The database reset command is a synthetic-data maintenance tool, not a backup or deployment mechanism.
+Stock reservation, FEFO allocation, preparation, labeling, dispensing, Finance/payment, Visit close, backup/restore, deployment, HTTPS/Caddy, external integrations, analytics, and real Patient data are **disabled** for this local pilot. Inventory summary and synthetic stock reception are enabled as Phase 2A. The database reset command is a synthetic-data maintenance tool, not a backup or deployment mechanism.

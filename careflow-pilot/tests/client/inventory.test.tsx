@@ -104,8 +104,9 @@ describe("Inventory screens", () => {
     await user.type(screen.getByRole("textbox", { name: "เลขที่ล็อต" }), "PCM-2608");
     await user.type(screen.getByRole("textbox", { name: /ผู้ผลิต|ผู้จัดจำหน่าย/ }), "องค์การเภสัชกรรม");
     const expiry = screen.getByLabelText("วันหมดอายุ");
-    expect(expiry).toHaveAttribute("min", tomorrowInBangkok());
-    await user.type(expiry, "2026-10-01");
+    const expiryValue = tomorrowInBangkok();
+    expect(expiry).toHaveAttribute("min", expiryValue);
+    await user.type(expiry, expiryValue);
     await user.click(screen.getByRole("button", { name: "ยืนยันการรับยา" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(messageTh);
@@ -113,7 +114,7 @@ describe("Inventory screens", () => {
     expect(screen.getByRole("spinbutton", { name: "จำนวนที่รับ" })).toHaveValue(25);
     expect(screen.getByRole("textbox", { name: "เลขที่ล็อต" })).toHaveValue("PCM-2608");
     expect(screen.getByRole("textbox", { name: /ผู้ผลิต|ผู้จัดจำหน่าย/ })).toHaveValue("องค์การเภสัชกรรม");
-    expect(screen.getByLabelText("วันหมดอายุ")).toHaveValue("2026-10-01");
+    expect(screen.getByLabelText("วันหมดอายุ")).toHaveValue(expiryValue);
     await user.click(screen.getByRole("button", { name: "ยืนยันการรับยา" }));
     await screen.findByRole("alert");
     expect(idempotencyKeys).toHaveLength(2);
