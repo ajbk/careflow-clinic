@@ -17,7 +17,7 @@
 - A medication/lot-number pair is unique within the clinic; duplicate lots return `INVALID_STATE`.
 - Reception requires an active medication, exact medication revision, positive integer quantity `1..999999`, trimmed lot `1..100`, supplier `1..200`, note `0..500`, and an ISO expiry date after the clinic date in `Asia/Bangkok`.
 - Assistant has `inventory:read` and `inventory:receive`; doctor has `inventory:read` only. The existing `/api/medications` permission behavior must not change.
-- Idempotency replay must return the original command envelope; the same key with a different request is `IDEMPOTENCY_CONFLICT`.
+- Idempotency replay must return the original command envelope; the same key with a different request is `IDEMPOTENCY_CONFLICT`. Inventory receipts use standard exact envelope storage/replay because their synthetic-only DTO contains a historical aggregate snapshot; do not rebuild it from a receipt reference.
 - UI must reuse the existing `PageHeader`, `Card`, `SectionHeading`, `StatusBadge`, table, summary-card, and stock form styles already present in `src/client/styles/globals.css`.
 - Every behavior change follows TDD: write one focused failing test, run it and observe the expected failure, implement the minimum, run the focused test, then run the relevant suite.
 
@@ -90,7 +90,7 @@
 
 - [ ] **Step 3: Add permissions and audit policy.** Add `inventory:read` and `inventory:receive` to the permission enum. Add both permissions to assistant and only `inventory:read` to doctor. Register `inventory.stock-received` as optional-reason in the audit policy.
 
-- [ ] **Step 4: Implement routes with the existing auth/idempotency patterns.** Require actor permissions before service calls. Parse strict query/body contracts. Use `executeIdempotent` with operation `inventory.receive`, actor scope, request envelope, service work, and a safe replay reference to the receipt id so replay rebuilds the current receipt response. Return `200` for replay and `201` for the first receipt.
+- [ ] **Step 4: Implement routes with the existing auth/idempotency patterns.** Require actor permissions before service calls. Parse strict query/body contracts. Use `executeIdempotent` with operation `inventory.receive`, actor scope, request envelope, and service work. Use standard exact envelope storage/replay for this synthetic-only receipt DTO so its aggregate snapshot is not recomputed after later receipts or a date rollover. Return `200` for replay and `201` for the first receipt.
 
 - [ ] **Step 5: Register the module and run GREEN.** Register the inventory service/routes in `src/server/app.ts`, run `npm run test:server -- tests/server/inventory.test.ts`, then run the full `npm run test:server` suite to catch permission regressions (especially the existing assistant `/api/medications` denial).
 

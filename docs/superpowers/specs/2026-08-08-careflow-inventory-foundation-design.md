@@ -45,7 +45,7 @@ Give the local synthetic-only pilot one authoritative way to receive medication 
 - A medication/lot-number pair is unique within the clinic. Receiving the same lot again is rejected; merging receipts is deferred until a receiving workflow explicitly supports it.
 - Stock balances are never stored or updated directly. All writes go through the receipt command and movement ledger.
 - Receipt, lot, receipt line, movement, and audit event are one SQLite immediate transaction.
-- Repeating an `Idempotency-Key` with the same request replays the original response. Reusing it with a different request is an `IDEMPOTENCY_CONFLICT`.
+- Repeating an `Idempotency-Key` with the same request replays the original response. Reusing it with a different request is an `IDEMPOTENCY_CONFLICT`. For this synthetic-only inventory receipt DTO, the command stores the standard full `{ data, replayed }` envelope so its aggregate snapshot remains byte-equivalent after later receipts or a clinic-date rollover; it does not use a reference rebuild.
 
 ## Persistence model
 
@@ -93,7 +93,7 @@ Database triggers reject update and delete operations on receipt, receipt-line, 
 }
 ```
 
-The response is the standard `{ data, replayed }` command envelope and contains the receipt, lot, medication snapshot, and resulting aggregate for that medication.
+The response is the standard `{ data, replayed }` command envelope and contains the receipt, lot, medication snapshot, and resulting aggregate for that medication. Inventory receipt retries use exact envelope replay because this synthetic-only DTO is non-sensitive and includes a historical aggregate snapshot that must not be recomputed.
 
 Validation is handled by shared Zod contracts and server-side checks: quantity `1..999999`, lot `1..100` trimmed characters, supplier `1..200`, note `0..500`, future ISO date, active medication, and exact medication revision. Duplicate lots use `INVALID_STATE`; stale medication revisions use `REVISION_CONFLICT`.
 
@@ -134,4 +134,3 @@ The threshold `10` is a named synthetic-pilot policy constant in the inventory m
 ## Non-goals and rollout
 
 No new external service or dependency is required. The migration must be applied by the existing database startup path. The frozen `careflow-webapp/` and `stitch_careflow_clinic_management_system/` directories are read-only design references and must not be modified.
-

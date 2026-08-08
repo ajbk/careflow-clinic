@@ -1,7 +1,5 @@
 import type { FastifyInstance } from "fastify";
 import {
-  type InventoryReceiptDto,
-  inventoryReceiptSchema,
   medicationSearchQuerySchema,
   receiveInventoryBodySchema,
 } from "../../../shared/contracts.js";
@@ -63,13 +61,6 @@ export function registerInventoryRoutes(input: {
           },
         });
         return { statusCode: 201, data: receipt };
-      },
-      safeReplay: {
-        store: (receipt) => ({ receiptId: receipt.id }),
-        rebuild: (_tx, reference) => input.inventory.getReceipt(reference.receiptId),
-        isLegacyResponse: (data): data is InventoryReceiptDto => (
-          inventoryReceiptSchema.safeParse(data).success
-        ),
       },
     });
     return reply.code(result.body.replayed ? 200 : result.statusCode).send(result.body);

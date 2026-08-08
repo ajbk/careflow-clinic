@@ -226,7 +226,7 @@ describe("inventory receiving API", () => {
     })).statusCode).toBe(403);
   });
 
-  it("receives stock atomically with audit evidence and safely replays only the receipt reference", async () => {
+  it("receives stock atomically with audit evidence and exactly replays the original receipt response", async () => {
     const fixture = await inventoryApiFixture();
     const command = receiptCommand({ note: "นับรับพร้อมใบส่งของ" });
     const headers = { cookie: fixture.assistantCookie, "idempotency-key": "inventory-receipt-001" };
@@ -257,17 +257,22 @@ describe("inventory receiving API", () => {
       response_json: string;
     };
     expect(stored.request_hash).toBe("3a96c7495f31ee87dff376013c6a55c9ed34146abd9c2c8cf5fd9fb033ddae1f");
-    expect(JSON.parse(stored.response_json)).toEqual({
-      type: "safe-replay-reference",
-      reference: { receiptId: first.json().data.id },
+    expect(JSON.parse(stored.response_json)).toEqual({ data: first.json().data, replayed: false });
+
+    const second = await fixture.app.inject({
+      method: "POST", url: "/api/inventory/receipts",
+      headers: { cookie: fixture.assistantCookie, "idempotency-key": "inventory-receipt-002" },
+      payload: receiptCommand({ lotNumber: "API-LOT-002", quantity: 5, note: "ล็อตถัดไป" }),
     });
+    expect(second.statusCode).toBe(201);
+    expect(second.json().data.inventory.available).toBe(17);
 
     const replay = await fixture.app.inject({
       method: "POST", url: "/api/inventory/receipts", headers, payload: command,
     });
     expect(replay.statusCode).toBe(200);
     expect(replay.json()).toEqual({ data: first.json().data, replayed: true });
-    expect(fixture.database.sqlite.prepare("SELECT count(*) AS count FROM audit_events").get()).toEqual({ count: 1 });
+    expect(fixture.database.sqlite.prepare("SELECT count(*) AS count FROM audit_events").get()).toEqual({ count: 2 });
 
     const collision = await fixture.app.inject({
       method: "POST", url: "/api/inventory/receipts", headers,
