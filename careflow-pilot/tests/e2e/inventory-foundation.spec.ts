@@ -1,0 +1,58 @@
+import { expect, test } from "@playwright/test";
+import { loginAndAcknowledge, startPilotServer } from "./fixtures.js";
+
+test("assistant receives a synthetic lot while doctor can read but cannot submit receipts", async ({ browser }) => {
+  const server = await startPilotServer();
+  const assistantContext = await browser.newContext();
+  const doctorContext = await browser.newContext();
+  const assistantPage = await assistantContext.newPage();
+  const doctorPage = await doctorContext.newPage();
+  const expiryDate = "2030-08-31";
+  try {
+    await loginAndAcknowledge(assistantPage, server.baseURL, "assistant");
+    await assistantPage.goto(`${server.baseURL}/inventory`);
+    await expect(assistantPage).toHaveURL(/\/inventory$/);
+    await assistantPage.getByRole("link", { name: "รับยาเข้าคลัง" }).click();
+    await expect(assistantPage).toHaveURL(/\/inventory\/receive$/);
+
+    await assistantPage.getByRole("combobox", { name: "ค้นหายา" }).fill("DEMO");
+    await assistantPage.getByRole("option", { name: /\[DEMO\] ยาทดสอบชนิด A/ }).click();
+    await assistantPage.getByRole("spinbutton", { name: "จำนวนที่รับ" }).fill("10");
+    await assistantPage.getByRole("textbox", { name: "เลขที่ล็อต" }).fill("E2E-2608");
+    await assistantPage.getByLabel("วันหมดอายุ").fill(expiryDate);
+    await assistantPage.getByRole("textbox", { name: /ผู้ผลิต \/ ผู้จัดจำหน่าย/ }).fill("ผู้จำหน่าย E2E");
+    await assistantPage.getByRole("button", { name: "ยืนยันการรับยา" }).click();
+
+    await expect(assistantPage).toHaveURL(/\/inventory$/);
+    const inventoryRow = assistantPage.locator(".inventory-table tbody tr").filter({ hasText: "[DEMO] ยาทดสอบชนิด A" });
+    await expect(inventoryRow).toContainText("10");
+    await expect(inventoryRow).toContainText("ใกล้หมด");
+
+    await loginAndAcknowledge(doctorPage, server.baseURL, "doctor");
+    await doctorPage.goto(`${server.baseURL}/inventory`);
+    await expect(doctorPage).toHaveURL(/\/inventory$/);
+    await expect(doctorPage.locator(".inventory-table tbody tr").filter({ hasText: "[DEMO] ยาทดสอบชนิด A" })).toContainText("10");
+    await expect(doctorPage.getByRole("link", { name: /รับยาเข้าคลัง|บันทึกรับยาใหม่/ })).toHaveCount(0);
+
+    const denied = await doctorPage.request.post(`${server.baseURL}/api/inventory/receipts`, {
+      headers: { "idempotency-key": "inventory-e2e-doctor-denied-001" },
+      data: {
+        expectedRevisions: { medication: 1 },
+        payload: {
+          medicationId: "DEMO-MED-001",
+          quantity: 10,
+          lotNumber: "E2E-DOCTOR-DENIED",
+          expiryDate,
+          supplierName: "ผู้จำหน่าย E2E",
+          note: "ต้องถูกปฏิเสธ",
+        },
+      },
+    });
+    expect(denied.status()).toBe(403);
+    await expect(denied.json()).resolves.toMatchObject({ error: { code: "FORBIDDEN" } });
+  } finally {
+    await assistantContext.close();
+    await doctorContext.close();
+    await server.close();
+  }
+});
