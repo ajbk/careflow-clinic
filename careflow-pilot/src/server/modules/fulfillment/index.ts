@@ -14,3 +14,5 @@ export {
   fulfillmentRejections,
   fulfillmentReleases,
 } from "./schema.js";
+export { createFulfillmentService, type FulfillmentService, type FulfillmentServiceOptions } from "./service.js";
+export { registerFulfillmentRoutes } from "./routes.js";

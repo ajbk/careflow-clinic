@@ -17,6 +17,7 @@ import { createPatientService, registerPatientRoutes } from "./modules/patient/i
 import { createVisitService, registerVisitRoutes } from "./modules/visit/index.js";
 import { createMedicationService, registerMedicationRoutes } from "./modules/medication/index.js";
 import { createInventoryService, registerInventoryRoutes } from "./modules/inventory/index.js";
+import { createFulfillmentService, registerFulfillmentRoutes } from "./modules/fulfillment/index.js";
 import { createNoteService } from "./modules/note/index.js";
 import { createClinicalWorkflow } from "./workflows/clinical.js";
 import { registerClinicalRoutes } from "./workflows/clinical-routes.js";
@@ -116,6 +117,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     idFactory: options.idFactory,
   });
   registerInventoryRoutes({ app, database: options.db, inventory: inventoryService });
+  const fulfillmentService = createFulfillmentService({ database: options.db, inventory: inventoryService, medications: medicationService, visits: visitService, clock: options.clock, idFactory: options.idFactory });
+  registerFulfillmentRoutes({ app, database: options.db, fulfillment: fulfillmentService });
   const noteService = createNoteService({ database: options.db, clock: options.clock });
   const clinicalWorkflow = createClinicalWorkflow({
     patients: patientService,
@@ -123,6 +126,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     notes: noteService,
     medications: medicationService,
     inventory: inventoryService,
+    fulfillment: fulfillmentService,
     clock: options.clock,
   });
   registerClinicalRoutes({ app, database: options.db, clinical: clinicalWorkflow });

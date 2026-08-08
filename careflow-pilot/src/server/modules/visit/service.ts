@@ -467,7 +467,8 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
       assertExpectedRevision(visit.revision, body.expectedRevisions.visit, "visit");
       const allowed = visit.status === "WAITING" || (
         actor.role === "doctor" && (
-          visit.status === "CONSULTING" || visit.status === "AWAITING_PREPARATION" || visit.status === "PREPARING"
+          visit.status === "CONSULTING" || visit.status === "AWAITING_PREPARATION" || visit.status === "PREPARING" ||
+          visit.status === "AWAITING_RELEASE" || visit.status === "AWAITING_HANDOFF"
         )
       );
       if (!allowed) {
@@ -570,6 +571,8 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
         visit.status !== "AWAITING_ORDER_REVISION" &&
         visit.status !== "AWAITING_PREPARATION" &&
         visit.status !== "PREPARING" &&
+        visit.status !== "AWAITING_RELEASE" &&
+        visit.status !== "AWAITING_HANDOFF" &&
         visit.status !== "AWAITING_CHARGE"
       ) {
         throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่อนุญาตให้แก้ไขคำสั่งยา" });
@@ -614,7 +617,7 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
     transitionAllergySafety(tx, actor, visit, reason) {
       if (
         actor.role !== "doctor" ||
-        (visit.status !== "AWAITING_PREPARATION" && visit.status !== "PREPARING")
+        (visit.status !== "AWAITING_PREPARATION" && visit.status !== "PREPARING" && visit.status !== "AWAITING_RELEASE" && visit.status !== "AWAITING_HANDOFF")
       ) {
         throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่อนุญาตให้ทบทวนข้อมูลแพ้" });
       }
@@ -624,7 +627,7 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
         .where(and(
           eq(visits.id, visit.id),
           eq(visits.clinicId, "clinic"),
-          inArray(visits.status, ["AWAITING_PREPARATION", "PREPARING"]),
+          inArray(visits.status, ["AWAITING_PREPARATION", "PREPARING", "AWAITING_RELEASE", "AWAITING_HANDOFF"]),
           eq(visits.revision, visit.revision),
         )).run();
       if (changed.changes !== 1) {

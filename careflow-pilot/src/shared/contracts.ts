@@ -52,6 +52,14 @@ export const permissionSchema = z.enum([
   "inventory:read",
   "inventory:receive",
   "inventory:reserve",
+  "fulfillment:read",
+  "fulfillment:prepare",
+  "label:print",
+  "fulfillment:release",
+  "fulfillment:handoff",
+  "inventory:quarantine",
+  "inventory:release-quarantine",
+  "inventory:adjust",
 ]);
 
 export const loginBodySchema = z.strictObject({
@@ -871,6 +879,24 @@ export const fulfillmentConfirmationBodySchema = rejectOwnPrototypeKeys(z.strict
   payload: fulfillmentConfirmationPayloadSchema,
 }));
 export type FulfillmentConfirmationBody = z.infer<typeof fulfillmentConfirmationBodySchema>;
+
+export const fulfillmentPrintBodySchema = rejectOwnPrototypeKeys(z.strictObject({
+  expectedRevisions: z.strictObject({ visit: z.number().int().min(1) }),
+  payload: z.strictObject({ rendererVersion: z.string().trim().min(1).max(100) }),
+}));
+export type FulfillmentPrintBody = z.infer<typeof fulfillmentPrintBodySchema>;
+
+export const fulfillmentCompletePreparationBodySchema = rejectOwnPrototypeKeys(z.strictObject({
+  expectedRevisions: z.strictObject({ visit: z.number().int().min(1), preparation: z.number().int().min(1) }),
+  payload: z.strictObject({ preparationId: fulfillmentIdSchema }),
+}));
+export type FulfillmentCompletePreparationBody = z.infer<typeof fulfillmentCompletePreparationBodySchema>;
+
+export const fulfillmentAbandonPreparationBodySchema = rejectOwnPrototypeKeys(z.strictObject({
+  expectedRevisions: z.strictObject({ visit: z.number().int().min(1), preparation: z.number().int().min(1) }),
+  payload: z.strictObject({ preparationId: fulfillmentIdSchema, reason: fulfillmentTextSchema(500) }),
+}));
+export type FulfillmentAbandonPreparationBody = z.infer<typeof fulfillmentAbandonPreparationBodySchema>;
 
 export const snapshotSourceSchema = z.strictObject({
   type: z.enum(["ALLERGY_REVIEW", "INTAKE", "CLINICAL_NOTE", "MEDICATION_DECISION"]),

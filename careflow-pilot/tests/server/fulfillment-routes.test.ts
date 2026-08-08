@@ -98,6 +98,17 @@ describe("authenticated fulfillment reservation routes", () => {
     expect(doctor.json().data).toEqual(assistant.json().data);
   });
 
+  it("reads the current label only for an authenticated fulfillment actor", async () => {
+    const test = await fixture();
+    const anonymous = await test.app.inject({ method: "GET", url: "/api/dispensing/visit-route-001/labels" });
+    expect(anonymous.statusCode).toBe(401);
+    const response = await test.app.inject({
+      method: "GET", url: "/api/dispensing/visit-route-001/labels", headers: { cookie: test.assistantCookie },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ data: null });
+  });
+
   it("reserves with exact envelope replay, audits start, and releases with exact replay", async () => {
     const test = await fixture();
     const body = { expectedRevisions: { visit: 3, medicationDecision: 1 }, payload: {} };
@@ -106,7 +117,7 @@ describe("authenticated fulfillment reservation routes", () => {
       headers: { cookie: test.assistantCookie, "idempotency-key": "reserve-route-001" }, payload: body,
     });
     expect(first.statusCode).toBe(201);
-    expect(first.json().data).toMatchObject({ visit: { status: "PREPARING", revision: 4 }, reservation: { status: "ACTIVE" } });
+    expect(first.json().data).toMatchObject({ visit: { status: "PREPARING", revision: 4 }, reservation: { allocations: [{ lotId: "lot-route-001", quantity: 3 }] }, preparation: { status: "ACTIVE" } });
     const replay = await test.app.inject({
       method: "POST", url: "/api/dispensing/visit-route-001/reservations",
       headers: { cookie: test.assistantCookie, "idempotency-key": "reserve-route-001" }, payload: body,
@@ -115,25 +126,25 @@ describe("authenticated fulfillment reservation routes", () => {
     expect(replay.json().data).toEqual(first.json().data);
     expect(replay.json().replayed).toBe(true);
     expect(test.database.db.select().from(auditEvents).all().map((row) => row.action)).toEqual([
-      "inventory.reservation-created", "visit.preparation-started",
+      "label.version-created", "inventory.reservation-created", "visit.preparation-started",
     ]);
     const createdAudit = test.database.db.select().from(auditEvents).all()
       .find((event) => event.action === "inventory.reservation-created");
     expect(JSON.parse(createdAudit?.metadataJson ?? "{}")).toMatchObject({
       visitId: "visit-route-001",
-      allocations: [{ lotId: "lot-route-001", quantity: 3, unit: "เม็ด" }],
+      allocations: [{ lotId: "lot-route-001", quantity: 3 }],
     });
 
     const releaseBody = {
-      expectedRevisions: { visit: 4 },
-      payload: { reason: "ทบทวนคำสั่งก่อนจัดยา" },
+      expectedRevisions: { visit: 4, preparation: first.json().data.preparation.revision },
+      payload: { preparationId: first.json().data.preparation.id, reason: "ทบทวนคำสั่งก่อนจัดยา" },
     };
     const released = await test.app.inject({
       method: "POST", url: "/api/dispensing/visit-route-001/reservation-release",
       headers: { cookie: test.assistantCookie, "idempotency-key": "release-route-001" }, payload: releaseBody,
     });
     expect(released.statusCode).toBe(201);
-    expect(released.json().data).toMatchObject({ visit: { status: "AWAITING_PREPARATION", revision: 5 }, reservation: { status: "RELEASED" } });
+    expect(released.json().data).toMatchObject({ visit: { status: "AWAITING_PREPARATION", revision: 5 }, reservation: null, preparation: null });
     const releaseReplay = await test.app.inject({
       method: "POST", url: "/api/dispensing/visit-route-001/reservation-release",
       headers: { cookie: test.assistantCookie, "idempotency-key": "release-route-001" }, payload: releaseBody,
@@ -163,5 +174,38 @@ describe("authenticated fulfillment reservation routes", () => {
       payload: { expectedRevisions: { visit: 3, medicationDecision: 1 }, payload: {} },
     });
     expect(doctor.statusCode).toBe(201);
+  });
+
+  it("prints, confirms a normalized barcode, and completes every allocated item", async () => {
+    const test = await fixture();
+    const started = await test.app.inject({
+      method: "POST", url: "/api/dispensing/visit-route-001/reservations",
+      headers: { cookie: test.assistantCookie, "idempotency-key": "preparation-flow-start" },
+      payload: { expectedRevisions: { visit: 3, medicationDecision: 1 }, payload: {} },
+    });
+    const startedData = started.json().data;
+    const label = startedData.label;
+    const preparation = startedData.preparation;
+    const allocation = startedData.reservation.allocations[0];
+    const printed = await test.app.inject({
+      method: "POST", url: `/api/dispensing/visit-route-001/labels/${label.id}/print-events`,
+      headers: { cookie: test.assistantCookie, "idempotency-key": "preparation-flow-print" },
+      payload: { expectedRevisions: { visit: 4 }, payload: { rendererVersion: "test-renderer" } },
+    });
+    expect(printed.statusCode).toBe(201);
+    const confirmed = await test.app.inject({
+      method: "POST", url: "/api/dispensing/visit-route-001/preparation-confirmations",
+      headers: { cookie: test.assistantCookie, "idempotency-key": "preparation-flow-confirm" },
+      payload: { expectedRevisions: { visit: 4, preparation: preparation.revision }, payload: { method: "BARCODE", preparationId: preparation.id, allocationId: allocation.id, barcode: " cf-demo-001 " } },
+    });
+    expect(confirmed.statusCode).toBe(201);
+    expect(confirmed.json().data.preparation.confirmations[0]).toMatchObject({ method: "BARCODE", barcode: "CF-DEMO-001", lotId: "lot-route-001" });
+    const completed = await test.app.inject({
+      method: "POST", url: "/api/dispensing/visit-route-001/complete-preparation",
+      headers: { cookie: test.assistantCookie, "idempotency-key": "preparation-flow-complete" },
+      payload: { expectedRevisions: { visit: 4, preparation: preparation.revision }, payload: { preparationId: preparation.id } },
+    });
+    expect(completed.statusCode).toBe(201);
+    expect(completed.json().data).toMatchObject({ visit: { status: "AWAITING_RELEASE", revision: 5 }, preparation: { status: "COMPLETED", revision: 2 } });
   });
 });
