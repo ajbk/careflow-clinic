@@ -14,7 +14,6 @@ export const permissionsByRole = {
     "fulfillment:read",
     "fulfillment:prepare",
     "label:print",
-    "fulfillment:release",
   ],
   doctor: [
     "patient:read",

@@ -18,3 +18,11 @@
 
 - The existing Task 1 reset logic already deletes fulfillment children before parents and includes the fulfillment tables/triggers; no reset change was required for this task's existing schema.
 - No migrations were created: Task 2 uses the established 0009/0010 persistence foundation unchanged.
+
+## Follow-up review fixes
+
+- Clinical safety transitions now release an active reservation from `PREPARING`, `AWAITING_RELEASE`, and `AWAITING_HANDOFF` before the Visit update. The preparation-abandoned audit records the actual previous status and computed ORDER/NO_MEDICATION next status. ORDER revisions create the replacement label in the same transaction.
+- Abandonment now requires `PREPARING`, an active non-invalidated Preparation, and the exact active reservation. Preparation and Visit conditional writes check affected-row counts; stale or clinically invalidated artifacts cannot print, complete, abandon, or release.
+- Assistant abandonment uses `fulfillment:prepare`; `fulfillment:release` remains doctor-only for the future release command. Fulfillment/Inventory are mandatory Clinical Workflow dependencies, preventing silent safety bypasses.
+- Added regression coverage for all three late clinical states, both decision kinds, allocation immutability, actual audit transitions, barcode mismatch zero writes, incomplete completion, stale/invalidated old-artifact commands, and the permission boundary.
+- Fulfillment route audit timestamps use the injected clock; unused fulfillment service dependencies were removed.

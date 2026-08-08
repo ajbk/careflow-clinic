@@ -10,7 +10,8 @@ import {
 } from "../../src/server/modules/medication/index.js";
 import { clinicalNoteAmendments, clinicalNoteDrafts, clinicalNotes, createNoteService } from "../../src/server/modules/note/index.js";
 import { createPatientService } from "../../src/server/modules/patient/index.js";
-import { inventoryReservationAllocations, inventoryReservations } from "../../src/server/modules/inventory/index.js";
+import { createFulfillmentService } from "../../src/server/modules/fulfillment/index.js";
+import { createInventoryService, inventoryReservationAllocations, inventoryReservations } from "../../src/server/modules/inventory/index.js";
 import { auditEvents, executeIdempotent, hashEvidence, idempotencyRecords } from "../../src/server/modules/platform/index.js";
 import { visits } from "../../src/server/modules/visit/index.js";
 import { createVisitService } from "../../src/server/modules/visit/index.js";
@@ -48,6 +49,11 @@ async function fixture() {
     assistantCookie: cookieFrom(await login(test.app, assistant.username, assistant.password)),
     doctorCookie: cookieFrom(await login(test.app, doctor.username, doctor.password)),
   };
+}
+
+function fulfillmentDependencies(test: Awaited<ReturnType<typeof fixture>>, medications: MedicationService) {
+  const inventory = createInventoryService({ database: test.database, medicationService: medications });
+  return { inventory, fulfillment: createFulfillmentService({ database: test.database, inventory }) };
 }
 
 async function createConsultingVisit(test: Awaited<ReturnType<typeof fixture>>) {
@@ -302,6 +308,7 @@ describe("consultation draft workflow", () => {
       visits: visitService,
       notes,
       medications: failingMedications,
+      ...fulfillmentDependencies(test, failingMedications),
     });
 
     expect(() => executeIdempotent({
@@ -600,6 +607,7 @@ describe("consultation finalization", () => {
         visits: failingVisits,
         notes,
         medications: failingMedications,
+        ...fulfillmentDependencies(test, failingMedications),
         beforeVisitTransition: point === "after decision"
           ? () => { throw new Error("injected after decision"); }
           : undefined,
@@ -637,6 +645,22 @@ async function finalizeOrder(test: Awaited<ReturnType<typeof fixture>>) {
   const finalized = await finalize(test, visitId);
   expect(finalized.statusCode).toBe(200);
   return { visitId, finalized: finalized.json().data };
+}
+
+async function reserveForSafetyState(test: Awaited<ReturnType<typeof fixture>>, visitId: string, key: string) {
+  const receipt = await test.app.inject({
+    method: "POST", url: "/api/inventory/receipts",
+    headers: { cookie: test.assistantCookie, "idempotency-key": `${key}-receipt` },
+    payload: { expectedRevisions: { medication: 1 }, payload: { medicationId: "DEMO-MED-001", quantity: 10, lotNumber: `${key}-LOT`, expiryDate: "2030-08-20", supplierName: "ผู้จำหน่ายสังเคราะห์", note: "เตรียมทดสอบ safety" } },
+  });
+  expect(receipt.statusCode).toBe(201);
+  const reserved = await test.app.inject({
+    method: "POST", url: `/api/dispensing/${visitId}/reservations`,
+    headers: { cookie: test.assistantCookie, "idempotency-key": `${key}-reserve` },
+    payload: { expectedRevisions: { visit: 3, medicationDecision: 1 }, payload: {} },
+  });
+  expect(reserved.statusCode).toBe(201);
+  return reserved.json().data;
 }
 
 function amend(
@@ -842,6 +866,7 @@ describe("signed evidence amendments and safety revisions", () => {
       visits: createVisitService({ database: test.database, patients }),
       notes: createNoteService({ database: test.database }),
       medications: createMedicationService({ database: test.database }),
+      ...fulfillmentDependencies(test, createMedicationService({ database: test.database })),
       beforeDecisionRevisionTransition: () => { throw new Error("injected decision revision failure"); },
     });
     const body = {
@@ -931,4 +956,48 @@ describe("signed evidence amendments and safety revisions", () => {
       previousStatus: "PREPARING", nextStatus: "AWAITING_CHARGE",
     });
   });
+
+  it.each(["PREPARING", "AWAITING_RELEASE", "AWAITING_HANDOFF"] as const)(
+    "releases an active reservation and records the actual %s allergy transition",
+    async (status) => {
+      const test = await fixture();
+      const { visitId } = await finalizeOrder(test);
+      const prepared = await reserveForSafetyState(test, visitId, `allergy-${status}`);
+      const beforeAllocations = test.database.db.select().from(inventoryReservationAllocations).all();
+      if (status !== "PREPARING") test.database.sqlite.prepare("UPDATE visits SET status=? WHERE id=?").run(status, visitId);
+      const patientId = test.database.db.select().from(visits).where(eq(visits.id, visitId)).get()?.patientId;
+      if (!patientId) throw new Error("missing patient");
+      const response = await test.app.inject({
+        method: "POST", url: `/api/patients/${patientId}/allergy-revisions`,
+        headers: { cookie: test.doctorCookie, "idempotency-key": `allergy-transition-${status}` },
+        payload: { expectedRevisions: { patient: 1, visit: 4 }, payload: { visitId, state: "PRESENT", items: [{ substance: "ยาทดสอบ", reaction: "ผื่น", severity: "MILD", note: null }], sourceText: "พบประวัติแพ้", reason: "ความปลอดภัย" } },
+      });
+      expect(response.statusCode).toBe(201);
+      expect(response.json().data.visit).toMatchObject({ status: "AWAITING_ORDER_REVISION", revision: 5 });
+      expect(test.database.db.select().from(inventoryReservations).all()).toMatchObject([{ id: prepared.reservation.id, status: "RELEASED" }]);
+      expect(test.database.db.select().from(inventoryReservationAllocations).all()).toEqual(beforeAllocations);
+      const abandoned = test.database.db.select().from(auditEvents).all().find((event) => event.action === "visit.preparation-abandoned");
+      expect(JSON.parse(abandoned?.metadataJson ?? "{}")).toMatchObject({ previousStatus: status, nextStatus: "AWAITING_ORDER_REVISION" });
+    },
+  );
+
+  it.each(["PREPARING", "AWAITING_RELEASE", "AWAITING_HANDOFF"] as const)(
+    "releases an active reservation and records actual transitions for ORDER and NO_MEDICATION revision from %s",
+    async (status) => {
+      for (const [kind, nextStatus] of [["ORDER", "AWAITING_PREPARATION"], ["NO_MEDICATION", "AWAITING_CHARGE"]] as const) {
+        const test = await fixture();
+        const { visitId } = await finalizeOrder(test);
+        const prepared = await reserveForSafetyState(test, visitId, `revision-${status}-${kind}`);
+        const beforeAllocations = test.database.db.select().from(inventoryReservationAllocations).all();
+        if (status !== "PREPARING") test.database.sqlite.prepare("UPDATE visits SET status=? WHERE id=?").run(status, visitId);
+        const response = await reviseDecision(test, visitId, { visit: 4, kind, key: `revision-transition-${status}-${kind}` });
+        expect(response.statusCode).toBe(201);
+        expect(response.json().data.visit).toMatchObject({ status: nextStatus, revision: 5 });
+        expect(test.database.db.select().from(inventoryReservations).all()).toMatchObject([{ id: prepared.reservation.id, status: "RELEASED" }]);
+        expect(test.database.db.select().from(inventoryReservationAllocations).all()).toEqual(beforeAllocations);
+        const abandoned = test.database.db.select().from(auditEvents).all().find((event) => event.action === "visit.preparation-abandoned");
+        expect(JSON.parse(abandoned?.metadataJson ?? "{}")).toMatchObject({ previousStatus: status, nextStatus: nextStatus });
+      }
+    },
+  );
 });

@@ -15,6 +15,10 @@ import { createTestApp } from "./helpers/database.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 
+function countRows(test: Awaited<ReturnType<typeof fixture>>, sql: string): number {
+  return Number((test.database.sqlite.prepare(sql).get() as { count: number }).count);
+}
+
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
@@ -187,12 +191,26 @@ describe("authenticated fulfillment reservation routes", () => {
     const label = startedData.label;
     const preparation = startedData.preparation;
     const allocation = startedData.reservation.allocations[0];
+    const incomplete = await test.app.inject({
+      method: "POST", url: "/api/dispensing/visit-route-001/complete-preparation",
+      headers: { cookie: test.assistantCookie, "idempotency-key": "preparation-flow-incomplete" },
+      payload: { expectedRevisions: { visit: 4, preparation: preparation.revision }, payload: { preparationId: preparation.id } },
+    });
+    expect(incomplete.statusCode).toBe(409);
     const printed = await test.app.inject({
       method: "POST", url: `/api/dispensing/visit-route-001/labels/${label.id}/print-events`,
       headers: { cookie: test.assistantCookie, "idempotency-key": "preparation-flow-print" },
       payload: { expectedRevisions: { visit: 4 }, payload: { rendererVersion: "test-renderer" } },
     });
     expect(printed.statusCode).toBe(201);
+    const mismatchBefore = countRows(test, "SELECT count(*) AS count FROM fulfillment_preparation_confirmations");
+    const mismatch = await test.app.inject({
+      method: "POST", url: "/api/dispensing/visit-route-001/preparation-confirmations",
+      headers: { cookie: test.assistantCookie, "idempotency-key": "preparation-flow-mismatch" },
+      payload: { expectedRevisions: { visit: 4, preparation: preparation.revision }, payload: { method: "BARCODE", preparationId: preparation.id, allocationId: allocation.id, barcode: "WRONG-CODE" } },
+    });
+    expect(mismatch.statusCode).toBe(409);
+    expect(countRows(test, "SELECT count(*) AS count FROM fulfillment_preparation_confirmations")).toBe(mismatchBefore);
     const confirmed = await test.app.inject({
       method: "POST", url: "/api/dispensing/visit-route-001/preparation-confirmations",
       headers: { cookie: test.assistantCookie, "idempotency-key": "preparation-flow-confirm" },
@@ -207,5 +225,42 @@ describe("authenticated fulfillment reservation routes", () => {
     });
     expect(completed.statusCode).toBe(201);
     expect(completed.json().data).toMatchObject({ visit: { status: "AWAITING_RELEASE", revision: 5 }, preparation: { status: "COMPLETED", revision: 2 } });
+  });
+
+  it("rejects every old fulfillment command after clinical invalidation without extra writes", async () => {
+    const test = await fixture();
+    const started = await test.app.inject({
+      method: "POST", url: "/api/dispensing/visit-route-001/reservations",
+      headers: { cookie: test.assistantCookie, "idempotency-key": "invalidation-start" },
+      payload: { expectedRevisions: { visit: 3, medicationDecision: 1 }, payload: {} },
+    });
+    const startedData = started.json().data;
+    const allergy = await test.app.inject({
+      method: "POST", url: "/api/patients/patient-route-001/allergy-revisions",
+      headers: { cookie: test.doctorCookie, "idempotency-key": "invalidation-allergy" },
+      payload: { expectedRevisions: { patient: 1, visit: 4 }, payload: { visitId: "visit-route-001", state: "PRESENT", items: [{ substance: "ยาทดสอบ", reaction: "ผื่น", severity: "MILD", note: null }], sourceText: "ประวัติแพ้", reason: "ทบทวนความปลอดภัย" } },
+    });
+    expect(allergy.statusCode).toBe(201);
+    const counts = () => ({ reservations: countRows(test, "SELECT count(*) AS count FROM inventory_reservations"), invalidations: countRows(test, "SELECT count(*) AS count FROM fulfillment_artifact_invalidations"), visits: countRows(test, "SELECT count(*) AS count FROM visits WHERE status='AWAITING_ORDER_REVISION' AND revision=5") });
+    const before = counts();
+    const print = await test.app.inject({
+      method: "POST", url: `/api/dispensing/visit-route-001/labels/${startedData.label.id}/print-events`,
+      headers: { cookie: test.assistantCookie, "idempotency-key": "invalidation-old-print" },
+      payload: { expectedRevisions: { visit: 5 }, payload: { rendererVersion: "test-renderer" } },
+    });
+    const complete = await test.app.inject({
+      method: "POST", url: "/api/dispensing/visit-route-001/complete-preparation",
+      headers: { cookie: test.assistantCookie, "idempotency-key": "invalidation-old-complete" },
+      payload: { expectedRevisions: { visit: 5, preparation: startedData.preparation.revision }, payload: { preparationId: startedData.preparation.id } },
+    });
+    const abandon = await test.app.inject({
+      method: "POST", url: "/api/dispensing/visit-route-001/reservation-release",
+      headers: { cookie: test.assistantCookie, "idempotency-key": "invalidation-old-abandon" },
+      payload: { expectedRevisions: { visit: 5, preparation: startedData.preparation.revision }, payload: { preparationId: startedData.preparation.id, reason: "คำสั่งเดิมถูกยกเลิก" } },
+    });
+    expect(print.statusCode).toBe(409);
+    expect(complete.statusCode).toBe(409);
+    expect(abandon.statusCode).toBe(409);
+    expect(counts()).toEqual(before);
   });
 });

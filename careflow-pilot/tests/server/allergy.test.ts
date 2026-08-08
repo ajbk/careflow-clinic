@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createPatientService, patientAllergyItems, patientAllergyRevisions } from "../../src/server/modules/patient/index.js";
 import { createMedicationService } from "../../src/server/modules/medication/index.js";
+import { createFulfillmentService } from "../../src/server/modules/fulfillment/index.js";
+import { createInventoryService } from "../../src/server/modules/inventory/index.js";
 import { createNoteService } from "../../src/server/modules/note/index.js";
 import { auditEvents, executeIdempotent, idempotencyRecords } from "../../src/server/modules/platform/index.js";
 import { createVisitService, visits } from "../../src/server/modules/visit/index.js";
@@ -491,6 +493,11 @@ describe("versioned allergy review", () => {
       visits: createVisitService({ database: test.database, patients }),
       notes: createNoteService({ database: test.database }),
       medications: createMedicationService({ database: test.database }),
+      ...(() => {
+        const medications = createMedicationService({ database: test.database });
+        const inventory = createInventoryService({ database: test.database, medicationService: medications });
+        return { inventory, fulfillment: createFulfillmentService({ database: test.database, inventory }) };
+      })(),
       beforeAllergySafetyTransition: () => { throw new Error("injected allergy safety failure"); },
     });
     const body = {

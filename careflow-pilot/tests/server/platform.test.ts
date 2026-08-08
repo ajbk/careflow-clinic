@@ -103,7 +103,6 @@ describe("role permissions", () => {
       "fulfillment:read",
       "fulfillment:prepare",
       "label:print",
-      "fulfillment:release",
       ],
       doctor: [
         "patient:read",

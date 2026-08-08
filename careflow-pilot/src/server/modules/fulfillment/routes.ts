@@ -8,7 +8,7 @@ import type { DatabaseHandle } from "../../db/client.js";
 import { appendAuditEvent, executeIdempotent } from "../platform/index.js";
 import type { FulfillmentService } from "./service.js";
 
-export function registerFulfillmentRoutes(input: { app: FastifyInstance; database: DatabaseHandle; fulfillment: FulfillmentService }): void {
+export function registerFulfillmentRoutes(input: { app: FastifyInstance; database: DatabaseHandle; fulfillment: FulfillmentService; clock: () => Date }): void {
   const key = (request: { headers: Record<string, unknown> }) => typeof request.headers["idempotency-key"] === "string" ? request.headers["idempotency-key"] : "";
   const visitId = (request: { params: unknown }) => (request.params as { visitId?: string }).visitId ?? "";
   input.app.get("/api/dispensing/:visitId", async (request) => {
@@ -21,7 +21,7 @@ export function registerFulfillmentRoutes(input: { app: FastifyInstance; databas
     const actor = requireActor(request, "fulfillment:prepare"); const body = reserveInventoryBodySchema.parse(request.body); const id = visitId(request);
     const result = executeIdempotent({ db: input.database.db, actor, key: key(request), operation: "fulfillment.start-preparation.v1", scope: id, requestBody: body, work: (tx) => {
       const data = input.fulfillment.startPreparation(tx, actor, id, body.expectedRevisions.visit, body.expectedRevisions.medicationDecision);
-      const reservation = data.reservation; if (!reservation) throw new Error("Reservation missing after start"); const occurredAt = new Date().toISOString();
+      const reservation = data.reservation; if (!reservation) throw new Error("Reservation missing after start"); const occurredAt = input.clock().toISOString();
       appendAuditEvent({ tx, actor, id: `audit:inventory.reservation-created:${reservation.id}:${key(request)}`, action: "inventory.reservation-created", entityType: "inventory_reservation", entityId: reservation.id, entityRevision: 1, reason: null, occurredAt, metadata: { visitId: id, medicationDecisionId: data.medicationDecision?.id, medicationDecisionVersion: data.medicationDecision?.version, allocations: reservation.allocations.map((a) => ({ lotId: a.lotId, quantity: a.quantity })) } });
       appendAuditEvent({ tx, actor, id: `audit:visit.preparation-started:${id}:${data.visit.revision}:${key(request)}`, action: "visit.preparation-started", entityType: "visit", entityId: id, entityRevision: data.visit.revision, reason: null, occurredAt, metadata: { previousStatus: "AWAITING_PREPARATION", nextStatus: "PREPARING", reservationId: reservation.id, preparationId: data.preparation?.id } });
       return { statusCode: 201, data };
@@ -40,7 +40,7 @@ export function registerFulfillmentRoutes(input: { app: FastifyInstance; databas
     const result = executeIdempotent({ db: input.database.db, actor, key: key(request), operation: "fulfillment.complete-preparation.v1", scope: id, requestBody: body, work: (tx) => ({ statusCode: 201, data: input.fulfillment.completePreparation(tx, actor, id, body.expectedRevisions.visit, body.expectedRevisions.preparation, body.payload.preparationId) }) }); return reply.code(result.body.replayed ? 200 : result.statusCode).send(result.body);
   });
   input.app.post("/api/dispensing/:visitId/reservation-release", async (request, reply) => {
-    const actor = requireActor(request, "fulfillment:release"); const body = fulfillmentAbandonPreparationBodySchema.parse(request.body); const id = visitId(request);
+    const actor = requireActor(request, "fulfillment:prepare"); const body = fulfillmentAbandonPreparationBodySchema.parse(request.body); const id = visitId(request);
     const result = executeIdempotent({ db: input.database.db, actor, key: key(request), operation: "fulfillment.abandon-preparation.v1", scope: id, requestBody: body, work: (tx) => {
       return { statusCode: 201, data: input.fulfillment.abandonPreparation(tx, actor, id, body.expectedRevisions.visit, body.expectedRevisions.preparation, body.payload.preparationId, body.payload.reason) };
     }}); return reply.code(result.body.replayed ? 200 : result.statusCode).send(result.body);

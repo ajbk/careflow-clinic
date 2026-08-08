@@ -117,8 +117,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     idFactory: options.idFactory,
   });
   registerInventoryRoutes({ app, database: options.db, inventory: inventoryService });
-  const fulfillmentService = createFulfillmentService({ database: options.db, inventory: inventoryService, medications: medicationService, visits: visitService, clock: options.clock, idFactory: options.idFactory });
-  registerFulfillmentRoutes({ app, database: options.db, fulfillment: fulfillmentService });
+  const fulfillmentService = createFulfillmentService({ database: options.db, inventory: inventoryService, clock: options.clock, idFactory: options.idFactory });
+  registerFulfillmentRoutes({ app, database: options.db, fulfillment: fulfillmentService, clock: options.clock });
   const noteService = createNoteService({ database: options.db, clock: options.clock });
   const clinicalWorkflow = createClinicalWorkflow({
     patients: patientService,

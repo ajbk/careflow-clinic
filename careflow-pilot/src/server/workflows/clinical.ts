@@ -144,8 +144,8 @@ export function createClinicalWorkflow(input: {
   visits: VisitService;
   notes: NoteService;
   medications: MedicationService;
-  inventory?: InventoryService;
-  fulfillment?: FulfillmentService;
+  inventory: InventoryService;
+  fulfillment: FulfillmentService;
   clock?: () => Date;
   idFactory?: () => string;
   /** Test seam for proving the enclosing transaction rolls back before the Visit write. */
@@ -165,8 +165,8 @@ export function createClinicalWorkflow(input: {
     trigger: "allergy-safety" | "medication-revision",
     nextStatus: "AWAITING_ORDER_REVISION" | "AWAITING_PREPARATION" | "AWAITING_CHARGE",
   ): void => {
-    if (visit.status !== "PREPARING") return;
-    const released = input.inventory?.releaseActiveReservation(tx, actor, visit.id, reason);
+    if (visit.status !== "PREPARING" && visit.status !== "AWAITING_RELEASE" && visit.status !== "AWAITING_HANDOFF") return;
+    const released = input.inventory.releaseActiveReservation(tx, actor, visit.id, reason);
     if (!released) return;
     const occurredAt = released.releasedAt ?? clock().toISOString();
     appendAuditEvent({
@@ -200,7 +200,7 @@ export function createClinicalWorkflow(input: {
       entityRevision: visit.revision + 1,
       reason,
       occurredAt,
-      metadata: { previousStatus: "PREPARING", nextStatus, trigger },
+        metadata: { previousStatus: visit.status, nextStatus, trigger },
     });
   };
   const normalizeFinalizedReference = (reference: unknown): CurrentFinalizationReplayReference => {
@@ -378,7 +378,7 @@ export function createClinicalWorkflow(input: {
         throw new ApiError({ code: "INVALID_STATE", messageTh: "Visit นี้ไม่มีคำสั่งยาที่ต้องทบทวน" });
       }
       releasePreparationReservation(tx, actor, visit, body.payload.reason, "allergy-safety", "AWAITING_ORDER_REVISION");
-      input.fulfillment?.invalidateCurrentArtifacts(tx, actor, visit.id, "ALLERGY_REVISION", body.payload.reason);
+      input.fulfillment.invalidateCurrentArtifacts(tx, actor, visit.id, "ALLERGY_REVISION", body.payload.reason);
       input.beforeAllergySafetyTransition?.();
       return { patient, allergy, visit: input.visits.transitionAllergySafety(tx, actor, visit, body.payload.reason) };
     },
@@ -403,9 +403,9 @@ export function createClinicalWorkflow(input: {
         tx, actor, visitId, body.expectedRevisions.medicationDecision,
         body.payload.decision, body.payload.revisionReason,
       );
-      input.fulfillment?.invalidateCurrentArtifacts(tx, actor, visitId, "ORDER_REVISION", body.payload.revisionReason, medicationDecision.id);
+      input.fulfillment.invalidateCurrentArtifacts(tx, actor, visitId, "ORDER_REVISION", body.payload.revisionReason, medicationDecision.id);
       if (medicationDecision.kind === "ORDER") {
-        input.fulfillment?.createLabelForSignedOrder(tx, actor, visitId, medicationDecision.id);
+        input.fulfillment.createLabelForSignedOrder(tx, actor, visitId, medicationDecision.id);
       }
       releasePreparationReservation(
         tx,
@@ -493,7 +493,7 @@ export function createClinicalWorkflow(input: {
       const medicationDecision = input.medications.signDecisionDraft(
         tx, actor, visitId, body.expectedRevisions.medicationDraft,
       );
-      if (medicationDecision.kind === "ORDER") input.fulfillment?.createLabelForSignedOrder(tx, actor, visitId, medicationDecision.id);
+      if (medicationDecision.kind === "ORDER") input.fulfillment.createLabelForSignedOrder(tx, actor, visitId, medicationDecision.id);
       input.beforeVisitTransition?.();
       const visit = input.visits.finalizeConsultation(
         tx, actor, visitId, body.expectedRevisions.visit, medicationDecision.kind,

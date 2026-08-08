@@ -8,7 +8,6 @@ import { ApiError } from "../../errors.js";
 import type { InventoryService } from "../inventory/service.js";
 import { inventoryReservationAllocations, inventoryReservations } from "../inventory/schema.js";
 import { medicationDecisions, medicationOrderItems, medications } from "../medication/schema.js";
-import type { MedicationService } from "../medication/service.js";
 import { patients } from "../patient/schema.js";
 import { appendAuditEvent, assertExpectedRevision, type AppDatabase, type AppTransaction, type AuditedTransaction } from "../platform/index.js";
 import { clinicConfig } from "../platform/schema.js";
@@ -36,8 +35,6 @@ export interface FulfillmentService {
 export interface FulfillmentServiceOptions {
   database: DatabaseHandle;
   inventory: InventoryService;
-  medications: MedicationService;
-  visits: unknown;
   clock?: () => Date;
   idFactory?: () => string;
 }
@@ -174,17 +171,35 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
       const visit = tx.select().from(visits).where(eq(visits.id, visitId)).get(); if (!visit) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit" }); assertExpectedRevision(visit.revision, visitRevision, "visit");
       const prep = tx.select().from(fulfillmentPreparations).where(eq(fulfillmentPreparations.id, preparationId)).get(); if (!prep || prep.visitId !== visitId || prep.status !== "ACTIVE" || activeInvalidation(tx, "PREPARATION", prep.id)) invalidState("รายการจัดยาไม่พร้อมเสร็จสิ้น"); assertExpectedRevision(prep.revision, preparationRevision, "preparation");
       const allocationCount = tx.select().from(inventoryReservationAllocations).where(eq(inventoryReservationAllocations.reservationId, prep.reservationId)).all().length; const confirmationCount = tx.select().from(fulfillmentPreparationConfirmations).where(eq(fulfillmentPreparationConfirmations.preparationId, prep.id)).all().length; if (allocationCount !== confirmationCount) invalidState("ยืนยันรายการจัดยาไม่ครบ");
-      const now = clock().toISOString(); tx.update(fulfillmentPreparations).set({ status: "COMPLETED", revision: prep.revision + 1, completedAt: now, completedBy: actor.id }).where(and(eq(fulfillmentPreparations.id, prep.id), eq(fulfillmentPreparations.revision, prep.revision))).run(); tx.update(visits).set({ status: "AWAITING_RELEASE", revision: visit.revision + 1 }).where(and(eq(visits.id, visitId), eq(visits.revision, visit.revision))).run();
+      const now = clock().toISOString();
+      const changedPreparation = tx.update(fulfillmentPreparations).set({ status: "COMPLETED", revision: prep.revision + 1, completedAt: now, completedBy: actor.id }).where(and(eq(fulfillmentPreparations.id, prep.id), eq(fulfillmentPreparations.revision, prep.revision))).run();
+      if (changedPreparation.changes !== 1) invalidState("รายการจัดยาถูกเปลี่ยนแปลงแล้ว");
+      const changedVisit = tx.update(visits).set({ status: "AWAITING_RELEASE", revision: visit.revision + 1 }).where(and(eq(visits.id, visitId), eq(visits.status, "PREPARING"), eq(visits.revision, visit.revision))).run();
+      if (changedVisit.changes !== 1) invalidState("Visit ถูกเปลี่ยนแปลงแล้ว");
       appendAuditEvent({ tx, actor, id: nextId(), action: "visit.preparation-completed", entityType: "visit", entityId: visitId, entityRevision: visit.revision + 1, reason: null, occurredAt: now, metadata: { previousStatus: visit.status, nextStatus: "AWAITING_RELEASE", preparationId: prep.id, reservationId: prep.reservationId } }); return read(tx, visitId);
     },
     abandonPreparation(tx, actor, visitId, visitRevision, preparationRevision, preparationId, reason) {
-      const visit = tx.select().from(visits).where(eq(visits.id, visitId)).get(); if (!visit) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit" }); assertExpectedRevision(visit.revision, visitRevision, "visit"); const prep = tx.select().from(fulfillmentPreparations).where(eq(fulfillmentPreparations.id, preparationId)).get(); if (!prep || prep.visitId !== visitId || prep.status !== "ACTIVE") invalidState("รายการจัดยาไม่พร้อมยกเลิก"); assertExpectedRevision(prep.revision, preparationRevision, "preparation");
+      const visit = tx.select().from(visits).where(eq(visits.id, visitId)).get();
+      if (!visit) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit" });
+      assertExpectedRevision(visit.revision, visitRevision, "visit");
+      if (visit.status !== "PREPARING") invalidState("สถานะ Visit ไม่อนุญาตให้ยกเลิกการจัดยา");
+      const prep = tx.select().from(fulfillmentPreparations).where(eq(fulfillmentPreparations.id, preparationId)).get();
+      if (!prep || prep.visitId !== visitId || prep.status !== "ACTIVE" || activeInvalidation(tx, "PREPARATION", prep.id)) invalidState("รายการจัดยาไม่พร้อมยกเลิก");
+      assertExpectedRevision(prep.revision, preparationRevision, "preparation");
+      const reservation = tx.select().from(inventoryReservations).where(and(
+        eq(inventoryReservations.id, prep.reservationId),
+        eq(inventoryReservations.visitId, visitId),
+        eq(inventoryReservations.status, "ACTIVE"),
+      )).get();
+      if (!reservation) invalidState("รายการจองยาที่เกี่ยวข้องไม่พร้อมยกเลิก");
       const allocations = tx.select().from(inventoryReservationAllocations).where(eq(inventoryReservationAllocations.reservationId, prep.reservationId)).all();
       invalidate(tx, actor, visitId, "ABANDON", reason.trim(), undefined, true);
       const released = input.inventory.releaseActiveReservation(tx, actor, visitId, reason.trim());
+      if (!released || released.id !== reservation.id) invalidState("รายการจองยาที่เกี่ยวข้องถูกเปลี่ยนแปลงแล้ว");
       const now = clock().toISOString();
-      if (released) appendAuditEvent({ tx, actor, id: nextId(), action: "inventory.reservation-released", entityType: "inventory_reservation", entityId: released.id, entityRevision: 1, reason: reason.trim(), occurredAt: released.releasedAt ?? now, metadata: { visitId, trigger: "manual-release", allocations: allocations.map((allocation) => ({ lotId: allocation.lotId, lotNumber: allocation.lotNumberSnapshot, quantity: allocation.quantity, unit: allocation.unitSnapshot })) } });
-      tx.update(visits).set({ status: "AWAITING_PREPARATION", revision: visit.revision + 1 }).where(and(eq(visits.id, visitId), eq(visits.revision, visit.revision))).run();
+      appendAuditEvent({ tx, actor, id: nextId(), action: "inventory.reservation-released", entityType: "inventory_reservation", entityId: released.id, entityRevision: 1, reason: reason.trim(), occurredAt: released.releasedAt ?? now, metadata: { visitId, trigger: "manual-release", allocations: allocations.map((allocation) => ({ lotId: allocation.lotId, lotNumber: allocation.lotNumberSnapshot, quantity: allocation.quantity, unit: allocation.unitSnapshot })) } });
+      const changedVisit = tx.update(visits).set({ status: "AWAITING_PREPARATION", revision: visit.revision + 1 }).where(and(eq(visits.id, visitId), eq(visits.status, "PREPARING"), eq(visits.revision, visit.revision))).run();
+      if (changedVisit.changes !== 1) invalidState("Visit ถูกเปลี่ยนแปลงแล้ว");
       appendAuditEvent({ tx, actor, id: nextId(), action: "visit.preparation-abandoned", entityType: "visit", entityId: visitId, entityRevision: visit.revision + 1, reason: reason.trim(), occurredAt: now, metadata: { previousStatus: visit.status, nextStatus: "AWAITING_PREPARATION", preparationId, reservationId: prep.reservationId } }); return read(tx, visitId);
     },
     invalidateCurrentArtifacts(tx, actor, visitId, trigger, reason, replacementDecisionId) { invalidate(tx, actor, visitId, trigger, reason.trim(), replacementDecisionId); },
