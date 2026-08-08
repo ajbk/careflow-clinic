@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
@@ -49,6 +49,88 @@ describe("Doctor consultation authoring", () => {
     expect(visitPanel).toHaveTextContent("SpO₂ 98%");
     expect(visitPanel).toHaveTextContent("น้ำหนัก 64.5 กก.");
     expect(visitPanel).toHaveTextContent("ส่วนสูง 168 ซม.");
+  });
+
+  it("keeps unsaved note text when refreshed patient context changes", async () => {
+    const user = userEvent.setup();
+    let currentWorkspace = workspace;
+    let workspaceRequests = 0;
+    server.use(http.get("/api/visits/visit-42/workspace", () => {
+      workspaceRequests += 1;
+      return HttpResponse.json({ data: currentWorkspace });
+    }));
+    renderRoute();
+    const subjective = await screen.findByLabelText("Subjective (ข้อมูลจากผู้ป่วย)");
+    await user.type(subjective, "ข้อความที่ยังไม่บันทึก");
+
+    currentWorkspace = {
+      ...workspace,
+      patient: { ...patient, displayName: "ผู้ป่วยสังเคราะห์ที่ปรับข้อมูลแล้ว", revision: 4 },
+    };
+    act(() => window.dispatchEvent(new Event("focus")));
+
+    expect(await screen.findByText("ผู้ป่วยสังเคราะห์ที่ปรับข้อมูลแล้ว")).toBeInTheDocument();
+    await waitFor(() => expect(workspaceRequests).toBeGreaterThan(1));
+    expect(subjective).toHaveValue("ข้อความที่ยังไม่บันทึก");
+  });
+
+  it("retains local note text and reports conflict when a remote draft changes", async () => {
+    const user = userEvent.setup();
+    let savedBody: unknown;
+    const noteDraft = {
+      id: "note-draft", visitId: visit.id, revision: 1,
+      subjective: "ต้นฉบับ", objective: "", assessment: "", plan: "", diagnoses: [],
+      updatedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, updatedAt: "2026-08-03T02:00:00.000Z",
+    };
+    let currentWorkspace = { ...workspace, consultationDraft: { note: noteDraft, medicationDecision: null } };
+    let workspaceRequests = 0;
+    server.use(
+      http.get("/api/visits/visit-42/workspace", () => {
+        workspaceRequests += 1;
+        return HttpResponse.json({ data: currentWorkspace });
+      }),
+      http.post("/api/visits/visit-42/consultation-draft", async ({ request }) => {
+        savedBody = await request.json();
+        return HttpResponse.json({
+          data: {
+            note: { ...noteDraft, revision: 3, subjective: "ต้นฉบับที่แก้ในเครื่อง", updatedAt: "2026-08-03T02:10:00.000Z" },
+            medicationDecision: {
+              id: "med-draft", visitId: visit.id, revision: 1, kind: "UNDECIDED", noMedicationReason: null, items: [],
+              updatedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, updatedAt: "2026-08-03T02:10:00.000Z",
+            },
+          },
+          replayed: false,
+        });
+      }),
+    );
+    renderRoute();
+    const subjective = await screen.findByDisplayValue("ต้นฉบับ");
+    await user.type(subjective, "ที่แก้ในเครื่อง");
+
+    currentWorkspace = {
+      ...currentWorkspace,
+      consultationDraft: {
+        ...currentWorkspace.consultationDraft,
+        note: { ...noteDraft, revision: 2, subjective: "ร่างจากอีกหน้าจอ", updatedAt: "2026-08-03T02:05:00.000Z" },
+      },
+    };
+    act(() => window.dispatchEvent(new Event("focus")));
+
+    await waitFor(() => expect(workspaceRequests).toBeGreaterThan(1));
+    expect(subjective).toHaveValue("ต้นฉบับที่แก้ในเครื่อง");
+    expect(await screen.findByText(/ข้อมูลเวอร์ชันปัจจุบันเปลี่ยนแปลงแล้ว/)).toBeInTheDocument();
+
+    const requestsBeforeReload = workspaceRequests;
+    await user.click(screen.getByRole("button", { name: "โหลดข้อมูลล่าสุด" }));
+    await waitFor(() => expect(workspaceRequests).toBeGreaterThan(requestsBeforeReload));
+    expect(subjective).toHaveValue("ต้นฉบับที่แก้ในเครื่อง");
+    expect(screen.queryByText(/ข้อมูลเวอร์ชันปัจจุบันเปลี่ยนแปลงแล้ว/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "บันทึกร่าง" }));
+    await waitFor(() => expect(savedBody).toMatchObject({
+      expectedRevisions: { visit: 8, noteDraft: 2, medicationDraft: 0 },
+      payload: { note: { subjective: "ต้นฉบับที่แก้ในเครื่อง" }, medicationDecision: { kind: "UNDECIDED" } },
+    }));
   });
 
   it("renders the complete source-linked patient snapshot, including UNKNOWN facts", async () => {
@@ -192,13 +274,39 @@ describe("Doctor consultation authoring", () => {
     expect(screen.getByText("ส่วนนี้ยังไม่เปิดใช้ใน Pilot milestone ปัจจุบัน")).toBeInTheDocument();
   });
 
-  it("keeps an incomplete medication decision local and writes no browser storage", async () => {
+  it("saves an UNDECIDED consultation draft without writing browser storage", async () => {
     const user = userEvent.setup();
     const localWrite = vi.spyOn(Storage.prototype, "setItem");
+    let body: unknown;
+    server.use(http.post("/api/visits/visit-42/consultation-draft", async ({ request }) => {
+      body = await request.json();
+      return HttpResponse.json({
+        data: {
+          note: {
+            id: "note-draft", visitId: visit.id, revision: 1,
+            subjective: "", objective: "", assessment: "", plan: "", diagnoses: [],
+            updatedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, updatedAt: "2026-08-03T02:00:00.000Z",
+          },
+          medicationDecision: {
+            id: "med-draft", visitId: visit.id, revision: 1, kind: "UNDECIDED", noMedicationReason: null, items: [],
+            updatedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, updatedAt: "2026-08-03T02:00:00.000Z",
+          },
+        },
+        replayed: false,
+      });
+    }));
     renderRoute();
-    await user.click(await screen.findByRole("button", { name: "สั่งยาจากรายการทดสอบ" }));
-    expect(screen.getByRole("button", { name: "บันทึกร่าง" })).toBeDisabled();
-    expect(screen.getByText("กรุณาระบุรายการยาและวิธีใช้ หรือเหตุผลที่ไม่สั่งยา")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "ลบการวินิจฉัย 1" }));
+    const saveDraft = screen.getByRole("button", { name: "บันทึกร่าง" });
+    expect(saveDraft).toBeEnabled();
+    await user.click(saveDraft);
+    await waitFor(() => expect(body).toMatchObject({
+      expectedRevisions: { visit: 8, noteDraft: 0, medicationDraft: 0 },
+      payload: {
+        note: { subjective: "", objective: "", assessment: "", plan: "", diagnoses: [] },
+        medicationDecision: { kind: "UNDECIDED" },
+      },
+    }));
     expect(localWrite).not.toHaveBeenCalled();
   });
 });
