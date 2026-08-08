@@ -11,6 +11,7 @@ export const queryKeys = {
   inventoryMedicationSearch: (q: string) => ["inventory-medications", q] as const,
   visit: (id: string) => ["visit", id] as const,
   dispensing: (id: string) => ["dispensing", id] as const,
+  label: (id: string) => ["dispensing", id, "label"] as const,
 };
 
 function shouldRetry(failureCount: number, error: unknown): boolean {

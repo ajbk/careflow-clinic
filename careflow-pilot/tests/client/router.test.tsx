@@ -15,8 +15,8 @@ function completeSession(role: "assistant" | "doctor") {
       },
       clinic: { id: "clinic", name: "คลินิกทดสอบ" },
       permissions: role === "doctor"
-        ? ["patient:read", "visit:read-queue", "visit:start-consultation", "inventory:read"]
-        : ["patient:read", "visit:read-queue", "visit:submit-intake", "inventory:read", "inventory:receive"],
+        ? ["patient:read", "visit:read-queue", "visit:start-consultation", "inventory:read", "fulfillment:read"]
+        : ["patient:read", "visit:read-queue", "visit:submit-intake", "inventory:read", "inventory:receive", "fulfillment:read"],
       pilotAcknowledgedAt: "2026-08-03T00:00:00.000Z",
       mustChangePassword: false,
       idleExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),

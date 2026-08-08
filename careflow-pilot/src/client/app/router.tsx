@@ -13,6 +13,7 @@ import { IntakeScreen } from "../screens/IntakeScreen";
 import { InventoryScreen } from "../screens/InventoryScreen";
 import { StockReceptionScreen } from "../screens/StockReceptionScreen";
 import { DispensingScreen } from "../screens/DispensingScreen";
+import { LabelScreen } from "../screens/LabelScreen";
 import { PilotUnavailableScreen } from "../screens/PilotUnavailableScreen";
 
 function ShellRoute() {
@@ -46,8 +47,8 @@ export const appRoutes: RouteObject[] = [
           { path: "queue", element: <AuthGate requiredPermission="visit:read-queue" showPilotBanner={false}><QueueScreen /></AuthGate> },
           { path: "overview", element: <AuthGate requiredPermission="visit:read-queue" showPilotBanner={false}><OverviewScreen /></AuthGate> },
           { path: "consultations/:visitId", element: <AuthGate requiredPermission="clinical:read" showPilotBanner={false}><ConsultationScreen /></AuthGate> },
-          { path: "dispensing/:visitId", element: <AuthGate requiredPermission="inventory:read" showPilotBanner={false}><DispensingScreen /></AuthGate> },
-          { path: "dispensing/:visitId/labels", element: <PilotUnavailableScreen title="ฉลากยา" /> },
+          { path: "dispensing/:visitId", element: <AuthGate requiredPermission="fulfillment:read" showPilotBanner={false}><DispensingScreen /></AuthGate> },
+          { path: "dispensing/:visitId/labels", element: <AuthGate requiredPermission="fulfillment:read" showPilotBanner={false}><LabelScreen /></AuthGate> },
           { path: "checkout/:visitId", element: <PilotUnavailableScreen title="ชำระเงิน" /> },
           { path: "visits/:visitId/opd-card", element: <PilotUnavailableScreen title="บัตร OPD" /> },
           { path: "inventory", element: <AuthGate requiredPermission="inventory:read" showPilotBanner={false}><InventoryScreen /></AuthGate> },

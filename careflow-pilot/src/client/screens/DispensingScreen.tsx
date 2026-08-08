@@ -1,92 +1,60 @@
-import { ClipboardList, PackageCheck, ShieldCheck } from "lucide-react";
-import { useRef, useState, type ReactElement } from "react";
-import { useParams } from "react-router-dom";
-import type { InventoryPickListDto, InventoryReservationAllocationDto } from "../../shared/contracts";
+import { Barcode, ClipboardList, PackageCheck } from "lucide-react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
+import { Link, useParams } from "react-router-dom";
+import type { FulfillmentPickListDto } from "../../shared/contracts";
 import { useAuth } from "../auth/AuthProvider";
 import { ActionButton, Card, PageHeader, SectionHeading, StatusBadge, TextAreaField } from "../components/careflow/ui";
-import { createReleaseDispensingAttempt, createReserveDispensingAttempt, useDispensingPickList, useReleaseDispensing, useReserveDispensing, type ReleaseDispensingAttempt, type ReserveDispensingAttempt } from "../features/dispensing";
+import { createAbandonPreparationAttempt, createCompletePreparationAttempt, createConfirmAllocationAttempt, createReserveDispensingAttempt, useAbandonPreparation, useCompletePreparation, useConfirmAllocation, useDispensingPickList, useReserveDispensing } from "../features/dispensing";
 import { isApiError } from "../lib/api-error";
-import { formatThaiDate } from "../lib/thai-date";
 
-function errorMessage(error: unknown): string {
-  return isApiError(error) ? error.messageTh : "ไม่สามารถเชื่อมต่อรายการจัดยาได้ กรุณาลองใหม่อีกครั้ง";
-}
-
-function statusTone(status: InventoryPickListDto["visit"]["status"]): "waiting" | "active" | "success" | "error" | "info" {
+function errorMessage(error: unknown): string { return isApiError(error) ? error.messageTh : "ไม่สามารถเชื่อมต่อรายการจัดยาได้ กรุณาลองใหม่อีกครั้ง"; }
+function tone(status: FulfillmentPickListDto["visit"]["status"]): "waiting" | "active" | "success" | "error" | "info" {
   if (status === "PREPARING") return "active";
   if (status === "AWAITING_PREPARATION") return "waiting";
-  if (status === "AWAITING_ORDER_REVISION") return "error";
+  if (status === "AWAITING_RELEASE" || status === "AWAITING_HANDOFF") return "success";
   return "info";
 }
-
-function allocationsFor(
-  allocationRows: InventoryReservationAllocationDto[],
-  item: { id: string; orderItemId?: string },
-): InventoryReservationAllocationDto[] {
-  // Server-backed signed items carry the immutable order-item id. The medication fallback keeps older
-  // synthetic fixtures readable while never weakening the server-side allocation association.
-  return allocationRows.filter((allocation) => item.orderItemId
-    ? allocation.medicationOrderItemId === item.orderItemId
-    : allocation.medicationId === item.id);
-}
-
-function allocationRows(allocations: InventoryReservationAllocationDto[], item: { id: string; orderItemId?: string }): ReactElement | null {
-  const rows = allocationsFor(allocations, item);
-  if (rows.length === 0) return null;
-  return <div className="medication-allocations" aria-label="รายการล็อตตาม FEFO">{rows.map((allocation) => <div className="medication-allocation" key={allocation.id}><span><strong>{allocation.lotNumberSnapshot}</strong><small>หมดอายุ {formatThaiDate(allocation.expiryDateSnapshot)}</small></span><b>{allocation.quantity.toLocaleString("th-TH")} {allocation.unitSnapshot}</b></div>)}</div>;
-}
-
-function orderCards(data: InventoryPickListDto): ReactElement {
-  if (data.medicationDecision.kind !== "ORDER") return <p className="empty-detail">ไม่พบรายการยาแบบ ORDER</p>;
-  const allocations = data.reservation?.status === "ACTIVE" ? data.reservation.allocations : [];
-  return <div className="medication-list">{data.medicationDecision.items.map((item, index) => <article className="medication-card" key={`${item.id}-${item.orderItemId ?? index}`}><span className="medication-check" aria-hidden="true"><PackageCheck size={17} /></span><div className="medication-copy"><strong>{item.displayName}</strong><small>{item.strengthText} · {item.dosageFormText}</small><em>จำนวน {item.quantity.toLocaleString("th-TH")} {item.canonicalUnit}</em><i>วิธีใช้: {item.directionsTh}</i>{allocationRows(allocations, item)}</div><StatusBadge tone={data.reservation?.status === "ACTIVE" ? "success" : "waiting"}>{data.reservation?.status === "ACTIVE" ? "จองแล้ว" : "รอจอง"}</StatusBadge></article>)}</div>;
-}
+function allowed(data: FulfillmentPickListDto, action: FulfillmentPickListDto["allowedActions"][number]) { return data.allowedActions.includes(action); }
 
 export function DispensingScreen(): ReactElement {
   const { visitId = "" } = useParams();
   const auth = useAuth();
   const pickList = useDispensingPickList(visitId);
-  const reserve = useReserveDispensing();
-  const release = useReleaseDispensing();
-  const [reason, setReason] = useState("");
-  const [validationError, setValidationError] = useState("");
-  const reserveAttempt = useRef<ReserveDispensingAttempt | null>(null);
-  const releaseAttempt = useRef<ReleaseDispensingAttempt | null>(null);
-  const canReserve = auth.session?.permissions.includes("inventory:reserve") ?? false;
+  const reserve = useReserveDispensing(); const confirm = useConfirmAllocation(); const complete = useCompletePreparation(); const abandon = useAbandonPreparation();
+  const scannerRef = useRef<HTMLInputElement>(null);
+  const [scan, setScan] = useState(""); const [manualReason, setManualReason] = useState(""); const [abandonReason, setAbandonReason] = useState(""); const [localError, setLocalError] = useState("");
+  const canPrepare = auth.session?.permissions.includes("fulfillment:prepare") ?? false;
 
+  useEffect(() => { if (pickList.data?.visit.status === "PREPARING") scannerRef.current?.focus(); }, [pickList.data?.visit.status]);
   if (pickList.isPending) return <div className="flow-page dispensing-page"><PageHeader eyebrow="FULFILLMENT · PICK LIST" title="จัดยา" description="รายการจัดยาจากคำสั่งที่ลงนามแล้ว" /><Card><p role="status">กำลังโหลด Pick List…</p></Card></div>;
-  if (pickList.error || !pickList.data) return <div className="flow-page dispensing-page"><PageHeader eyebrow="FULFILLMENT · PICK LIST" title="จัดยา" description="รายการจัดยาจากคำสั่งที่ลงนามแล้ว" /><Card><section className="workflow-blocked workflow-blocked-unavailable" role="alert"><p>{pickList.error ? errorMessage(pickList.error) : "ไม่พบข้อมูลรายการจัดยา"}</p><button className="inline-retry-button" type="button" onClick={() => void pickList.refetch()}>โหลดข้อมูลล่าสุด</button></section></Card></div>;
-
-  const data = pickList.data;
-  const activeReservation = data.reservation?.status === "ACTIVE" ? data.reservation : null;
-  const reserveError = reserve.error ? errorMessage(reserve.error) : "";
-  const releaseError = release.error ? errorMessage(release.error) : "";
-  const message = validationError || reserveError || releaseError;
-
-  function reserveLots() {
-    if (!canReserve || data.medicationDecision.kind !== "ORDER") return;
-    try { reserveAttempt.current ??= createReserveDispensingAttempt(data); } catch { return; }
-    reserve.mutate({ visitId: data.visit.id, attempt: reserveAttempt.current }, { onSuccess: () => { reserveAttempt.current = null; }, onError: () => undefined });
-  }
-
-  function changeReason(value: string) {
-    releaseAttempt.current = null;
-    setValidationError("");
-    setReason(value);
-  }
-
-  function releaseLots() {
-    if (!canReserve || !activeReservation) return;
-    if (!reason.trim()) { setValidationError("กรุณาระบุเหตุผลการยกเลิกการจอง"); return; }
-    try { releaseAttempt.current ??= createReleaseDispensingAttempt(data, reason); } catch { return; }
-    release.mutate({ visitId: data.visit.id, attempt: releaseAttempt.current }, { onSuccess: () => { releaseAttempt.current = null; setReason(""); setValidationError(""); }, onError: () => undefined });
-  }
+  if (pickList.error || !pickList.data) return <div className="flow-page dispensing-page"><PageHeader eyebrow="FULFILLMENT · PICK LIST" title="จัดยา" /><Card><section className="workflow-blocked workflow-blocked-unavailable" role="alert"><p>{pickList.error ? errorMessage(pickList.error) : "ไม่พบข้อมูลรายการจัดยา"}</p><button className="inline-retry-button" type="button" onClick={() => void pickList.refetch()}>โหลดข้อมูลล่าสุด</button></section></Card></div>;
+  const data = pickList.data; const preparation = data.preparation?.status === "ACTIVE" ? data.preparation : null; const allocations = data.reservation?.allocations ?? [];
+  const confirmed = new Set(preparation?.confirmations.map((item) => item.allocationId) ?? []); const pending = allocations.find((item) => !confirmed.has(item.id)) ?? null;
+  const mutationError = reserve.error || confirm.error || complete.error || abandon.error; const message = localError || (mutationError ? errorMessage(mutationError) : "");
+  const start = () => { if (!canPrepare || !allowed(data, "START_PREPARATION")) return; setLocalError(""); reserve.mutate({ visitId: data.visit.id, attempt: createReserveDispensingAttempt(data) }); };
+  const submitBarcode = () => {
+    if (!preparation || !pending || !canPrepare || !allowed(data, "CONFIRM_ALLOCATION")) return;
+    const barcode = scan.trim().toUpperCase(); const labelItem = data.label?.items.find((item) => item.internalBarcode === barcode);
+    const allocation = labelItem ? allocations.find((item) => item.orderItemId === labelItem.orderItemId && !confirmed.has(item.id)) : null;
+    if (!allocation) { setLocalError("บาร์โค้ดไม่ตรงกับรายการจัดยา"); scannerRef.current?.focus(); return; }
+    setLocalError(""); setScan(""); confirm.mutate({ visitId: data.visit.id, attempt: createConfirmAllocationAttempt(data, { method: "BARCODE", preparationId: preparation.id, allocationId: allocation.id, barcode }) });
+  };
+  const submitManual = () => {
+    if (!preparation || !pending || !manualReason.trim() || !canPrepare || !allowed(data, "CONFIRM_ALLOCATION")) return;
+    setLocalError(""); confirm.mutate({ visitId: data.visit.id, attempt: createConfirmAllocationAttempt(data, { method: "MANUAL", preparationId: preparation.id, allocationId: pending.id, reason: manualReason }) }, { onSuccess: () => setManualReason("") });
+  };
+  const finish = () => { if (!preparation || !canPrepare || !allowed(data, "COMPLETE_PREPARATION")) return; if (confirmed.size !== allocations.length) { setLocalError("ยืนยันรายการจัดยาไม่ครบ"); return; } setLocalError(""); complete.mutate({ visitId: data.visit.id, attempt: createCompletePreparationAttempt(data) }); };
+  const cancelPreparation = () => { if (!preparation || !canPrepare || !allowed(data, "ABANDON_PREPARATION")) return; if (!abandonReason.trim()) { setLocalError("กรุณาระบุเหตุผลการยกเลิกการเตรียมยา"); return; } setLocalError(""); abandon.mutate({ visitId: data.visit.id, attempt: createAbandonPreparationAttempt(data, abandonReason) }, { onSuccess: () => setAbandonReason("") }); };
 
   return <div className="flow-page dispensing-page">
-    <PageHeader eyebrow="FULFILLMENT · PICK LIST" title="จัดยา" description="ตรวจสอบคำสั่งยาที่ลงนาม และจองล็อตตามวันหมดอายุก่อน" />
-    <Card className="dispensing-body"><div className="patient-header"><div className="patient-header-copy"><strong>{data.patient.displayName}</strong><span>HN {data.patient.hn} · Visit {data.visit.id}</span></div><StatusBadge tone={statusTone(data.visit.status)}>{data.visit.status}</StatusBadge></div><div className="dispensing-meta"><span>คำสั่งยา version {data.medicationDecision.version}</span><span>Visit revision {data.visit.revision}</span></div></Card>
-    <Card className="dispensing-body"><SectionHeading icon={ClipboardList} title="คำสั่งยาที่ลงนาม" description="รายการนี้มาจาก Signed Order ของแพทย์ และระบบจะเลือกล็อตแบบ FEFO" />{orderCards(data)}{activeReservation ? <div className="signed-next-actions"><ShieldCheck aria-hidden="true" /><span><strong>Hard Reservation ทำงานแล้ว</strong><small>ระบบตรวจสอบวันหมดอายุเมื่อเริ่มจอง และกันล็อตนี้ไม่ให้ถูกจองซ้ำ</small></span></div> : <div className="signed-next-actions"><span><strong>ยังไม่มีการจองล็อต</strong><small>กดเริ่มจองเพื่อกันสต็อกแบบ all-or-nothing ตาม FEFO</small></span></div>}</Card>
-    <Card className="dispensing-body"><SectionHeading icon={PackageCheck} title="การจัดสรรล็อต" description="ระบบเรียงล็อตที่หมดอายุก่อน และข้ามล็อตที่หมดอายุหรือกักกัน" />{activeReservation ? <><div className="dispense-footer"><p>รายการนี้ถูกกันสต็อกไว้แล้ว กรุณาดำเนินการตามขั้นตอนจัดยาที่หน้างาน</p>{canReserve ? <ActionButton type="button" variant="danger" onClick={releaseLots} disabled={release.isPending}>{release.isPending ? "กำลังยกเลิก…" : "ยกเลิกการจอง"}</ActionButton> : null}</div>{canReserve ? <TextAreaField label="เหตุผลการยกเลิกการจอง" value={reason} onChange={(event) => changeReason(event.target.value)} placeholder="เช่น ทบทวนรายการยาก่อนจัด" disabled={release.isPending} /> : <p className="field-hint">อ่านข้อมูลได้อย่างเดียว — บัญชีนี้ไม่มีสิทธิ์ยกเลิกการจอง</p>}</> : canReserve ? <div className="dispense-footer"><p>การจองจะกันล็อตทั้งหมดใน transaction เดียว หากสต็อกไม่พอระบบจะไม่เปลี่ยนแปลงรายการใด</p><ActionButton type="button" icon={PackageCheck} onClick={reserveLots} disabled={reserve.isPending}>{reserve.isPending ? "กำลังจองล็อต…" : "เริ่มจองล็อตตาม FEFO"}</ActionButton></div> : <div className="dispense-footer"><p>อ่านข้อมูลได้อย่างเดียว — บัญชีนี้ไม่มีสิทธิ์จองหรือยกเลิกรายการ</p></div>}{message ? <p className="field-error" role="alert">{message}</p> : null}</Card>
-    {activeReservation ? <Card className="dispensing-body"><SectionHeading title="สถานะ Pilot" description="Hard Reservation เป็นการกันสต็อกเพื่อเตรียมจัดยาเท่านั้น" /><p className="empty-detail">การสแกนบาร์โค้ด ฉลากยา การตรวจปล่อย ส่งมอบ และตัดสต็อกจริงจะเปิดใน Pilot ระยะถัดไป</p></Card> : null}
+    <PageHeader eyebrow="FULFILLMENT · PICK LIST" title="จัดยา" description="ตรวจสอบฉลากที่ลงนามและยืนยันล็อตตามรายการที่ระบบจัดสรร" />
+    <Card className="dispensing-body"><div className="patient-header"><div className="patient-header-copy"><strong>{data.patient.displayName}</strong><span>HN {data.patient.hn} · Visit {data.visit.id}</span></div><StatusBadge tone={tone(data.visit.status)}>{data.visit.status}</StatusBadge></div><div className="dispensing-meta"><span>Visit revision {data.visit.revision}</span><span>{data.medicationDecision ? `Order v${data.medicationDecision.version}` : "ไม่มีคำสั่งยา"}</span></div></Card>
+    <Card className="dispensing-body"><SectionHeading icon={ClipboardList} title="คำสั่งยาและฉลากที่ลงนาม" description="ใช้เฉพาะ Label เวอร์ชันปัจจุบันที่ระบบยืนยัน" />{data.label ? <div className="signed-next-actions"><span><strong>Label v{data.label.version}</strong><small>{data.label.items.map((item) => item.internalBarcode).join(" · ")}</small></span><Link className="care-button care-button-secondary" to={`/dispensing/${data.visit.id}/labels`}>เปิดฉลากยา</Link></div> : <p className="field-error" role="alert">ฉลากปัจจุบันไม่พร้อมใช้งาน กรุณากลับไปตรวจสอบคำสั่งยา</p>}</Card>
+    {data.visit.status === "AWAITING_PREPARATION" ? <Card className="dispensing-body"><SectionHeading icon={PackageCheck} title="เริ่มเตรียมยา" description="ระบบจะกันสต็อกและสร้างรายการยืนยันสำหรับการจัดยา" />{canPrepare && allowed(data, "START_PREPARATION") ? <div className="dispense-footer"><p>เริ่มเมื่อพร้อมเตรียมยา โดยใช้ Label ปัจจุบันเท่านั้น</p><ActionButton type="button" icon={PackageCheck} onClick={start} disabled={reserve.isPending || !data.label}>{reserve.isPending ? "กำลังเริ่ม…" : "เริ่มเตรียมยา"}</ActionButton></div> : <p className="field-hint">รอผู้มีสิทธิ์เริ่มการเตรียมยา</p>}</Card> : null}
+    {data.visit.status === "PREPARING" && preparation ? <Card className="dispensing-body"><SectionHeading icon={Barcode} title="ยืนยันรายการจัดยา" description="สแกนบาร์โค้ดยาแล้วกด Enter; ระบบจะยืนยันเฉพาะ allocation ที่ตรงกัน" /><label className="field"><span className="field-label">สแกนบาร์โค้ดยา</span><input ref={scannerRef} className="care-input" value={scan} onChange={(event) => { setScan(event.target.value); setLocalError(""); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); submitBarcode(); } }} disabled={!canPrepare || !allowed(data, "CONFIRM_ALLOCATION") || confirm.isPending} /></label><div className="medication-list" aria-label="รายการ allocation">{allocations.map((item) => <article className={`medication-card ${confirmed.has(item.id) ? "medication-ready" : ""}`} key={item.id}><span className="medication-check" aria-hidden="true"><PackageCheck size={17} /></span><div className="medication-copy"><strong>ล็อต {item.lotId}</strong><small>Order item {item.orderItemId}</small><em>จำนวน {item.quantity}</em></div><StatusBadge tone={confirmed.has(item.id) ? "success" : "waiting"}>{confirmed.has(item.id) ? "ยืนยันแล้ว" : "รอยืนยัน"}</StatusBadge></article>)}</div>{pending && canPrepare && allowed(data, "CONFIRM_ALLOCATION") ? <><TextAreaField label="เหตุผลการยืนยันด้วยตนเอง" value={manualReason} onChange={(event) => { setManualReason(event.target.value); setLocalError(""); }} disabled={confirm.isPending} /><div className="dispense-footer"><p>ใช้เมื่อสแกนไม่ได้ และเหตุผลจะถูกบันทึกกับ allocation ที่ยังรอยืนยัน</p><ActionButton type="button" variant="secondary" onClick={submitManual} disabled={confirm.isPending || !manualReason.trim()}>ยืนยันด้วยตนเอง</ActionButton></div></> : null}<div className="dispense-footer"><p>{confirmed.size}/{allocations.length} รายการได้รับการยืนยัน</p><ActionButton type="button" onClick={finish} disabled={complete.isPending || !canPrepare || !allowed(data, "COMPLETE_PREPARATION")}>{complete.isPending ? "กำลังบันทึก…" : "เสร็จสิ้นการเตรียมยา"}</ActionButton></div>{canPrepare && allowed(data, "ABANDON_PREPARATION") ? <><TextAreaField label="เหตุผลการยกเลิกการเตรียมยา" value={abandonReason} onChange={(event) => { setAbandonReason(event.target.value); setLocalError(""); }} disabled={abandon.isPending} /><div className="dispense-footer"><p>การยกเลิกจะคืนการกันสต็อกและทำให้ฉลาก/รายการเตรียมปัจจุบันใช้ต่อไม่ได้</p><ActionButton type="button" variant="danger" onClick={cancelPreparation} disabled={abandon.isPending || !abandonReason.trim()}>{abandon.isPending ? "กำลังยกเลิก…" : "ยกเลิกการเตรียมยา"}</ActionButton></div></> : null}</Card> : null}
+    {data.visit.status === "AWAITING_RELEASE" ? <Card className="dispensing-body"><SectionHeading title="ตรวจปล่อยยา" description="การเตรียมยาเสร็จแล้ว รอแพทย์ตรวจปล่อย" />{auth.session?.user.role === "doctor" && (allowed(data, "RELEASE") || allowed(data, "REJECT")) ? <div className="dispense-footer"><p>การตรวจปล่อยเป็น milestone ถัดไปของ Pilot</p><ActionButton type="button" variant="secondary" disabled>ตรวจปล่อยยา (ยังไม่พร้อม)</ActionButton></div> : <p className="field-hint">รอแพทย์ตรวจปล่อยยา</p>}</Card> : null}
+    {data.visit.status === "AWAITING_HANDOFF" ? <Card className="dispensing-body"><SectionHeading title="ส่งมอบยา" description="ยาได้รับการตรวจปล่อยแล้ว" />{allowed(data, "HANDOFF") ? <div className="dispense-footer"><p>การส่งมอบเป็น milestone ถัดไปของ Pilot</p><ActionButton type="button" disabled>ส่งมอบยา (ยังไม่พร้อม)</ActionButton></div> : <p className="field-hint">รอขั้นตอนส่งมอบยา</p>}</Card> : null}
+    {data.visit.status === "AWAITING_CHARGE" ? <Card className="dispensing-body"><SectionHeading title="ขั้นตอนถัดไป" description="การจัดยาเสร็จสิ้นแล้ว" /><p className="empty-detail">รอการคิดเงินใน milestone ถัดไปของ Pilot</p></Card> : null}
+    {message ? <p className="field-error" role="alert">{message}</p> : null}
   </div>;
 }

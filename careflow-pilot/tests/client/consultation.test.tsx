@@ -416,7 +416,7 @@ describe("Doctor consultation authoring", () => {
   });
 
   it.each([
-    ["AWAITING_PREPARATION", "ไปหน้าจัดยาและจองล็อต", "/dispensing/visit-42", "จัดยา"],
+    ["AWAITING_PREPARATION", "ไปหน้าเตรียมยา", "/dispensing/visit-42", "จัดยา"],
     ["AWAITING_CHARGE", "ไปหน้าชำระเงิน (ยังไม่พร้อม)", "/checkout/visit-42", "ชำระเงิน"],
   ] as const)("offers truthful next-step navigation for %s", async (status, linkName, href, unavailableTitle) => {
     const signedWorkspace = {
