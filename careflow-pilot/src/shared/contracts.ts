@@ -137,6 +137,7 @@ export const medicationSchema = z.strictObject({
   strengthText: z.string().min(1).max(100),
   dosageFormText: z.string().min(1).max(100),
   canonicalUnit: z.string().min(1).max(100),
+  internalBarcode: z.string().regex(/^[!-~]{1,64}$/),
   revision: z.number().int().min(1),
 });
 export type MedicationDto = z.infer<typeof medicationSchema>;
@@ -693,7 +694,7 @@ const signedMedicationDecisionBaseSchema = z.strictObject({
   signedAt: z.string().datetime(),
   contentHash: contentHashSchema,
 });
-const signedMedicationItemSchema = medicationSchema.extend({
+const signedMedicationItemSchema = medicationSchema.omit({ internalBarcode: true }).extend({
   /** Stable link back to the immutable medication_order_items row when this DTO comes from the server. */
   orderItemId: z.string().min(1).optional(),
   quantity: z.number().int().min(1).max(9999),
@@ -721,6 +722,143 @@ export const inventoryPickListSchema = z.strictObject({
   inventory: z.array(inventorySummarySchema),
 });
 export type InventoryPickListDto = z.infer<typeof inventoryPickListSchema>;
+
+const fulfillmentIdSchema = z.string().trim().min(1).max(120);
+const fulfillmentBarcodeSchema = z.string().trim().toUpperCase().regex(/^[!-~]{1,64}$/);
+const fulfillmentActorSchema = z.strictObject({
+  id: fulfillmentIdSchema,
+  displayName: z.string().trim().min(1).max(200),
+});
+const fulfillmentTextSchema = (maximumLength: number) => z.string().trim().min(1).max(maximumLength);
+
+export const fulfillmentLabelItemSchema = z.strictObject({
+  orderItemId: fulfillmentIdSchema,
+  medicationId: z.string().regex(/^DEMO-MED-\d{3}$/),
+  internalBarcode: fulfillmentBarcodeSchema,
+});
+export const fulfillmentCurrentLabelSchema = z.strictObject({
+  id: fulfillmentIdSchema,
+  medicationDecisionId: fulfillmentIdSchema,
+  medicationDecisionVersion: z.number().int().min(1),
+  version: z.number().int().min(1),
+  items: z.array(fulfillmentLabelItemSchema).min(1).max(20),
+}).nullable();
+export type FulfillmentCurrentLabelDto = z.infer<typeof fulfillmentCurrentLabelSchema>;
+
+export const fulfillmentPrintEventSchema = z.strictObject({
+  id: fulfillmentIdSchema,
+  labelVersionId: fulfillmentIdSchema,
+  sequence: z.number().int().min(1),
+  requestedAt: z.string().datetime(),
+  requestedBy: fulfillmentActorSchema,
+  rendererVersion: z.string().trim().min(1).max(100),
+  mediaSize: z.literal("80x100mm"),
+});
+export type FulfillmentPrintEventDto = z.infer<typeof fulfillmentPrintEventSchema>;
+
+export const fulfillmentAllocationReferenceSchema = z.strictObject({
+  id: fulfillmentIdSchema,
+  orderItemId: fulfillmentIdSchema,
+  lotId: fulfillmentIdSchema,
+  quantity: z.number().int().min(1).max(999_999),
+});
+
+export const fulfillmentConfirmationSchema = z.discriminatedUnion("method", [
+  z.strictObject({
+    allocationId: fulfillmentIdSchema,
+    orderItemId: fulfillmentIdSchema,
+    lotId: fulfillmentIdSchema,
+    method: z.literal("BARCODE"),
+    barcode: fulfillmentBarcodeSchema,
+  }),
+  z.strictObject({
+    allocationId: fulfillmentIdSchema,
+    orderItemId: fulfillmentIdSchema,
+    lotId: fulfillmentIdSchema,
+    method: z.literal("MANUAL"),
+    reason: fulfillmentTextSchema(500),
+  }),
+]);
+export type FulfillmentConfirmationDto = z.infer<typeof fulfillmentConfirmationSchema>;
+
+export const fulfillmentPreparationSchema = z.strictObject({
+  id: fulfillmentIdSchema,
+  revision: z.number().int().min(1),
+  status: z.enum(["ACTIVE", "COMPLETED"]),
+  confirmations: z.array(fulfillmentConfirmationSchema),
+}).nullable();
+export type FulfillmentPreparationDto = z.infer<typeof fulfillmentPreparationSchema>;
+
+export const fulfillmentReleaseSchema = z.strictObject({
+  id: fulfillmentIdSchema,
+  reservationId: fulfillmentIdSchema,
+}).nullable();
+export type FulfillmentReleaseDto = z.infer<typeof fulfillmentReleaseSchema>;
+
+export const fulfillmentRejectionSchema = z.strictObject({
+  id: fulfillmentIdSchema,
+  preparationId: fulfillmentIdSchema,
+  reservationId: fulfillmentIdSchema,
+  reason: fulfillmentTextSchema(500),
+}).nullable();
+export type FulfillmentRejectionDto = z.infer<typeof fulfillmentRejectionSchema>;
+
+export const fulfillmentDispenseLineSchema = z.strictObject({
+  allocationId: fulfillmentIdSchema,
+  orderItemId: fulfillmentIdSchema,
+  lotId: fulfillmentIdSchema,
+  quantity: z.number().int().min(1).max(999_999),
+});
+export const fulfillmentDispenseSchema = z.strictObject({
+  id: fulfillmentIdSchema,
+  reservationId: fulfillmentIdSchema,
+  lines: z.array(fulfillmentDispenseLineSchema).min(1),
+}).nullable();
+export type FulfillmentDispenseDto = z.infer<typeof fulfillmentDispenseSchema>;
+
+export const fulfillmentPickListSchema = z.strictObject({
+  visit: visitSummarySchema,
+  patient: patientSchema,
+  medicationDecision: z.strictObject({
+    id: fulfillmentIdSchema,
+    version: z.number().int().min(1),
+    kind: z.literal("ORDER"),
+  }).nullable(),
+  label: fulfillmentCurrentLabelSchema,
+  reservation: z.strictObject({
+    id: fulfillmentIdSchema,
+    allocations: z.array(fulfillmentAllocationReferenceSchema),
+  }).nullable(),
+  preparation: fulfillmentPreparationSchema,
+  release: fulfillmentReleaseSchema,
+  dispense: fulfillmentDispenseSchema,
+  allowedActions: z.array(z.enum(["START_PREPARATION", "PRINT_LABEL", "CONFIRM_ALLOCATION", "COMPLETE_PREPARATION", "ABANDON_PREPARATION", "RELEASE", "REJECT", "HANDOFF"])),
+});
+export type FulfillmentPickListDto = z.infer<typeof fulfillmentPickListSchema>;
+
+export const fulfillmentConfirmationPayloadSchema = z.discriminatedUnion("method", [
+  z.strictObject({
+    method: z.literal("BARCODE"),
+    allocationId: fulfillmentIdSchema,
+    preparationId: fulfillmentIdSchema,
+    barcode: fulfillmentBarcodeSchema,
+  }),
+  z.strictObject({
+    method: z.literal("MANUAL"),
+    allocationId: fulfillmentIdSchema,
+    preparationId: fulfillmentIdSchema,
+    reason: fulfillmentTextSchema(500),
+  }),
+]);
+export type FulfillmentConfirmationPayload = z.infer<typeof fulfillmentConfirmationPayloadSchema>;
+export const fulfillmentConfirmationBodySchema = rejectOwnPrototypeKeys(z.strictObject({
+  expectedRevisions: z.strictObject({
+    visit: z.number().int().min(1),
+    preparation: z.number().int().min(1),
+  }),
+  payload: fulfillmentConfirmationPayloadSchema,
+}));
+export type FulfillmentConfirmationBody = z.infer<typeof fulfillmentConfirmationBodySchema>;
 
 export const snapshotSourceSchema = z.strictObject({
   type: z.enum(["ALLERGY_REVIEW", "INTAKE", "CLINICAL_NOTE", "MEDICATION_DECISION"]),

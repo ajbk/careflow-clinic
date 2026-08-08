@@ -107,6 +107,16 @@ describe("clinical evidence schema", () => {
       "clinical_note_draft_diagnoses",
       "clinical_note_drafts",
       "clinical_notes",
+      "fulfillment_artifact_invalidations",
+      "fulfillment_dispense_lines",
+      "fulfillment_dispenses",
+      "fulfillment_label_items",
+      "fulfillment_label_print_events",
+      "fulfillment_label_versions",
+      "fulfillment_preparation_confirmations",
+      "fulfillment_preparations",
+      "fulfillment_rejections",
+      "fulfillment_releases",
       "idempotency_records",
       "intake_observations",
       "inventory_lots",
@@ -298,7 +308,9 @@ describe("clinical evidence schema", () => {
       clinical_note_amendments: {
         clinical_note_amendments_note_version_unique: ["clinical_note_id", "version"],
       },
-      medications: {},
+      medications: {
+        medications_active_internal_barcode_unique: ["internal_barcode"],
+      },
       medication_decision_drafts: {
         medication_decision_drafts_visit_id_unique: ["visit_id"],
       },
@@ -369,12 +381,12 @@ describe("clinical evidence schema", () => {
     const value = database();
 
     expect(value.sqlite.prepare(
-      "SELECT id, display_name, active, revision FROM medications ORDER BY id",
+      "SELECT id, display_name, internal_barcode, active, revision FROM medications ORDER BY id",
     ).all()).toEqual([
-      { id: "DEMO-MED-001", display_name: "[DEMO] ยาทดสอบชนิด A", active: 1, revision: 1 },
-      { id: "DEMO-MED-002", display_name: "[DEMO] ยาทดสอบชนิด B", active: 1, revision: 1 },
-      { id: "DEMO-MED-003", display_name: "[DEMO] ยาทดสอบชนิด C", active: 1, revision: 1 },
-      { id: "DEMO-MED-004", display_name: "[DEMO] ยาทดสอบชนิด D", active: 1, revision: 1 },
+      { id: "DEMO-MED-001", display_name: "[DEMO] ยาทดสอบชนิด A", internal_barcode: "CF-DEMO-001", active: 1, revision: 1 },
+      { id: "DEMO-MED-002", display_name: "[DEMO] ยาทดสอบชนิด B", internal_barcode: "CF-DEMO-002", active: 1, revision: 1 },
+      { id: "DEMO-MED-003", display_name: "[DEMO] ยาทดสอบชนิด C", internal_barcode: "CF-DEMO-003", active: 1, revision: 1 },
+      { id: "DEMO-MED-004", display_name: "[DEMO] ยาทดสอบชนิด D", internal_barcode: "CF-DEMO-004", active: 1, revision: 1 },
     ]);
   });
 });

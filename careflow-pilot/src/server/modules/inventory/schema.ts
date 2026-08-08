@@ -108,6 +108,9 @@ export const inventoryReservations = sqliteTable(
     releasedAt: text("released_at"),
     releasedBy: text("released_by").references(() => staffAccounts.id),
     releaseReason: text("release_reason"),
+    consumedAt: text("consumed_at"),
+    consumedBy: text("consumed_by").references(() => staffAccounts.id),
+    consumedDispenseId: text("consumed_dispense_id"),
   },
   (table) => [
     uniqueIndex("inventory_reservations_active_visit_decision_unique")

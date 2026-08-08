@@ -1,0 +1,123 @@
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  fulfillmentConfirmationBodySchema,
+  fulfillmentCurrentLabelSchema,
+  fulfillmentPickListSchema,
+} from "../../src/shared/contracts.js";
+import { createTestDatabase, type TestDatabase } from "./helpers/database.js";
+
+const cleanups: Array<() => void> = [];
+
+afterEach(() => {
+  for (const cleanup of cleanups.splice(0).reverse()) cleanup();
+});
+
+function database(): TestDatabase {
+  const value = createTestDatabase();
+  cleanups.push(value.cleanup);
+  return value;
+}
+
+function seedChain(value: TestDatabase): void {
+  const now = "2026-08-09T00:00:00.000Z";
+  const hash = "a".repeat(64);
+  value.sqlite.exec(`
+    INSERT INTO staff_accounts (id, clinic_id, username, display_name, role, password_hash, must_change_password, active, revision, last_password_changed_at, created_at, updated_at)
+    VALUES ('doctor-001', 'clinic', 'doctor-001', 'แพทย์ทดสอบ', 'doctor', 'hash', 0, 1, 1, '${now}', '${now}', '${now}');
+    INSERT INTO patients (id, clinic_id, hn, display_name, phone, birth_date, sex, revision, created_at, updated_at)
+    VALUES ('patient-001', 'clinic', 'DEMO-000001', 'ผู้ป่วยทดสอบ 000001', '0000000001', '1990-01-01', 'unknown', 1, '${now}', '${now}');
+    INSERT INTO visits (id, clinic_id, patient_id, status, chief_complaint, revision, arrived_at, created_by)
+    VALUES ('visit-001', 'clinic', 'patient-001', 'AWAITING_PREPARATION', 'ทดสอบ', 3, '${now}', 'doctor-001');
+    INSERT INTO medication_decisions (id, visit_id, version, kind, signed_by, signed_at, content_hash, signed_by_display_name)
+    VALUES ('decision-001', 'visit-001', 1, 'ORDER', 'doctor-001', '${now}', '${hash}', 'แพทย์ทดสอบ');
+    INSERT INTO medication_order_items (id, medication_decision_id, position, medication_id, medication_revision, display_name_snapshot, strength_snapshot, dosage_form_snapshot, unit_snapshot, quantity, directions_th)
+    VALUES ('order-item-001', 'decision-001', 0, 'DEMO-MED-001', 1, '[DEMO] ยาทดสอบชนิด A', '500 หน่วยทดสอบ', 'เม็ดทดสอบ', 'เม็ด', 2, 'ทดสอบ');
+    INSERT INTO inventory_lots (id, clinic_id, medication_id, medication_revision, display_name_snapshot, strength_snapshot, dosage_form_snapshot, unit_snapshot, lot_number, expiry_date, supplier_name, status, created_at, created_by)
+    VALUES ('lot-001', 'clinic', 'DEMO-MED-001', 1, '[DEMO] ยาทดสอบชนิด A', '500 หน่วยทดสอบ', 'เม็ดทดสอบ', 'เม็ด', 'LOT-001', '2026-12-31', 'ผู้ขายทดสอบ', 'AVAILABLE', '${now}', 'doctor-001');
+    INSERT INTO inventory_receipts (id, clinic_id, supplier_name, note, received_at, received_by)
+    VALUES ('receipt-001', 'clinic', 'ผู้ขายทดสอบ', '', '${now}', 'doctor-001');
+    INSERT INTO inventory_receipt_lines (id, receipt_id, lot_id, quantity, unit_snapshot)
+    VALUES ('receipt-line-001', 'receipt-001', 'lot-001', 2, 'เม็ด');
+    INSERT INTO inventory_stock_movements (id, clinic_id, lot_id, movement_type, quantity_delta, source_type, source_id, reason, occurred_at, actor_id)
+    VALUES ('movement-001', 'clinic', 'lot-001', 'RECEIPT', 2, 'RECEIPT', 'receipt-001', '', '${now}', 'doctor-001');
+    INSERT INTO inventory_reservations (id, clinic_id, visit_id, medication_decision_id, medication_decision_version, status, created_at, created_by)
+    VALUES ('reservation-001', 'clinic', 'visit-001', 'decision-001', 1, 'ACTIVE', '${now}', 'doctor-001');
+    INSERT INTO inventory_reservation_allocations (id, reservation_id, medication_order_item_id, lot_id, position, quantity, medication_id, lot_number_snapshot, expiry_date_snapshot, unit_snapshot, allocated_at)
+    VALUES ('allocation-001', 'reservation-001', 'order-item-001', 'lot-001', 0, 2, 'DEMO-MED-001', 'LOT-001', '2026-12-31', 'เม็ด', '${now}');
+    INSERT INTO fulfillment_label_versions (id, clinic_id, visit_id, medication_decision_id, medication_decision_version, version, created_at, created_by, patient_hn_snapshot, patient_display_name_snapshot, clinic_name_snapshot)
+    VALUES ('label-001', 'clinic', 'visit-001', 'decision-001', 1, 1, '${now}', 'doctor-001', 'DEMO-000001', 'ผู้ป่วยทดสอบ 000001', 'คลินิกทดสอบ');
+    INSERT INTO fulfillment_label_items (id, label_version_id, medication_order_item_id, position, medication_id, medication_revision, display_name_snapshot, strength_snapshot, dosage_form_snapshot, quantity, unit_snapshot, directions_th_snapshot, internal_barcode_snapshot)
+    VALUES ('label-item-001', 'label-001', 'order-item-001', 0, 'DEMO-MED-001', 1, '[DEMO] ยาทดสอบชนิด A', '500 หน่วยทดสอบ', 'เม็ดทดสอบ', 2, 'เม็ด', 'ทดสอบ', 'CF-DEMO-001');
+    INSERT INTO fulfillment_label_print_events (id, label_version_id, sequence, requested_at, requested_by, renderer_version, media_size_snapshot)
+    VALUES ('print-001', 'label-001', 1, '${now}', 'doctor-001', 'test', '80x100mm');
+    INSERT INTO fulfillment_preparations (id, clinic_id, visit_id, reservation_id, medication_decision_id, medication_decision_version, label_version_id, revision, status, minimum_print_sequence, created_at, created_by)
+    VALUES ('preparation-001', 'clinic', 'visit-001', 'reservation-001', 'decision-001', 1, 'label-001', 1, 'ACTIVE', 1, '${now}', 'doctor-001');
+    INSERT INTO fulfillment_preparation_confirmations (id, preparation_id, reservation_allocation_id, medication_order_item_id, medication_id, lot_id, quantity, method, barcode_snapshot, manual_reason, confirmed_at, confirmed_by)
+    VALUES ('confirmation-001', 'preparation-001', 'allocation-001', 'order-item-001', 'DEMO-MED-001', 'lot-001', 2, 'BARCODE', 'CF-DEMO-001', NULL, '${now}', 'doctor-001');
+    INSERT INTO fulfillment_releases (id, clinic_id, visit_id, medication_decision_id, medication_decision_version, label_version_id, label_print_event_id, preparation_id, preparation_revision, reservation_id, released_at, released_by)
+    VALUES ('release-001', 'clinic', 'visit-001', 'decision-001', 1, 'label-001', 'print-001', 'preparation-001', 1, 'reservation-001', '${now}', 'doctor-001');
+    INSERT INTO fulfillment_rejections (id, clinic_id, visit_id, preparation_id, reservation_id, label_version_id, print_sequence_at_rejection, reason, rejected_at, rejected_by)
+    VALUES ('rejection-001', 'clinic', 'visit-001', 'preparation-001', 'reservation-001', 'label-001', 1, 'ทดสอบการปฏิเสธ', '${now}', 'doctor-001');
+    INSERT INTO fulfillment_artifact_invalidations (id, clinic_id, visit_id, artifact_type, artifact_id, trigger, reason, invalidated_at, invalidated_by)
+    VALUES ('invalidation-001', 'clinic', 'visit-001', 'RELEASE', 'release-001', 'REJECT', 'ทดสอบการยกเลิก', '${now}', 'doctor-001');
+    INSERT INTO fulfillment_dispenses (id, clinic_id, visit_id, medication_decision_id, medication_decision_version, label_version_id, preparation_id, release_id, reservation_id, handed_off_at, handed_off_by)
+    VALUES ('dispense-001', 'clinic', 'visit-001', 'decision-001', 1, 'label-001', 'preparation-001', 'release-001', 'reservation-001', '${now}', 'doctor-001');
+    INSERT INTO fulfillment_dispense_lines (id, dispense_id, reservation_allocation_id, medication_order_item_id, medication_id, lot_id, quantity, display_name_snapshot, strength_snapshot, dosage_form_snapshot, unit_snapshot, lot_number_snapshot, expiry_date_snapshot, directions_th_snapshot)
+    VALUES ('dispense-line-001', 'dispense-001', 'allocation-001', 'order-item-001', 'DEMO-MED-001', 'lot-001', 2, '[DEMO] ยาทดสอบชนิด A', '500 หน่วยทดสอบ', 'เม็ดทดสอบ', 'เม็ด', 'LOT-001', '2026-12-31', 'ทดสอบ');
+  `);
+}
+
+describe("fulfillment completion persistence contracts", () => {
+  it("represents the signed ORDER label, preparation, release, and dispense chain with exact allocation associations", () => {
+    const parsed = fulfillmentPickListSchema.parse({
+      visit: { id: "visit-001", status: "AWAITING_HANDOFF", revision: 6, arrivedAt: "2026-08-09T00:00:00.000Z", startedAt: null },
+      patient: { id: "patient-001", hn: "DEMO-000001", displayName: "ผู้ป่วยทดสอบ 000001", phone: "0000000001", birthDate: "1990-01-01", sex: "unknown", revision: 1, createdAt: "2026-08-09T00:00:00.000Z" },
+      medicationDecision: { id: "decision-001", version: 1, kind: "ORDER" },
+      label: { id: "label-001", medicationDecisionId: "decision-001", medicationDecisionVersion: 1, version: 1, items: [{ orderItemId: "order-item-001", medicationId: "DEMO-MED-001", internalBarcode: "CF-DEMO-001" }] },
+      reservation: { id: "reservation-001", allocations: [{ id: "allocation-001", orderItemId: "order-item-001", lotId: "lot-001", quantity: 2 }] },
+      preparation: { id: "preparation-001", revision: 1, status: "COMPLETED", confirmations: [{ allocationId: "allocation-001", orderItemId: "order-item-001", lotId: "lot-001", method: "BARCODE", barcode: "CF-DEMO-001" }] },
+      release: { id: "release-001", reservationId: "reservation-001" },
+      dispense: { id: "dispense-001", reservationId: "reservation-001", lines: [{ allocationId: "allocation-001", orderItemId: "order-item-001", lotId: "lot-001", quantity: 2 }] },
+      allowedActions: ["HANDOFF"],
+    });
+
+    expect(parsed.preparation?.confirmations[0]).toMatchObject({ allocationId: "allocation-001", lotId: "lot-001" });
+    expect(parsed.dispense?.lines[0]).toMatchObject({ orderItemId: "order-item-001", lotId: "lot-001" });
+    expect(fulfillmentCurrentLabelSchema.parse(null)).toBeNull();
+  });
+
+  it("accepts method-specific confirmation evidence and rejects missing manual reason or unknown command keys", () => {
+    expect(fulfillmentConfirmationBodySchema.safeParse({
+      expectedRevisions: { visit: 3, preparation: 1 },
+      payload: { method: "BARCODE", allocationId: "allocation-001", preparationId: "preparation-001", barcode: "CF-DEMO-001" },
+    }).success).toBe(true);
+    expect(fulfillmentConfirmationBodySchema.safeParse({
+      expectedRevisions: { visit: 3, preparation: 1 },
+      payload: { method: "MANUAL", allocationId: "allocation-001", preparationId: "preparation-001", reason: "  " },
+    }).success).toBe(false);
+    expect(fulfillmentConfirmationBodySchema.safeParse({
+      expectedRevisions: { visit: 3, preparation: 1 },
+      payload: { method: "BARCODE", allocationId: "allocation-001", preparationId: "preparation-001", barcode: "CF-DEMO-001", extra: true },
+    }).success).toBe(false);
+  });
+
+  it("rejects updates and deletes to all fulfillment and inventory evidence tables at the database boundary", () => {
+    const value = database();
+    seedChain(value);
+
+    for (const table of [
+      "inventory_reservation_allocations",
+      "fulfillment_preparation_confirmations",
+      "fulfillment_label_items",
+      "fulfillment_label_print_events",
+      "fulfillment_releases",
+      "fulfillment_rejections",
+      "fulfillment_artifact_invalidations",
+      "fulfillment_dispense_lines",
+      "inventory_stock_movements",
+    ]) {
+      expect(() => value.sqlite.prepare(`UPDATE ${table} SET id = id`).run()).toThrow(`${table} are append-only`);
+      expect(() => value.sqlite.prepare(`DELETE FROM ${table}`).run()).toThrow(`${table} are append-only`);
+    }
+  });
+});

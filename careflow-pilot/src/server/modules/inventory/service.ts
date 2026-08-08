@@ -93,12 +93,14 @@ function clinicDate(clock: Date): string {
 }
 
 function toMedicationDto(row: typeof medications.$inferSelect): MedicationDto {
+  if (!row.internalBarcode) throw new Error("Active synthetic medication is missing an internal barcode");
   return {
     id: row.id,
     displayName: row.displayName,
     strengthText: row.strengthText,
     dosageFormText: row.dosageFormText,
     canonicalUnit: row.canonicalUnit,
+    internalBarcode: row.internalBarcode,
     revision: row.revision,
   };
 }

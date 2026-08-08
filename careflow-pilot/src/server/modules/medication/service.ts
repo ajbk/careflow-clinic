@@ -76,12 +76,14 @@ type SignedDecisionRow = typeof medicationDecisions.$inferSelect;
 type MedicationTransaction = AppDatabase | AppTransaction;
 
 function toDto(row: MedicationRow): MedicationDto {
+  if (!row.internalBarcode) throw new Error("Active synthetic medication is missing an internal barcode");
   return {
     id: row.id,
     displayName: row.displayName,
     strengthText: row.strengthText,
     dosageFormText: row.dosageFormText,
     canonicalUnit: row.canonicalUnit,
+    internalBarcode: row.internalBarcode,
     revision: row.revision,
   };
 }
@@ -370,11 +372,16 @@ export function createMedicationService(input: MedicationServiceOptions): Medica
           fieldErrors: { "medicationDraft.items": "ต้องระบุยา 1–20 รายการก่อนลงนาม" },
         });
       }
-      const items = draftItems.map((item) => ({
-        ...assertMedicationRevision(tx, item.medicationId, item.medicationRevision),
-        quantity: item.quantity,
-        directionsTh: completeDecisionText(item.directionsTh, "medicationDraft.items.directionsTh"),
-      }));
+      const items = draftItems.map((item) => {
+        const { internalBarcode: _internalBarcode, ...medicationSnapshot } = assertMedicationRevision(
+          tx, item.medicationId, item.medicationRevision,
+        );
+        return {
+          ...medicationSnapshot,
+          quantity: item.quantity,
+          directionsTh: completeDecisionText(item.directionsTh, "medicationDraft.items.directionsTh"),
+        };
+      });
       const evidence = {
         id, visitId, version: 1, kind: "ORDER" as const, noMedicationReason: null,
         items, revisionReason: null, supersedesId: null,
@@ -432,11 +439,16 @@ export function createMedicationService(input: MedicationServiceOptions): Medica
         });
         return signed;
       }
-      const items = decisionInput.items.map((item) => ({
-        ...assertMedicationRevision(tx, item.medicationId, item.medicationRevision),
-        quantity: item.quantity,
-        directionsTh: completeDecisionText(item.directionsTh, "decision.items.directionsTh"),
-      }));
+      const items = decisionInput.items.map((item) => {
+        const { internalBarcode: _internalBarcode, ...medicationSnapshot } = assertMedicationRevision(
+          tx, item.medicationId, item.medicationRevision,
+        );
+        return {
+          ...medicationSnapshot,
+          quantity: item.quantity,
+          directionsTh: completeDecisionText(item.directionsTh, "decision.items.directionsTh"),
+        };
+      });
       const evidence = {
         id, visitId, version: currentVersion + 1, kind: "ORDER" as const, noMedicationReason: null,
         items, revisionReason: reason, supersedesId: prior.id,

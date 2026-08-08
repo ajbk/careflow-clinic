@@ -63,11 +63,11 @@ describe("synthetic medication catalog", () => {
   it("orders by display name then id, limits 20, and exposes only catalog DTO fields", async () => {
     const fixture = await authenticatedMedicationApp();
     const insert = fixture.database.sqlite.prepare(
-      "INSERT INTO medications (id, display_name, strength_text, dosage_form_text, canonical_unit, active, revision, created_at, updated_at) VALUES (?, ?, '100 mg', 'tablet', 'tablet', 1, 1, ?, ?)",
+      "INSERT INTO medications (id, display_name, strength_text, dosage_form_text, canonical_unit, internal_barcode, active, revision, created_at, updated_at) VALUES (?, ?, '100 mg', 'tablet', 'tablet', ?, 1, 1, ?, ?)",
     );
     for (let sequence = 5; sequence <= 25; sequence += 1) {
       const id = `DEMO-MED-${String(sequence).padStart(3, "0")}`;
-      insert.run(id, sequence < 7 ? "[DEMO] AAA" : `[DEMO] Extra ${String(sequence).padStart(3, "0")}`, "2026-08-03T00:00:00.000Z", "2026-08-03T00:00:00.000Z");
+      insert.run(id, sequence < 7 ? "[DEMO] AAA" : `[DEMO] Extra ${String(sequence).padStart(3, "0")}`, `CF-DEMO-${String(sequence).padStart(3, "0")}`, "2026-08-03T00:00:00.000Z", "2026-08-03T00:00:00.000Z");
     }
 
     const response = await search(fixture.app, fixture.cookie, "DEMO");
@@ -76,7 +76,7 @@ describe("synthetic medication catalog", () => {
     expect(data).toHaveLength(20);
     expect(data.slice(0, 2).map((row) => row.id)).toEqual(["DEMO-MED-005", "DEMO-MED-006"]);
     expect(Object.keys(data[0] ?? {}).sort()).toEqual([
-      "canonicalUnit", "displayName", "dosageFormText", "id", "revision", "strengthText",
+      "canonicalUnit", "displayName", "dosageFormText", "id", "internalBarcode", "revision", "strengthText",
     ]);
   });
 

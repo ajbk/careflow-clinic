@@ -24,6 +24,16 @@ const expectedTables = new Set([
   "clinical_notes",
   "clinic_config",
   "clinic_counters",
+  "fulfillment_artifact_invalidations",
+  "fulfillment_dispense_lines",
+  "fulfillment_dispenses",
+  "fulfillment_label_items",
+  "fulfillment_label_print_events",
+  "fulfillment_label_versions",
+  "fulfillment_preparation_confirmations",
+  "fulfillment_preparations",
+  "fulfillment_rejections",
+  "fulfillment_releases",
   "idempotency_records",
   "intake_observations",
   "inventory_lots",
@@ -71,10 +81,18 @@ const appendOnlyTables = [
   "inventory_receipt_lines",
   "inventory_stock_movements",
   "inventory_reservation_allocations",
+  "fulfillment_label_items",
+  "fulfillment_label_print_events",
+  "fulfillment_preparation_confirmations",
+  "fulfillment_artifact_invalidations",
+  "fulfillment_releases",
+  "fulfillment_rejections",
+  "fulfillment_dispenses",
+  "fulfillment_dispense_lines",
 ] as const;
 
 function appendOnlyTriggerSql(table: (typeof appendOnlyTables)[number], operation: "update" | "delete"): string {
-  const indent = table === "inventory_reservation_allocations" ? "  " : "\t";
+  const indent = table === "inventory_reservation_allocations" || table.startsWith("fulfillment_") ? "  " : "\t";
   return `CREATE TRIGGER \`${table}_block_${operation}\`
 BEFORE ${operation.toUpperCase()} ON \`${table}\`
 BEGIN
@@ -244,6 +262,16 @@ function verifyReset(sqlite: Database.Database): void {
     ["clinical_notes", "count(*)"],
     ["intake_observations", "count(*)"],
     ["inventory_stock_movements", "count(*)"],
+    ["fulfillment_dispense_lines", "count(*)"],
+    ["fulfillment_dispenses", "count(*)"],
+    ["fulfillment_releases", "count(*)"],
+    ["fulfillment_rejections", "count(*)"],
+    ["fulfillment_artifact_invalidations", "count(*)"],
+    ["fulfillment_preparation_confirmations", "count(*)"],
+    ["fulfillment_preparations", "count(*)"],
+    ["fulfillment_label_print_events", "count(*)"],
+    ["fulfillment_label_items", "count(*)"],
+    ["fulfillment_label_versions", "count(*)"],
     ["inventory_reservation_allocations", "count(*)"],
     ["inventory_reservations", "count(*)"],
     ["inventory_receipt_lines", "count(*)"],
@@ -342,6 +370,16 @@ export function runResetSyntheticData(deps: ResetSyntheticDependencies): number 
     dropKnownAppendOnlyTriggers(sqlite);
     sqlite.exec("DELETE FROM sessions;");
     sqlite.exec("DELETE FROM idempotency_records;");
+    sqlite.exec("DELETE FROM fulfillment_dispense_lines;");
+    sqlite.exec("DELETE FROM fulfillment_dispenses;");
+    sqlite.exec("DELETE FROM fulfillment_releases;");
+    sqlite.exec("DELETE FROM fulfillment_rejections;");
+    sqlite.exec("DELETE FROM fulfillment_artifact_invalidations;");
+    sqlite.exec("DELETE FROM fulfillment_preparation_confirmations;");
+    sqlite.exec("DELETE FROM fulfillment_preparations;");
+    sqlite.exec("DELETE FROM fulfillment_label_print_events;");
+    sqlite.exec("DELETE FROM fulfillment_label_items;");
+    sqlite.exec("DELETE FROM fulfillment_label_versions;");
     sqlite.exec("DELETE FROM inventory_stock_movements;");
     sqlite.exec("DELETE FROM inventory_reservation_allocations;");
     sqlite.exec("DELETE FROM inventory_reservations;");

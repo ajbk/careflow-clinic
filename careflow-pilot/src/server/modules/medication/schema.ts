@@ -14,6 +14,7 @@ export const medications = sqliteTable(
     strengthText: text("strength_text").notNull(),
     dosageFormText: text("dosage_form_text").notNull(),
     canonicalUnit: text("canonical_unit").notNull(),
+    internalBarcode: text("internal_barcode"),
     active: integer("active").notNull().default(1),
     revision: integer("revision").notNull().default(1),
     createdAt: text("created_at").notNull(),
