@@ -48,3 +48,25 @@
 - `npm run lint` — passed.
 - `npm run build:client` — passed; the existing Vite chunk-size warning remains.
 - A full `npm run test:client` run still has four pre-existing inventory fixture failures because those fixtures omit the now-required medication barcode; no inventory files were changed in this review.
+
+## Follow-up — stale-refetch print race and complete client fixtures (RED/GREEN)
+
+### RED
+
+- Added a regression test that first renders a printable cached label, then triggers background refetches for both the current label and Pick List. Before the fix, the print action remained available while either request was unresolved.
+- Added a Pick List request-error assertion to ensure a failed freshness check cannot leave a print action available.
+
+### GREEN
+
+- `LabelScreen` now requires a settled, error-free current-label and Pick List query before enabling print. During a background fetch it reports `CHECKING`, keeps the preview non-printable, and withholds the print action; Pick List failures report `UNAVAILABLE` and remain non-printable.
+- `useDispensingPickList` and `useCurrentLabel` explicitly use `retry: false`, preserving deliberate command-attempt semantics and preventing automatic freshness retries.
+- Completed all client medication fixtures with contract-required `internalBarcode` values, removing the prior inventory decoding failures.
+
+### Follow-up verification
+
+- RED: stale-refetch regression failed while the print action remained visible during pending requests.
+- GREEN: `npm run test:client -- tests/client/dispensing.test.tsx tests/client/router.test.tsx tests/client/consultation.test.tsx tests/client/query-client.test.ts` — passed, 4 files / 58 tests.
+- `npm run test:client` — passed, 10 files / 122 tests.
+- `npm run typecheck` — passed (client and server).
+- `npm run lint` — passed.
+- `npm run build` — passed (client and server; existing Vite chunk-size warning remains).

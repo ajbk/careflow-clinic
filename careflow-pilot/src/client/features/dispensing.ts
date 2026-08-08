@@ -74,11 +74,11 @@ function invalidateAfterCommand(queryClient: ReturnType<typeof useQueryClient>, 
 }
 
 export function useDispensingPickList(visitId: string, client: ApiClient = defaultApiClient) {
-  return useQuery({ queryKey: queryKeys.dispensing(visitId), enabled: visitId.length > 0, queryFn: ({ signal }) => getDispensingPickList(client, visitId, signal) });
+  return useQuery({ queryKey: queryKeys.dispensing(visitId), enabled: visitId.length > 0, queryFn: ({ signal }) => getDispensingPickList(client, visitId, signal), retry: false });
 }
 
 export function useCurrentLabel(visitId: string, client: ApiClient = defaultApiClient) {
-  return useQuery({ queryKey: queryKeys.label(visitId), enabled: visitId.length > 0, queryFn: ({ signal }) => getCurrentLabel(client, visitId, signal) });
+  return useQuery({ queryKey: queryKeys.label(visitId), enabled: visitId.length > 0, queryFn: ({ signal }) => getCurrentLabel(client, visitId, signal), retry: false });
 }
 
 function useCommandMutation<TPayload, TRevisions extends Record<string, number>>(

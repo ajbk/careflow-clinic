@@ -1,5 +1,6 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { focusManager } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -27,7 +28,9 @@ function session(role: "assistant" | "doctor" = "assistant", permissions = ["ful
 const server = setupServer();
 function renderDispensing(path = "/dispensing/visit-42", role: "assistant" | "doctor" = "assistant", permissions = ["fulfillment:read", "fulfillment:prepare", "label:print"]) {
   server.use(http.get("/api/auth/session", () => HttpResponse.json(session(role, permissions))));
-  render(<AppProviders><RouterProvider router={createMemoryRouter(appRoutes, { initialEntries: [path] })} /></AppProviders>);
+  const router = createMemoryRouter(appRoutes, { initialEntries: [path] });
+  render(<AppProviders><RouterProvider router={router} /></AppProviders>);
+  return router;
 }
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
@@ -79,6 +82,42 @@ describe("Preparation and label workflow", () => {
     expect(await screen.findByText("คลินิกฉลากสแนปช็อต")).toBeInTheDocument();
   });
 
+  it("disables print while cached label and Pick List data are being refetched", async () => {
+    let labelRequests = 0;
+    let pickListRequests = 0;
+    let resolveLabel!: (response: Response) => void;
+    let resolvePickList!: (response: Response) => void;
+    const pendingLabel = new Promise<Response>((resolve) => { resolveLabel = resolve; });
+    const pendingPickList = new Promise<Response>((resolve) => { resolvePickList = resolve; });
+    server.resetHandlers(
+      http.get("/api/dispensing/visit-42", () => {
+        pickListRequests += 1;
+        return pickListRequests === 1 ? HttpResponse.json({ data: basePickList }) : pendingPickList;
+      }),
+      http.get("/api/dispensing/visit-42/labels", () => {
+        labelRequests += 1;
+        return labelRequests === 1 ? HttpResponse.json({ data: label }) : pendingLabel;
+      }),
+    );
+    renderDispensing("/dispensing/visit-42/labels");
+    expect(await screen.findByRole("button", { name: "บันทึกคำขอพิมพ์และเปิดหน้าต่างพิมพ์" })).toBeInTheDocument();
+
+    focusManager.setFocused(false);
+    focusManager.setFocused(true);
+    await waitFor(() => {
+      expect(labelRequests).toBe(2);
+      expect(pickListRequests).toBe(2);
+    });
+    expect(screen.queryByRole("button", { name: "บันทึกคำขอพิมพ์และเปิดหน้าต่างพิมพ์" })).not.toBeInTheDocument();
+    expect(screen.getByText("CHECKING")).toBeInTheDocument();
+    expect(screen.getAllByText("กำลังตรวจสอบข้อมูลปัจจุบัน…").length).toBeGreaterThan(0);
+    expect(document.querySelector(".print-area")).toHaveClass("non-printable");
+
+    resolveLabel(new Response(JSON.stringify({ data: label }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    resolvePickList(new Response(JSON.stringify({ data: basePickList }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    expect(await screen.findByRole("button", { name: "บันทึกคำขอพิมพ์และเปิดหน้าต่างพิมพ์" })).toBeInTheDocument();
+  });
+
   it("blocks print when the current label is null or stale", async () => {
     server.resetHandlers(
       http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: basePickList })),
@@ -98,6 +137,17 @@ describe("Preparation and label workflow", () => {
     renderDispensing("/dispensing/visit-42/labels");
     expect(await screen.findByRole("alert")).toHaveTextContent("ฉลากเดิมไม่เป็นปัจจุบัน");
     expect(screen.queryByText("PARA-500")).not.toBeInTheDocument();
+  });
+
+  it("keeps print unavailable when the Pick List request fails", async () => {
+    server.resetHandlers(
+      http.get("/api/dispensing/visit-42", () => HttpResponse.json({ error: { code: "INTERNAL_ERROR", messageTh: "ระบบรายการจัดยาไม่พร้อมใช้งาน", requestId: "picklist-err" } }, { status: 503 })),
+      http.get("/api/dispensing/visit-42/labels", () => HttpResponse.json({ data: label })),
+    );
+    renderDispensing("/dispensing/visit-42/labels");
+    expect(await screen.findByText("UNAVAILABLE")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "บันทึกคำขอพิมพ์และเปิดหน้าต่างพิมพ์" })).not.toBeInTheDocument();
+    expect(screen.getByText("ข้อมูลรายการจัดยายังไม่พร้อมสำหรับการพิมพ์")).toBeInTheDocument();
   });
 
   it("blocks a stale current label when the Pick List has a newer version", async () => {

@@ -8,10 +8,10 @@ import { AppProviders } from "../../src/client/app/providers";
 import { appRoutes } from "../../src/client/app/router";
 
 const medications = {
-  paracetamol: { id: "DEMO-MED-001", displayName: "พาราเซตามอล", strengthText: "500 mg", dosageFormText: "เม็ด", canonicalUnit: "เม็ด", revision: 1 },
-  amoxicillin: { id: "DEMO-MED-002", displayName: "อะม็อกซีซิลลิน", strengthText: "500 mg", dosageFormText: "แคปซูล", canonicalUnit: "แคปซูล", revision: 2 },
-  ors: { id: "DEMO-MED-003", displayName: "ผงเกลือแร่", strengthText: "5.5 g", dosageFormText: "ซอง", canonicalUnit: "ซอง", revision: 1 },
-  reserved: { id: "DEMO-MED-004", displayName: "ยาที่ถูกจอง", strengthText: "250 mg", dosageFormText: "เม็ด", canonicalUnit: "เม็ด", revision: 1 },
+  paracetamol: { id: "DEMO-MED-001", displayName: "พาราเซตามอล", strengthText: "500 mg", dosageFormText: "เม็ด", canonicalUnit: "เม็ด", internalBarcode: "PARA-500", revision: 1 },
+  amoxicillin: { id: "DEMO-MED-002", displayName: "อะม็อกซีซิลลิน", strengthText: "500 mg", dosageFormText: "แคปซูล", canonicalUnit: "แคปซูล", internalBarcode: "AMOX-500", revision: 2 },
+  ors: { id: "DEMO-MED-003", displayName: "ผงเกลือแร่", strengthText: "5.5 g", dosageFormText: "ซอง", canonicalUnit: "ซอง", internalBarcode: "ORS-5500", revision: 1 },
+  reserved: { id: "DEMO-MED-004", displayName: "ยาที่ถูกจอง", strengthText: "250 mg", dosageFormText: "เม็ด", canonicalUnit: "เม็ด", internalBarcode: "RESERVED-250", revision: 1 },
 };
 
 const inventory = [
