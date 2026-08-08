@@ -89,7 +89,7 @@ function appendTestAudit(
 }
 
 describe("role permissions", () => {
-  it("assigns the clinical permissions only to the roles authorized to perform them", () => {
+  it("assigns clinical and inventory permissions only to the roles authorized to perform them", () => {
     expect(platform.permissionsByRole).toEqual({
       assistant: [
         "patient:read",
@@ -97,6 +97,8 @@ describe("role permissions", () => {
         "visit:submit-intake",
         "visit:read-queue",
         "patient:update-allergy",
+        "inventory:read",
+        "inventory:receive",
       ],
       doctor: [
         "patient:read",
@@ -111,6 +113,7 @@ describe("role permissions", () => {
         "clinical:amend",
         "medication:read-catalog",
         "medication:sign-decision",
+        "inventory:read",
       ],
     });
   });

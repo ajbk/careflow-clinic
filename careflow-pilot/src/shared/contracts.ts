@@ -49,6 +49,8 @@ export const permissionSchema = z.enum([
   "clinical:amend",
   "medication:read-catalog",
   "medication:sign-decision",
+  "inventory:read",
+  "inventory:receive",
 ]);
 
 export const loginBodySchema = z.strictObject({

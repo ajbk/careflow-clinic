@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Actor, InventorySummaryDto, ReceiveInventoryPayload } from "../../src/shared/contracts.js";
 import { createInventoryService } from "../../src/server/modules/inventory/index.js";
-import { seedAccount } from "./helpers/auth.js";
-import { createTestDatabase, type TestDatabase } from "./helpers/database.js";
+import { cookieFrom, login, seedAccount } from "./helpers/auth.js";
+import { createTestApp, createTestDatabase, type TestDatabase } from "./helpers/database.js";
 
-const cleanups: Array<() => void> = [];
-afterEach(() => {
-  for (const cleanup of cleanups.splice(0).reverse()) cleanup();
+const cleanups: Array<() => void | Promise<void>> = [];
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
 function fixture() {
@@ -152,5 +152,149 @@ describe("inventory foundation service", () => {
     expect(() => database.sqlite.prepare(
       "DELETE FROM inventory_stock_movements WHERE lot_id = ?",
     ).run(receipt.lot.id)).toThrow(/append-only/);
+  });
+
+  it("rebuilds a persisted receipt by its identifier", async () => {
+    const { database, inventory } = fixture();
+    const actor = await receivingActor(database);
+    const received = receive(database, inventory, actor);
+
+    expect(inventory.getReceipt(received.id)).toEqual(received);
+  });
+});
+
+async function inventoryApiFixture() {
+  let sequence = 0;
+  const fixture = await createTestApp({ idFactory: () => `inventory-request-${++sequence}` });
+  cleanups.push(fixture.cleanup);
+  const assistant = await seedAccount(fixture.database, {
+    id: "inventory-assistant-001",
+    username: "inventory-assistant",
+    displayName: "ผู้ช่วยคลังทดสอบ",
+    role: "assistant",
+    mustChangePassword: false,
+  });
+  const doctor = await seedAccount(fixture.database, {
+    id: "inventory-doctor-001",
+    username: "inventory-doctor",
+    displayName: "พญ. คลังทดสอบ",
+    role: "doctor",
+    mustChangePassword: false,
+  });
+  const assistantCookie = cookieFrom(await login(fixture.app, assistant.username, assistant.password));
+  const doctorCookie = cookieFrom(await login(fixture.app, doctor.username, doctor.password));
+  return { ...fixture, assistant, doctor, assistantCookie, doctorCookie };
+}
+
+function receiptCommand(overrides: Partial<ReceiveInventoryPayload> = {}) {
+  return {
+    expectedRevisions: { medication: 1 },
+    payload: payload({ lotNumber: "API-LOT-001", ...overrides }),
+  };
+}
+
+describe("inventory receiving API", () => {
+  it("requires authentication and separates inventory read from inventory receiving", async () => {
+    const fixture = await inventoryApiFixture();
+
+    expect((await fixture.app.inject({ method: "GET", url: "/api/inventory" })).statusCode).toBe(401);
+    expect((await fixture.app.inject({ method: "GET", url: "/api/inventory/medications?q=DEMO" })).statusCode).toBe(401);
+    expect((await fixture.app.inject({
+      method: "POST", url: "/api/inventory/receipts", payload: receiptCommand(),
+      headers: { "idempotency-key": "inventory-anon-001" },
+    })).statusCode).toBe(401);
+
+    expect((await fixture.app.inject({
+      method: "GET", url: "/api/inventory", headers: { cookie: fixture.assistantCookie },
+    })).statusCode).toBe(200);
+    expect((await fixture.app.inject({
+      method: "GET", url: "/api/inventory", headers: { cookie: fixture.doctorCookie },
+    })).statusCode).toBe(200);
+    expect((await fixture.app.inject({
+      method: "GET", url: "/api/inventory/medications?q=DEMO", headers: { cookie: fixture.assistantCookie },
+    })).json().data).toHaveLength(4);
+    expect((await fixture.app.inject({
+      method: "GET", url: "/api/inventory/medications?q=DEMO", headers: { cookie: fixture.doctorCookie },
+    })).statusCode).toBe(403);
+    expect((await fixture.app.inject({
+      method: "POST", url: "/api/inventory/receipts", headers: {
+        cookie: fixture.doctorCookie, "idempotency-key": "inventory-doctor-receive-001",
+      }, payload: receiptCommand(),
+    })).statusCode).toBe(403);
+    expect((await fixture.app.inject({
+      method: "GET", url: "/api/medications?q=DEMO", headers: { cookie: fixture.assistantCookie },
+    })).statusCode).toBe(403);
+  });
+
+  it("receives stock atomically with audit evidence and safely replays only the receipt reference", async () => {
+    const fixture = await inventoryApiFixture();
+    const command = receiptCommand({ note: "นับรับพร้อมใบส่งของ" });
+    const headers = { cookie: fixture.assistantCookie, "idempotency-key": "inventory-receipt-001" };
+
+    const first = await fixture.app.inject({
+      method: "POST", url: "/api/inventory/receipts", headers, payload: command,
+    });
+    expect(first.statusCode).toBe(201);
+    expect(first.json()).toMatchObject({
+      replayed: false,
+      data: { id: expect.any(String), quantity: 12, inventory: { available: 12 } },
+    });
+    const audit = fixture.database.sqlite.prepare(
+      "SELECT action, entity_type, entity_id, entity_revision, reason, actor_id FROM audit_events",
+    ).get();
+    expect(audit).toEqual({
+      action: "inventory.stock-received",
+      entity_type: "inventory_receipt",
+      entity_id: first.json().data.id,
+      entity_revision: 1,
+      reason: "นับรับพร้อมใบส่งของ",
+      actor_id: fixture.assistant.actor.id,
+    });
+    const stored = fixture.database.sqlite.prepare(
+      "SELECT response_json FROM idempotency_records WHERE actor_id = ? AND key = ?",
+    ).get(fixture.assistant.actor.id, headers["idempotency-key"]) as { response_json: string };
+    expect(JSON.parse(stored.response_json)).toEqual({
+      type: "safe-replay-reference",
+      reference: { receiptId: first.json().data.id },
+    });
+
+    const replay = await fixture.app.inject({
+      method: "POST", url: "/api/inventory/receipts", headers, payload: command,
+    });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toEqual({ data: first.json().data, replayed: true });
+    expect(fixture.database.sqlite.prepare("SELECT count(*) AS count FROM audit_events").get()).toEqual({ count: 1 });
+
+    const collision = await fixture.app.inject({
+      method: "POST", url: "/api/inventory/receipts", headers,
+      payload: receiptCommand({ quantity: 13, note: "จำนวนเปลี่ยน" }),
+    });
+    expect(collision.statusCode).toBe(409);
+    expect(collision.json().error.code).toBe("IDEMPOTENCY_CONFLICT");
+  });
+
+  it("returns domain conflicts for stale medication revisions and duplicate medication lots", async () => {
+    const fixture = await inventoryApiFixture();
+    const headers = { cookie: fixture.assistantCookie, "idempotency-key": "inventory-stale-001" };
+    const stale = await fixture.app.inject({
+      method: "POST", url: "/api/inventory/receipts", headers,
+      payload: { ...receiptCommand(), expectedRevisions: { medication: 9 } },
+    });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json().error.code).toBe("REVISION_CONFLICT");
+
+    const first = await fixture.app.inject({
+      method: "POST", url: "/api/inventory/receipts",
+      headers: { cookie: fixture.assistantCookie, "idempotency-key": "inventory-lot-first-001" },
+      payload: receiptCommand(),
+    });
+    expect(first.statusCode).toBe(201);
+    const duplicate = await fixture.app.inject({
+      method: "POST", url: "/api/inventory/receipts",
+      headers: { cookie: fixture.assistantCookie, "idempotency-key": "inventory-lot-duplicate-001" },
+      payload: receiptCommand(),
+    });
+    expect(duplicate.statusCode).toBe(409);
+    expect(duplicate.json().error.code).toBe("INVALID_STATE");
   });
 });

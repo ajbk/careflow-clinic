@@ -8,6 +8,8 @@ export const permissionsByRole = {
     "visit:submit-intake",
     "visit:read-queue",
     "patient:update-allergy",
+    "inventory:read",
+    "inventory:receive",
   ],
   doctor: [
     "patient:read",
@@ -22,6 +24,7 @@ export const permissionsByRole = {
     "clinical:amend",
     "medication:read-catalog",
     "medication:sign-decision",
+    "inventory:read",
   ],
 } as const satisfies Record<Actor["role"], readonly Permission[]>;
 

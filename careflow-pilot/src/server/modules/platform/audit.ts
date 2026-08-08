@@ -39,6 +39,7 @@ const auditActionPolicyEntries = [
   ["note.amendment-signed", "required"],
   ["medication.decision-revised", "required"],
   ["visit.allergy-safety-changed", "required"],
+  ["inventory.stock-received", "optional"],
 ] as const;
 
 type AuditActionPolicyEntry = (typeof auditActionPolicyEntries)[number];

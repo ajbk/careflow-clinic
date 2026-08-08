@@ -10,3 +10,4 @@ export {
   type InventoryService,
   type InventoryServiceOptions,
 } from "./service.js";
+export { registerInventoryRoutes } from "./routes.js";
