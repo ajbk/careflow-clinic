@@ -15,8 +15,8 @@ function completeSession(role: "assistant" | "doctor") {
       },
       clinic: { id: "clinic", name: "คลินิกทดสอบ" },
       permissions: role === "doctor"
-        ? ["patient:read", "visit:read-queue", "visit:start-consultation"]
-        : ["patient:read", "visit:read-queue", "visit:submit-intake"],
+        ? ["patient:read", "visit:read-queue", "visit:start-consultation", "inventory:read"]
+        : ["patient:read", "visit:read-queue", "visit:submit-intake", "inventory:read", "inventory:receive"],
       pilotAcknowledgedAt: "2026-08-03T00:00:00.000Z",
       mustChangePassword: false,
       idleExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
@@ -82,15 +82,15 @@ describe("pilot router", () => {
   it("shows Assistant operational navigation in job order", async () => {
     renderRoleApp("/queue", "assistant");
     const navigation = await screen.findByRole("navigation", { name: "เมนูหลัก" });
-    expect(within(navigation).getAllByRole("link").map((link) => link.getAttribute("href")))
-      .toEqual(["/intake", "/queue", "/overview"]);
+      expect(within(navigation).getAllByRole("link").map((link) => link.getAttribute("href")))
+      .toEqual(["/intake", "/queue", "/inventory", "/overview"]);
   });
 
   it("shows only Doctor primary jobs in Doctor navigation", async () => {
     renderRoleApp("/queue", "doctor");
     const navigation = await screen.findByRole("navigation", { name: "เมนูหลัก" });
-    expect(within(navigation).getAllByRole("link").map((link) => link.getAttribute("href")))
-      .toEqual(["/queue", "/overview"]);
+      expect(within(navigation).getAllByRole("link").map((link) => link.getAttribute("href")))
+      .toEqual(["/queue", "/inventory", "/overview"]);
   });
 
   it.each([
@@ -140,6 +140,28 @@ describe("pilot router", () => {
       throw new Error(`Unexpected request: ${path}`);
     }));
     const router = createMemoryRouter(appRoutes, { initialEntries: ["/consultations/visit-42"] });
+    render(<AppProviders><RouterProvider router={router} /></AppProviders>);
+    expect(await screen.findByText("ไม่มีสิทธิ์ใช้งาน")).toBeInTheDocument();
+    expect(requests).toEqual(["/api/auth/session"]);
+  });
+
+  it.each([
+    ["doctor", "/inventory", "คลังยา"],
+    ["assistant", "/inventory", "คลังยา"],
+    ["assistant", "/inventory/receive", "รับยาเข้าคลัง"],
+  ] as const)("allows %s to enter %s", async (role, path, heading) => {
+    renderRoleApp(path, role);
+    expect(await screen.findByRole("heading", { name: heading })).toBeInTheDocument();
+  });
+
+  it("denies a doctor the receiving screen before requesting its medication search", async () => {
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input); requests.push(path);
+      if (path === "/api/auth/session") return new Response(JSON.stringify(completeSession("doctor")), { status: 200 });
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const router = createMemoryRouter(appRoutes, { initialEntries: ["/inventory/receive"] });
     render(<AppProviders><RouterProvider router={router} /></AppProviders>);
     expect(await screen.findByText("ไม่มีสิทธิ์ใช้งาน")).toBeInTheDocument();
     expect(requests).toEqual(["/api/auth/session"]);

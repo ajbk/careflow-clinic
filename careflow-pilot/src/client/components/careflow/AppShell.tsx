@@ -4,6 +4,7 @@ import {
   HeartPulse,
   LayoutDashboard,
   Menu,
+  Package,
   UsersRound,
   X,
 } from "lucide-react";
@@ -16,6 +17,7 @@ const icons: Record<WorkspaceNavIcon, typeof LayoutDashboard> = {
   dashboard: LayoutDashboard,
   queue: UsersRound,
   intake: ClipboardPlus,
+  inventory: Package,
 };
 
 export function AppShell({ children }: { children: ReactNode }) {

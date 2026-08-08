@@ -1,9 +1,9 @@
 import type { SessionDto } from "../../shared/contracts";
 
-export type WorkspaceNavIcon = "dashboard" | "queue" | "intake";
+export type WorkspaceNavIcon = "dashboard" | "queue" | "intake" | "inventory";
 
 export interface WorkspaceNavItem {
-  href: "/intake" | "/queue" | "/overview";
+  href: "/intake" | "/queue" | "/overview" | "/inventory";
   label: string;
   labelEn: string;
   icon: WorkspaceNavIcon;
@@ -23,6 +23,7 @@ const assistantWorkspace: RoleWorkspace = {
   navItems: [
     { href: "/intake", label: "รับผู้ป่วย", labelEn: "Intake", icon: "intake" },
     { href: "/queue", label: "คิวผู้ป่วย", labelEn: "Queue", icon: "queue" },
+    { href: "/inventory", label: "คลังยา", labelEn: "Inventory", icon: "inventory" },
     { href: "/overview", label: "ภาพรวม", labelEn: "Overview", icon: "dashboard" },
   ],
 };
@@ -33,6 +34,7 @@ const doctorWorkspace: RoleWorkspace = {
   labelEn: "DOCTOR WORKSPACE",
   navItems: [
     { href: "/queue", label: "คิวผู้ป่วย", labelEn: "Queue", icon: "queue" },
+    { href: "/inventory", label: "คลังยา", labelEn: "Inventory", icon: "inventory" },
     { href: "/overview", label: "ภาพรวม", labelEn: "Overview", icon: "dashboard" },
   ],
 };

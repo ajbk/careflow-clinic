@@ -10,6 +10,8 @@ import { OverviewScreen } from "../screens/OverviewScreen";
 import { QueueScreen } from "../screens/QueueScreen";
 import { ConsultationScreen } from "../screens/ConsultationScreen";
 import { IntakeScreen } from "../screens/IntakeScreen";
+import { InventoryScreen } from "../screens/InventoryScreen";
+import { StockReceptionScreen } from "../screens/StockReceptionScreen";
 import { PilotUnavailableScreen } from "../screens/PilotUnavailableScreen";
 
 function ShellRoute() {
@@ -47,8 +49,8 @@ export const appRoutes: RouteObject[] = [
           { path: "dispensing/:visitId/labels", element: <PilotUnavailableScreen title="ฉลากยา" /> },
           { path: "checkout/:visitId", element: <PilotUnavailableScreen title="ชำระเงิน" /> },
           { path: "visits/:visitId/opd-card", element: <PilotUnavailableScreen title="บัตร OPD" /> },
-          { path: "inventory", element: <PilotUnavailableScreen title="คลังยา" /> },
-          { path: "inventory/receive", element: <PilotUnavailableScreen title="รับยาเข้าคลัง" /> },
+          { path: "inventory", element: <AuthGate requiredPermission="inventory:read" showPilotBanner={false}><InventoryScreen /></AuthGate> },
+          { path: "inventory/receive", element: <AuthGate requiredPermission="inventory:receive" showPilotBanner={false}><StockReceptionScreen /></AuthGate> },
         ],
       },
     ],
