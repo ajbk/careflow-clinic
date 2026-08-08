@@ -73,7 +73,7 @@ describe("fulfillment completion persistence contracts", () => {
       visit: { id: "visit-001", status: "AWAITING_HANDOFF", revision: 6, arrivedAt: "2026-08-09T00:00:00.000Z", startedAt: null },
       patient: { id: "patient-001", hn: "DEMO-000001", displayName: "ผู้ป่วยทดสอบ 000001", phone: "0000000001", birthDate: "1990-01-01", sex: "unknown", revision: 1, createdAt: "2026-08-09T00:00:00.000Z" },
       medicationDecision: { id: "decision-001", version: 1, kind: "ORDER" },
-      label: { id: "label-001", medicationDecisionId: "decision-001", medicationDecisionVersion: 1, version: 1, items: [{ orderItemId: "order-item-001", medicationId: "DEMO-MED-001", internalBarcode: "CF-DEMO-001" }] },
+      label: { id: "label-001", medicationDecisionId: "decision-001", medicationDecisionVersion: 1, version: 1, clinicNameSnapshot: "คลินิกทดสอบ", patientHnSnapshot: "DEMO-000001", patientDisplayNameSnapshot: "ผู้ป่วยทดสอบ 000001", items: [{ orderItemId: "order-item-001", medicationId: "DEMO-MED-001", medicationRevision: 1, displayNameSnapshot: "[DEMO] ยาทดสอบชนิด A", strengthSnapshot: "500 หน่วยทดสอบ", dosageFormSnapshot: "เม็ดทดสอบ", quantity: 2, unitSnapshot: "เม็ด", directionsThSnapshot: "ทดสอบ", internalBarcode: "CF-DEMO-001" }] },
       reservation: { id: "reservation-001", allocations: [{ id: "allocation-001", orderItemId: "order-item-001", lotId: "lot-001", quantity: 2 }] },
       preparation: { id: "preparation-001", revision: 1, status: "COMPLETED", confirmations: [{ allocationId: "allocation-001", orderItemId: "order-item-001", lotId: "lot-001", method: "BARCODE", barcode: "CF-DEMO-001" }] },
       release: { id: "release-001", reservationId: "reservation-001" },

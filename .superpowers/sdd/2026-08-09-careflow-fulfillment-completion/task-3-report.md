@@ -25,3 +25,26 @@
 - UI command availability is gated by both returned `allowedActions` and the relevant client permission.
 - Invalid/missing labels have no printable rendering or print action.
 - No command mutation is configured with retries, and local drafts remain after errors.
+
+## Review fixes — immutable labels and resilient preparation (RED/GREEN)
+
+### RED
+
+- Added failing client coverage for the current-label loading boundary, null/error/invalid responses, stale-version blocking, print permission/non-printable preview behavior, every immutable clinic/patient/medication snapshot, two-allocation scanner focus after success and API error, and repeated failed command attempts.
+- Added server route assertions that the current-label GET response carries the stored `label_version` and `label_item` snapshots rather than live catalog fields.
+
+### GREEN
+
+- Extended `fulfillmentCurrentLabelSchema` and `labelFor` with clinic/patient snapshots plus medication revision, name, strength, dosage form, quantity, unit, Thai directions, and barcode snapshots.
+- `LabelScreen` now takes its printable content only from `useCurrentLabel`; stale, null, invalid, and permission-blocked labels cannot produce printable output. Preview/status controls and unauthorized previews are excluded by label-page print CSS, with one medicine per 80 × 100 mm page.
+- Confirmation success and API-error paths restore the keyboard-wedge scanner when another allocation remains. Deliberate retries create fresh idempotency keys; mutations remain retry-disabled and failed commands do not replace or invalidate cached Pick List state.
+
+## Review-fix verification
+
+- `npm run test:client -- tests/client/dispensing.test.tsx tests/client/router.test.tsx tests/client/consultation.test.tsx tests/client/query-client.test.ts` — passed, 4 files / 56 tests.
+- `npm run test:server -- tests/server/fulfillment-routes.test.ts tests/server/fulfillment-completion.test.ts` — passed, 2 files / 12 tests.
+- `npm run typecheck:client` — passed.
+- `npm run typecheck:server` — passed.
+- `npm run lint` — passed.
+- `npm run build:client` — passed; the existing Vite chunk-size warning remains.
+- A full `npm run test:client` run still has four pre-existing inventory fixture failures because those fixtures omit the now-required medication barcode; no inventory files were changed in this review.

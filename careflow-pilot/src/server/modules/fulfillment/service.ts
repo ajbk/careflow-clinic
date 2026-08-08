@@ -60,9 +60,27 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
     if (!row || activeInvalidation(tx, "LABEL", row.id)) return null;
     const items = tx.select().from(fulfillmentLabelItems).where(eq(fulfillmentLabelItems.labelVersionId, row.id))
       .orderBy(asc(fulfillmentLabelItems.position)).all().map((item) => ({
-        orderItemId: item.medicationOrderItemId, medicationId: item.medicationId, internalBarcode: item.internalBarcodeSnapshot,
+        orderItemId: item.medicationOrderItemId,
+        medicationId: item.medicationId,
+        medicationRevision: item.medicationRevision,
+        displayNameSnapshot: item.displayNameSnapshot,
+        strengthSnapshot: item.strengthSnapshot,
+        dosageFormSnapshot: item.dosageFormSnapshot,
+        quantity: item.quantity,
+        unitSnapshot: item.unitSnapshot,
+        directionsThSnapshot: item.directionsThSnapshot,
+        internalBarcode: item.internalBarcodeSnapshot,
       }));
-    return items.length ? { id: row.id, medicationDecisionId: row.medicationDecisionId, medicationDecisionVersion: row.medicationDecisionVersion, version: row.version, items } : null;
+    return items.length ? {
+      id: row.id,
+      medicationDecisionId: row.medicationDecisionId,
+      medicationDecisionVersion: row.medicationDecisionVersion,
+      version: row.version,
+      clinicNameSnapshot: row.clinicNameSnapshot,
+      patientHnSnapshot: row.patientHnSnapshot,
+      patientDisplayNameSnapshot: row.patientDisplayNameSnapshot,
+      items,
+    } : null;
   };
   const read = (tx: Reader, visitId: string): FulfillmentPickListDto => {
     const visit = tx.select().from(visits).where(and(eq(visits.id, visitId), eq(visits.clinicId, "clinic"))).get();

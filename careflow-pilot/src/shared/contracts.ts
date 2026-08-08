@@ -742,6 +742,13 @@ const fulfillmentTextSchema = (maximumLength: number) => z.string().trim().min(1
 export const fulfillmentLabelItemSchema = z.strictObject({
   orderItemId: fulfillmentIdSchema,
   medicationId: z.string().regex(/^DEMO-MED-\d{3}$/),
+  medicationRevision: z.number().int().min(1),
+  displayNameSnapshot: z.string().trim().min(1).max(200),
+  strengthSnapshot: z.string().trim().min(1).max(100),
+  dosageFormSnapshot: z.string().trim().min(1).max(100),
+  quantity: z.number().int().min(1).max(9999),
+  unitSnapshot: z.string().trim().min(1).max(100),
+  directionsThSnapshot: z.string().trim().min(1).max(500),
   internalBarcode: fulfillmentBarcodeSchema,
 });
 export const fulfillmentCurrentLabelSchema = z.strictObject({
@@ -749,6 +756,9 @@ export const fulfillmentCurrentLabelSchema = z.strictObject({
   medicationDecisionId: fulfillmentIdSchema,
   medicationDecisionVersion: z.number().int().min(1),
   version: z.number().int().min(1),
+  clinicNameSnapshot: z.string().trim().min(1).max(200),
+  patientHnSnapshot: z.string().trim().min(1).max(100),
+  patientDisplayNameSnapshot: z.string().trim().min(1).max(200),
   items: z.array(fulfillmentLabelItemSchema).min(1).max(20),
 }).nullable();
 export type FulfillmentCurrentLabelDto = z.infer<typeof fulfillmentCurrentLabelSchema>;

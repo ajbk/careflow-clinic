@@ -197,6 +197,28 @@ describe("authenticated fulfillment reservation routes", () => {
     const startedData = started.json().data;
     expect(startedData.allowedActions).not.toContain("RELEASE");
     const label = startedData.label;
+    expect(label).toMatchObject({
+      clinicNameSnapshot: "คลินิกชนบท CareFlow Pilot",
+      patientHnSnapshot: "DEMO-000001",
+      patientDisplayNameSnapshot: "ผู้ป่วยทดสอบ 000001",
+      items: [{
+        orderItemId: "order-route-001",
+        medicationId: "DEMO-MED-001",
+        medicationRevision: 1,
+        displayNameSnapshot: "[DEMO] ยาทดสอบชนิด A",
+        strengthSnapshot: "500 หน่วยทดสอบ",
+        dosageFormSnapshot: "เม็ดทดสอบ",
+        quantity: 3,
+        unitSnapshot: "เม็ด",
+        directionsThSnapshot: "รับประทานตามคำสั่งสังเคราะห์",
+        internalBarcode: "CF-DEMO-001",
+      }],
+    });
+    const currentLabel = await test.app.inject({
+      method: "GET", url: "/api/dispensing/visit-route-001/labels", headers: { cookie: test.assistantCookie },
+    });
+    expect(currentLabel.statusCode).toBe(200);
+    expect(currentLabel.json().data).toEqual(label);
     const preparation = startedData.preparation;
     const allocation = startedData.reservation.allocations[0];
     const incomplete = await test.app.inject({

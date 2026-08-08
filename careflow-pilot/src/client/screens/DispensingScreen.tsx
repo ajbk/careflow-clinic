@@ -31,17 +31,25 @@ export function DispensingScreen(): ReactElement {
   const data = pickList.data; const preparation = data.preparation?.status === "ACTIVE" ? data.preparation : null; const allocations = data.reservation?.allocations ?? [];
   const confirmed = new Set(preparation?.confirmations.map((item) => item.allocationId) ?? []); const pending = allocations.find((item) => !confirmed.has(item.id)) ?? null;
   const mutationError = reserve.error || confirm.error || complete.error || abandon.error; const message = localError || (mutationError ? errorMessage(mutationError) : "");
+  const focusScannerIfPending = (next: FulfillmentPickListDto) => {
+    const nextPreparation = next.preparation?.status === "ACTIVE" ? next.preparation : null;
+    const nextAllocations = next.reservation?.allocations ?? [];
+    const nextConfirmed = new Set(nextPreparation?.confirmations.map((item) => item.allocationId) ?? []);
+    if (next.visit.status === "PREPARING" && nextPreparation && nextAllocations.some((item) => !nextConfirmed.has(item.id))) {
+      window.setTimeout(() => scannerRef.current?.focus(), 0);
+    }
+  };
   const start = () => { if (!canPrepare || !allowed(data, "START_PREPARATION")) return; setLocalError(""); reserve.mutate({ visitId: data.visit.id, attempt: createReserveDispensingAttempt(data) }); };
   const submitBarcode = () => {
     if (!preparation || !pending || !canPrepare || !allowed(data, "CONFIRM_ALLOCATION")) return;
     const barcode = scan.trim().toUpperCase(); const labelItem = data.label?.items.find((item) => item.internalBarcode === barcode);
     const allocation = labelItem ? allocations.find((item) => item.orderItemId === labelItem.orderItemId && !confirmed.has(item.id)) : null;
     if (!allocation) { setLocalError("บาร์โค้ดไม่ตรงกับรายการจัดยา"); scannerRef.current?.focus(); return; }
-    setLocalError(""); setScan(""); confirm.mutate({ visitId: data.visit.id, attempt: createConfirmAllocationAttempt(data, { method: "BARCODE", preparationId: preparation.id, allocationId: allocation.id, barcode }) });
+    setLocalError(""); setScan(""); confirm.mutate({ visitId: data.visit.id, attempt: createConfirmAllocationAttempt(data, { method: "BARCODE", preparationId: preparation.id, allocationId: allocation.id, barcode }) }, { onSuccess: (result) => focusScannerIfPending(result.data), onError: () => focusScannerIfPending(data) });
   };
   const submitManual = () => {
     if (!preparation || !pending || !manualReason.trim() || !canPrepare || !allowed(data, "CONFIRM_ALLOCATION")) return;
-    setLocalError(""); confirm.mutate({ visitId: data.visit.id, attempt: createConfirmAllocationAttempt(data, { method: "MANUAL", preparationId: preparation.id, allocationId: pending.id, reason: manualReason }) }, { onSuccess: () => setManualReason("") });
+    setLocalError(""); confirm.mutate({ visitId: data.visit.id, attempt: createConfirmAllocationAttempt(data, { method: "MANUAL", preparationId: preparation.id, allocationId: pending.id, reason: manualReason }) }, { onSuccess: (result) => { setManualReason(""); focusScannerIfPending(result.data); }, onError: () => focusScannerIfPending(data) });
   };
   const finish = () => { if (!preparation || !canPrepare || !allowed(data, "COMPLETE_PREPARATION")) return; if (confirmed.size !== allocations.length) { setLocalError("ยืนยันรายการจัดยาไม่ครบ"); return; } setLocalError(""); complete.mutate({ visitId: data.visit.id, attempt: createCompletePreparationAttempt(data) }); };
   const cancelPreparation = () => { if (!preparation || !canPrepare || !allowed(data, "ABANDON_PREPARATION")) return; if (!abandonReason.trim()) { setLocalError("กรุณาระบุเหตุผลการยกเลิกการเตรียมยา"); return; } setLocalError(""); abandon.mutate({ visitId: data.visit.id, attempt: createAbandonPreparationAttempt(data, abandonReason) }, { onSuccess: () => setAbandonReason("") }); };
