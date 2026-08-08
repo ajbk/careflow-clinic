@@ -251,8 +251,12 @@ describe("inventory receiving API", () => {
       actor_id: fixture.assistant.actor.id,
     });
     const stored = fixture.database.sqlite.prepare(
-      "SELECT response_json FROM idempotency_records WHERE actor_id = ? AND key = ?",
-    ).get(fixture.assistant.actor.id, headers["idempotency-key"]) as { response_json: string };
+      "SELECT request_hash, response_json FROM idempotency_records WHERE actor_id = ? AND key = ?",
+    ).get(fixture.assistant.actor.id, headers["idempotency-key"]) as {
+      request_hash: string;
+      response_json: string;
+    };
+    expect(stored.request_hash).toBe("3a96c7495f31ee87dff376013c6a55c9ed34146abd9c2c8cf5fd9fb033ddae1f");
     expect(JSON.parse(stored.response_json)).toEqual({
       type: "safe-replay-reference",
       reference: { receiptId: first.json().data.id },
@@ -296,5 +300,32 @@ describe("inventory receiving API", () => {
     });
     expect(duplicate.statusCode).toBe(409);
     expect(duplicate.json().error.code).toBe("INVALID_STATE");
+  });
+
+  it("rejects malformed or unknown inventory input and invalid idempotency keys", async () => {
+    const fixture = await inventoryApiFixture();
+    const headers = { cookie: fixture.assistantCookie, "idempotency-key": "inventory-validate-001" };
+
+    expect((await fixture.app.inject({
+      method: "GET", url: "/api/inventory/medications?q=D", headers: { cookie: fixture.assistantCookie },
+    })).statusCode).toBe(422);
+    expect((await fixture.app.inject({
+      method: "GET", url: "/api/inventory/medications?q=DEMO&unexpected=true", headers: {
+        cookie: fixture.assistantCookie,
+      },
+    })).statusCode).toBe(422);
+    expect((await fixture.app.inject({
+      method: "POST", url: "/api/inventory/receipts", headers: { cookie: fixture.assistantCookie },
+      payload: receiptCommand(),
+    })).statusCode).toBe(422);
+    expect((await fixture.app.inject({
+      method: "POST", url: "/api/inventory/receipts", headers: {
+        cookie: fixture.assistantCookie, "idempotency-key": "short",
+      }, payload: receiptCommand(),
+    })).statusCode).toBe(422);
+    expect((await fixture.app.inject({
+      method: "POST", url: "/api/inventory/receipts", headers,
+      payload: { ...receiptCommand(), unexpected: true },
+    })).statusCode).toBe(422);
   });
 });

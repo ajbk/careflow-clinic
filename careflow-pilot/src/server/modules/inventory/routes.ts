@@ -35,7 +35,7 @@ export function registerInventoryRoutes(input: {
       db: input.database.db,
       actor,
       key,
-      operation: "inventory.receive.v1",
+      operation: "inventory.receive",
       requestBody: body,
       work: (tx) => {
         const receipt = input.inventory.receiveStock(
