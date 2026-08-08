@@ -345,7 +345,7 @@ describe("Doctor consultation authoring", () => {
   it("requires an explicit medication decision and saves a selected catalog order", async () => {
     const user = userEvent.setup(); let body: unknown;
     server.use(
-      http.get("/api/medications", () => HttpResponse.json({ data: [{ id: "DEMO-MED-001", displayName: "พาราเซตามอล", strengthText: "500 mg", dosageFormText: "tablet", canonicalUnit: "tablet", revision: 2 }] })),
+      http.get("/api/medications", () => HttpResponse.json({ data: [{ id: "DEMO-MED-001", displayName: "พาราเซตามอล", strengthText: "500 mg", dosageFormText: "tablet", canonicalUnit: "tablet", internalBarcode: "PARA-500", revision: 2 }] })),
       http.post("/api/visits/visit-42/consultation-draft", async ({ request }) => { body = await request.json(); return HttpResponse.json({ data: { note: { id: "note-draft", visitId: visit.id, revision: 1, subjective: "ไข้", objective: "38.2", assessment: "ไข้หวัด", plan: "พักผ่อน", diagnoses: ["ไข้หวัด"], updatedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, updatedAt: "2026-08-03T02:00:00.000Z" }, medicationDecision: { id: "med-draft", visitId: visit.id, revision: 1, kind: "ORDER", noMedicationReason: null, items: [{ medication: { id: "DEMO-MED-001", displayName: "พาราเซตามอล", strengthText: "500 mg", dosageFormText: "tablet", canonicalUnit: "tablet", revision: 2 }, quantity: 10, directionsTh: "รับประทานหลังอาหาร" }], updatedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, updatedAt: "2026-08-03T02:00:00.000Z" } }, replayed: false }); }),
     );
     renderRoute();

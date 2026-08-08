@@ -43,8 +43,8 @@ describe("Preparation and label workflow", () => {
     const user = userEvent.setup();
     server.resetHandlers(http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: preparingPickList })), http.post("/api/dispensing/visit-42/preparation-confirmations", () => HttpResponse.json({ data: confirmedPickList, replayed: false }, { status: 201 })));
     renderDispensing();
-    expect(await screen.findByText("lot-early", {}, { timeout: 3_000 })).toBeInTheDocument();
-    expect(screen.getByText("10")).toBeInTheDocument();
+    expect(await screen.findByText("ล็อต lot-early")).toBeInTheDocument();
+    expect(screen.getByText("จำนวน 10")).toBeInTheDocument();
     const scanner = screen.getByLabelText("สแกนบาร์โค้ดยา");
     await user.type(scanner, "PARA-500{enter}");
     expect(await screen.findByText("ยืนยันแล้ว")).toBeInTheDocument();
