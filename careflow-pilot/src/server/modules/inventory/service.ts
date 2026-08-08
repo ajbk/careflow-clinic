@@ -372,19 +372,34 @@ function readReservation(
       unitSnapshot: allocation.unitSnapshot,
       allocatedAt: allocation.allocatedAt,
     }));
-  return {
+  const common = {
     id: row.id,
     clinicId: row.clinicId,
     visitId: row.visitId,
     medicationDecisionId: row.medicationDecisionId,
     medicationDecisionVersion: row.medicationDecisionVersion,
-    status: row.status as InventoryReservationDto["status"],
     createdAt: row.createdAt,
     createdBy,
-    releasedAt: row.releasedAt,
-    releasedBy,
-    releaseReason: row.releaseReason,
     allocations,
+  };
+  if (row.status === "RELEASED") {
+    if (!row.releasedAt || !releasedBy || !row.releaseReason?.trim()) {
+      throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ข้อมูลยกเลิกรายการจองไม่ครบถ้วน" });
+    }
+    return {
+      ...common,
+      status: "RELEASED" as const,
+      releasedAt: row.releasedAt,
+      releasedBy,
+      releaseReason: row.releaseReason,
+    };
+  }
+  return {
+    ...common,
+    status: row.status as "ACTIVE" | "CONSUMED",
+    releasedAt: null,
+    releasedBy: null,
+    releaseReason: null,
   };
 }
 
@@ -400,14 +415,15 @@ function readPickList(
     .get();
   if (!joined) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit" });
   const signed = readSignedDecision(tx, visitId);
-  const reservationRow = tx.select().from(inventoryReservations)
+  const reservationRows = tx.select().from(inventoryReservations)
     .where(and(
       eq(inventoryReservations.clinicId, "clinic"),
       eq(inventoryReservations.visitId, visitId),
       eq(inventoryReservations.medicationDecisionId, signed.row.id),
       eq(inventoryReservations.medicationDecisionVersion, signed.row.version),
     ))
-    .orderBy(desc(inventoryReservations.createdAt), desc(inventoryReservations.id)).get();
+    .orderBy(desc(inventoryReservations.createdAt), desc(inventoryReservations.id)).all();
+  const reservationRow = reservationRows.find((row) => row.status === "ACTIVE") ?? reservationRows[0];
   return {
     visit: toVisitSummary(joined.visit),
     patient: toPatientDto(joined.patient),

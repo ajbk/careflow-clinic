@@ -119,7 +119,7 @@ export const inventoryReservations = sqliteTable(
     check(
       "inventory_reservations_release_fields_check",
       sql`(${table.status} <> 'RELEASED' AND ${table.releasedAt} IS NULL AND ${table.releasedBy} IS NULL AND ${table.releaseReason} IS NULL)
-        OR (${table.status} = 'RELEASED' AND ${table.releasedAt} IS NOT NULL AND ${table.releasedBy} IS NOT NULL AND length(trim(${table.releaseReason})) BETWEEN 1 AND 500)`,
+        OR (${table.status} = 'RELEASED' AND ${table.releasedAt} IS NOT NULL AND ${table.releasedBy} IS NOT NULL AND ${table.releaseReason} IS NOT NULL AND length(trim(${table.releaseReason})) BETWEEN 1 AND 500)`,
     ),
     check("inventory_reservations_release_reason_check", sql`${table.releaseReason} IS NULL OR length(${table.releaseReason}) <= 500`),
   ],

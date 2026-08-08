@@ -261,20 +261,36 @@ export const inventoryReservationAllocationSchema = z.strictObject({
 });
 export type InventoryReservationAllocationDto = z.infer<typeof inventoryReservationAllocationSchema>;
 
-export const inventoryReservationSchema = z.strictObject({
+const inventoryReservationBaseSchema = z.strictObject({
   id: z.string().min(1),
   clinicId: z.string().min(1),
   visitId: z.string().min(1),
   medicationDecisionId: z.string().min(1),
   medicationDecisionVersion: z.number().int().min(1),
-  status: inventoryReservationStatusSchema,
   createdAt: z.string().datetime(),
   createdBy: inventoryReservationStaffSchema,
-  releasedAt: z.string().datetime().nullable(),
-  releasedBy: inventoryReservationStaffSchema.nullable(),
-  releaseReason: z.string().max(500).nullable(),
   allocations: z.array(inventoryReservationAllocationSchema),
 });
+export const inventoryReservationSchema = z.discriminatedUnion("status", [
+  inventoryReservationBaseSchema.extend({
+    status: z.literal("ACTIVE"),
+    releasedAt: z.null(),
+    releasedBy: z.null(),
+    releaseReason: z.null(),
+  }),
+  inventoryReservationBaseSchema.extend({
+    status: z.literal("RELEASED"),
+    releasedAt: z.string().datetime(),
+    releasedBy: inventoryReservationStaffSchema,
+    releaseReason: requiredClinicalText(500),
+  }),
+  inventoryReservationBaseSchema.extend({
+    status: z.literal("CONSUMED"),
+    releasedAt: z.null(),
+    releasedBy: z.null(),
+    releaseReason: z.null(),
+  }),
+]);
 export type InventoryReservationDto = z.infer<typeof inventoryReservationSchema>;
 
 export const reserveInventoryBodySchema = rejectOwnPrototypeKeys(

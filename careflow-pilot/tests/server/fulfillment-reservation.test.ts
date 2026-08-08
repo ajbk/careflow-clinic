@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import type { Actor } from "../../src/shared/contracts.js";
+import { inventoryReservationSchema, type Actor } from "../../src/shared/contracts.js";
 import {
   createInventoryService,
   inventoryLots,
@@ -257,5 +257,40 @@ describe("fulfillment reservation persistence and FEFO service", () => {
       .toThrow(/append-only/);
     expect(() => database.sqlite.prepare("DELETE FROM inventory_reservation_allocations WHERE id=?").run(allocationId))
       .toThrow(/append-only/);
+  });
+
+  it("rejects a released reservation without a non-empty release reason at the shared and database boundaries", async () => {
+    const { database, inventory } = fixture();
+    const doctor = await actor(database);
+    addVisitOrder(database, { visitId: "visit-release-reason", decisionId: "decision-release-reason", orderItemId: "order-release-reason", quantity: 1 });
+    receiveLot(database, { id: "lot-release-reason", lotNumber: "LOT-REASON", expiryDate: "2026-08-10", quantity: 2 });
+    const reserved = database.db.transaction((tx) => inventory.reserveForVisit(tx, doctor, "visit-release-reason", 3, 1));
+    const released = { ...reserved.reservation, status: "RELEASED" as const, releasedAt: "2026-08-03T00:00:00.000Z", releasedBy: doctor, releaseReason: null };
+    expect(inventoryReservationSchema.safeParse({ ...released, allocations: reserved.reservation?.allocations ?? [] }).success).toBe(false);
+    expect(() => database.sqlite.prepare(
+      `INSERT INTO inventory_reservations (
+        id, clinic_id, visit_id, medication_decision_id, medication_decision_version, status,
+        created_at, created_by, released_at, released_by, release_reason
+      ) VALUES (?, 'clinic', ?, ?, 1, 'RELEASED', ?, ?, ?, ?, NULL)`,
+    ).run("invalid-release-reason", "visit-release-reason", "decision-release-reason", "2026-08-03T00:00:00.000Z", doctor.id, "2026-08-03T00:00:00.000Z", doctor.id)).toThrow(/CHECK|release|reason/i);
+  });
+
+  it("returns the active reservation after release and re-reserve even when timestamps and ids sort backwards", async () => {
+    const database = createTestDatabase();
+    cleanups.push(database.cleanup);
+    const ids = ["z-reservation", "z-allocation", "a-reservation", "a-allocation"];
+    const inventory = createInventoryService({
+      database,
+      clock: () => new Date("2026-08-03T00:00:00.000Z"),
+      idFactory: () => ids.shift() ?? "unexpected-id",
+    });
+    const doctor = await actor(database);
+    addVisitOrder(database, { visitId: "visit-rereserve", decisionId: "decision-rereserve", orderItemId: "order-rereserve", quantity: 1 });
+    receiveLot(database, { id: "lot-rereserve", lotNumber: "LOT-RERESERVE", expiryDate: "2026-08-10", quantity: 2 });
+    const first = database.db.transaction((tx) => inventory.reserveForVisit(tx, doctor, "visit-rereserve", 3, 1));
+    database.db.transaction((tx) => inventory.releaseReservation(tx, doctor, "visit-rereserve", 4, first.reservation?.id ?? "", "ทบทวนก่อนจองใหม่"));
+    const second = database.db.transaction((tx) => inventory.reserveForVisit(tx, doctor, "visit-rereserve", 5, 1));
+    expect(second.reservation).toMatchObject({ id: "a-reservation", status: "ACTIVE" });
+    expect(inventory.getPickList("visit-rereserve").reservation).toMatchObject({ id: "a-reservation", status: "ACTIVE" });
   });
 });

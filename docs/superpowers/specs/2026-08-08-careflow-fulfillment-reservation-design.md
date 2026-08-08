@@ -93,7 +93,7 @@ Existing `inventory_stock_movements` remains receipt-only in this slice. Reserve
 
 ```json
 {
-  "expectedRevisions": { "visit": 3, "reservation": 1 },
+  "expectedRevisions": { "visit": 3 },
   "payload": { "reason": "ผู้ช่วยยกเลิกการจัดยาเพื่อทบทวนรายการ" }
 }
 ```
