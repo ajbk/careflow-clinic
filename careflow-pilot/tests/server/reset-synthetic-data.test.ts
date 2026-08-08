@@ -114,10 +114,36 @@ function seedClinicalEvidence(databasePath: string): void {
   }
 }
 
+function seedInventoryEvidence(databasePath: string): void {
+  const database = new Database(databasePath);
+  try {
+    const now = "2026-08-03T00:00:00.000Z";
+    database.exec(`
+      INSERT INTO inventory_receipts (id, clinic_id, supplier_name, note, received_at, received_by)
+      VALUES ('reset-receipt', 'clinic', 'ผู้จำหน่ายรีเซ็ต', 'ทดสอบ', '${now}', 'reset-assistant-001');
+      INSERT INTO inventory_lots (
+        id, clinic_id, medication_id, medication_revision, display_name_snapshot, strength_snapshot,
+        dosage_form_snapshot, unit_snapshot, lot_number, expiry_date, supplier_name, status, created_at, created_by
+      ) VALUES (
+        'reset-lot', 'clinic', 'DEMO-MED-001', 1, '[DEMO] ยาทดสอบชนิด A', '500 หน่วยทดสอบ',
+        'เม็ดทดสอบ', 'เม็ด', 'RESET-2608', '2027-08-31', 'ผู้จำหน่ายรีเซ็ต', 'AVAILABLE', '${now}', 'reset-assistant-001'
+      );
+      INSERT INTO inventory_receipt_lines (id, receipt_id, lot_id, quantity, unit_snapshot)
+      VALUES ('reset-receipt-line', 'reset-receipt', 'reset-lot', 12, 'เม็ด');
+      INSERT INTO inventory_stock_movements (
+        id, clinic_id, lot_id, movement_type, quantity_delta, source_type, source_id, reason, occurred_at, actor_id
+      ) VALUES ('reset-movement', 'clinic', 'reset-lot', 'RECEIPT', 12, 'RECEIPT', 'reset-receipt', 'ทดสอบ', '${now}', 'reset-assistant-001');
+    `);
+  } finally {
+    database.close();
+  }
+}
+
 describe("guarded synthetic reset", () => {
   it("deletes only synthetic workflow data and preserves accounts/account audit", async () => {
     const fixture = await populatedDatabase();
     seedClinicalEvidence(fixture.databasePath);
+    seedInventoryEvidence(fixture.databasePath);
     const result = reset(fixture.databasePath);
 
     expect(result.code).toBe(0);
@@ -142,6 +168,10 @@ describe("guarded synthetic reset", () => {
         "medication_decision_drafts",
         "medication_order_items",
         "medication_decisions",
+        "inventory_stock_movements",
+        "inventory_receipt_lines",
+        "inventory_receipts",
+        "inventory_lots",
       ]) {
         expect(database.prepare(`SELECT count(*) FROM ${table}`).pluck().get()).toBe(0);
       }

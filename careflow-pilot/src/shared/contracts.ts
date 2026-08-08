@@ -156,6 +156,85 @@ export const medicationSearchResponseSchema = z.strictObject({
 });
 export type MedicationSearchResponse = z.infer<typeof medicationSearchResponseSchema>;
 
+export const inventoryStatusSchema = z.enum(["OK", "LOW", "OUT", "EXPIRED"]);
+export type InventoryStatus = z.infer<typeof inventoryStatusSchema>;
+
+export const inventoryLotSchema = z.strictObject({
+  id: z.string().min(1),
+  medicationId: z.string().regex(/^DEMO-MED-\d{3}$/),
+  medicationRevision: z.number().int().min(1),
+  displayNameSnapshot: z.string().min(1).max(200),
+  strengthSnapshot: z.string().min(1).max(100),
+  dosageFormSnapshot: z.string().min(1).max(100),
+  unitSnapshot: z.string().min(1).max(100),
+  lotNumber: z.string().min(1).max(100),
+  expiryDate: z.iso.date(),
+  supplierName: z.string().min(1).max(200),
+  status: z.enum(["AVAILABLE", "QUARANTINED"]),
+  createdAt: z.string().datetime(),
+  createdBy: z.strictObject({ id: z.string().min(1), displayName: z.string().min(1) }),
+});
+export type InventoryLotDto = z.infer<typeof inventoryLotSchema>;
+
+export const inventorySummarySchema = z.strictObject({
+  medication: medicationSchema,
+  onHand: z.number().int().min(0),
+  reserved: z.number().int().min(0),
+  available: z.number().int().min(0),
+  lotCount: z.number().int().min(0),
+  nearestExpiry: z.iso.date().nullable(),
+  status: inventoryStatusSchema,
+});
+export type InventorySummaryDto = z.infer<typeof inventorySummarySchema>;
+
+export const inventoryReceiptSchema = z.strictObject({
+  id: z.string().min(1),
+  supplierName: z.string().min(1).max(200),
+  note: z.string().max(500),
+  receivedAt: z.string().datetime(),
+  receivedBy: z.strictObject({ id: z.string().min(1), displayName: z.string().min(1) }),
+  medication: medicationSchema,
+  lot: inventoryLotSchema,
+  quantity: z.number().int().min(1).max(999_999),
+  unit: z.string().min(1).max(100),
+  inventory: inventorySummarySchema,
+});
+export type InventoryReceiptDto = z.infer<typeof inventoryReceiptSchema>;
+
+export const inventoryResponseSchema = z.strictObject({
+  data: z.array(inventorySummarySchema),
+});
+export type InventoryResponse = z.infer<typeof inventoryResponseSchema>;
+
+export const inventoryMedicationSearchResponseSchema = z.strictObject({
+  data: z.array(medicationSchema).max(20),
+});
+export type InventoryMedicationSearchResponse = z.infer<typeof inventoryMedicationSearchResponseSchema>;
+
+export const receiveInventoryPayloadSchema = z.strictObject({
+  medicationId: z.string().regex(/^DEMO-MED-\d{3}$/),
+  quantity: z.number().int().min(1).max(999_999),
+  lotNumber: z.string().trim().min(1).max(100),
+  expiryDate: z.iso.date(),
+  supplierName: z.string().trim().min(1).max(200),
+  note: z.string().trim().max(500),
+});
+export type ReceiveInventoryPayload = z.infer<typeof receiveInventoryPayloadSchema>;
+
+export const receiveInventoryBodySchema = rejectOwnPrototypeKeys(
+  z.strictObject({
+    expectedRevisions: z.strictObject({ medication: z.number().int().min(1) }),
+    payload: receiveInventoryPayloadSchema,
+  }),
+);
+export type ReceiveInventoryBody = z.infer<typeof receiveInventoryBodySchema>;
+
+export const receiveInventoryResponseSchema = z.strictObject({
+  data: inventoryReceiptSchema,
+  replayed: z.boolean(),
+});
+export type ReceiveInventoryResponse = z.infer<typeof receiveInventoryResponseSchema>;
+
 export const visitStatuses = [
   "WAITING",
   "CONSULTING",
