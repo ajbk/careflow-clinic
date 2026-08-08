@@ -92,7 +92,7 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
     const allowedActions: FulfillmentPickListDto["allowedActions"] = [];
     if (medicationDecision?.kind === "ORDER") {
       if (visit.status === "AWAITING_PREPARATION") allowedActions.push("START_PREPARATION");
-      if (visit.status === "PREPARING" && label && preparation?.status === "ACTIVE") allowedActions.push("PRINT_LABEL", "CONFIRM_ALLOCATION", "COMPLETE_PREPARATION", "ABANDON_PREPARATION", "RELEASE");
+      if (visit.status === "PREPARING" && label && preparation?.status === "ACTIVE") allowedActions.push("PRINT_LABEL", "CONFIRM_ALLOCATION", "COMPLETE_PREPARATION", "ABANDON_PREPARATION");
     }
     return {
       visit: { id: visit.id, status: visit.status as FulfillmentPickListDto["visit"]["status"], revision: visit.revision, arrivedAt: visit.arrivedAt, startedAt: visit.startedAt },
@@ -162,6 +162,8 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
       const prep = tx.select().from(fulfillmentPreparations).where(eq(fulfillmentPreparations.id, payload.preparationId)).get();
       if (!prep || prep.visitId !== visitId || prep.status !== "ACTIVE" || activeInvalidation(tx, "PREPARATION", prep.id)) invalidState("รายการจัดยาไม่พร้อมยืนยัน"); assertExpectedRevision(prep.revision, preparationRevision, "preparation");
       const allocation = tx.select().from(inventoryReservationAllocations).where(and(eq(inventoryReservationAllocations.id, payload.allocationId), eq(inventoryReservationAllocations.reservationId, prep.reservationId))).get(); if (!allocation) invalidState("ไม่พบรายการจัดยาที่เลือก");
+      const existingConfirmation = tx.select({ id: fulfillmentPreparationConfirmations.id }).from(fulfillmentPreparationConfirmations).where(and(eq(fulfillmentPreparationConfirmations.preparationId, prep.id), eq(fulfillmentPreparationConfirmations.reservationAllocationId, allocation.id))).get();
+      if (existingConfirmation) throw new ApiError({ code: "ALLOCATION_ALREADY_CONFIRMED", messageTh: "รายการจัดยานี้ได้รับการยืนยันแล้ว" });
       if (payload.method === "BARCODE") { const medication = tx.select().from(medications).where(eq(medications.id, allocation.medicationId)).get(); if (!medication || medication.internalBarcode !== payload.barcode.trim().toUpperCase()) invalidState("บาร์โค้ดไม่ตรงกับรายการจัดยา"); }
       const now = clock().toISOString();
       tx.insert(fulfillmentPreparationConfirmations).values({ id: nextId(), preparationId: prep.id, reservationAllocationId: allocation.id, medicationOrderItemId: allocation.medicationOrderItemId, medicationId: allocation.medicationId, lotId: allocation.lotId, quantity: allocation.quantity, method: payload.method, barcodeSnapshot: payload.method === "BARCODE" ? payload.barcode.trim().toUpperCase() : null, manualReason: payload.method === "MANUAL" ? payload.reason.trim() : null, confirmedAt: now, confirmedBy: actor.id }).run();

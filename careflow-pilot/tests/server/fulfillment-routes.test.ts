@@ -129,6 +129,13 @@ describe("authenticated fulfillment reservation routes", () => {
     expect(replay.statusCode).toBe(200);
     expect(replay.json().data).toEqual(first.json().data);
     expect(replay.json().replayed).toBe(true);
+    const differentKey = await test.app.inject({
+      method: "POST", url: "/api/dispensing/visit-route-001/reservations",
+      headers: { cookie: test.assistantCookie, "idempotency-key": "reserve-route-different" }, payload: { expectedRevisions: { visit: 4, medicationDecision: 1 }, payload: {} },
+    });
+    expect(differentKey.statusCode).toBe(200);
+    expect(differentKey.json().data).toEqual(first.json().data);
+    expect(differentKey.json().replayed).toBe(false);
     expect(test.database.db.select().from(auditEvents).all().map((row) => row.action)).toEqual([
       "label.version-created", "inventory.reservation-created", "visit.preparation-started",
     ]);
@@ -188,6 +195,7 @@ describe("authenticated fulfillment reservation routes", () => {
       payload: { expectedRevisions: { visit: 3, medicationDecision: 1 }, payload: {} },
     });
     const startedData = started.json().data;
+    expect(startedData.allowedActions).not.toContain("RELEASE");
     const label = startedData.label;
     const preparation = startedData.preparation;
     const allocation = startedData.reservation.allocations[0];
@@ -218,6 +226,13 @@ describe("authenticated fulfillment reservation routes", () => {
     });
     expect(confirmed.statusCode).toBe(201);
     expect(confirmed.json().data.preparation.confirmations[0]).toMatchObject({ method: "BARCODE", barcode: "CF-DEMO-001", lotId: "lot-route-001" });
+    const duplicateConfirmation = await test.app.inject({
+      method: "POST", url: "/api/dispensing/visit-route-001/preparation-confirmations",
+      headers: { cookie: test.assistantCookie, "idempotency-key": "preparation-flow-confirm-different" },
+      payload: { expectedRevisions: { visit: 4, preparation: preparation.revision }, payload: { method: "BARCODE", preparationId: preparation.id, allocationId: allocation.id, barcode: "CF-DEMO-001" } },
+    });
+    expect(duplicateConfirmation.statusCode).toBe(409);
+    expect(duplicateConfirmation.json().error.code).toBe("ALLOCATION_ALREADY_CONFIRMED");
     const completed = await test.app.inject({
       method: "POST", url: "/api/dispensing/visit-route-001/complete-preparation",
       headers: { cookie: test.assistantCookie, "idempotency-key": "preparation-flow-complete" },
@@ -225,6 +240,7 @@ describe("authenticated fulfillment reservation routes", () => {
     });
     expect(completed.statusCode).toBe(201);
     expect(completed.json().data).toMatchObject({ visit: { status: "AWAITING_RELEASE", revision: 5 }, preparation: { status: "COMPLETED", revision: 2 } });
+    expect(completed.json().data.allowedActions).toEqual([]);
   });
 
   it("rejects every old fulfillment command after clinical invalidation without extra writes", async () => {
