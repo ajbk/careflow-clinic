@@ -86,6 +86,34 @@ describe("fulfillment completion persistence contracts", () => {
     expect(fulfillmentCurrentLabelSchema.parse(null)).toBeNull();
   });
 
+  it("represents NO_MEDICATION and an absent decision without any fulfillment artifacts", () => {
+    const base = {
+      visit: { id: "visit-001", status: "AWAITING_CHARGE" as const, revision: 4, arrivedAt: "2026-08-09T00:00:00.000Z", startedAt: null },
+      patient: { id: "patient-001", hn: "DEMO-000001", displayName: "ผู้ป่วยทดสอบ 000001", phone: "0000000001", birthDate: "1990-01-01", sex: "unknown" as const, revision: 1, createdAt: "2026-08-09T00:00:00.000Z" },
+      label: null,
+      reservation: null,
+      preparation: null,
+      release: null,
+      dispense: null,
+      allowedActions: [] as const,
+    };
+    expect(fulfillmentPickListSchema.parse({
+      ...base,
+      medicationDecision: { id: "decision-no-med", version: 1, kind: "NO_MEDICATION", noMedicationReason: "อาการไม่จำเป็นต้องใช้ยา" },
+    }).medicationDecision?.kind).toBe("NO_MEDICATION");
+    expect(fulfillmentPickListSchema.parse({ ...base, medicationDecision: null }).medicationDecision).toBeNull();
+    expect(fulfillmentPickListSchema.safeParse({
+      ...base,
+      medicationDecision: { id: "decision-no-med", version: 1, kind: "NO_MEDICATION", noMedicationReason: "ไม่ใช้ยา" },
+      label: { id: "label-should-not-exist", medicationDecisionId: "decision-no-med", medicationDecisionVersion: 1, version: 1, items: [] },
+    }).success).toBe(false);
+    expect(fulfillmentPickListSchema.safeParse({
+      ...base,
+      medicationDecision: null,
+      dispense: { id: "dispense-should-not-exist", reservationId: "reservation-should-not-exist", lines: [] },
+    }).success).toBe(false);
+  });
+
   it("accepts method-specific confirmation evidence and rejects missing manual reason or unknown command keys", () => {
     expect(fulfillmentConfirmationBodySchema.safeParse({
       expectedRevisions: { visit: 3, preparation: 1 },
@@ -109,6 +137,7 @@ describe("fulfillment completion persistence contracts", () => {
       "inventory_reservation_allocations",
       "fulfillment_preparation_confirmations",
       "fulfillment_label_items",
+      "fulfillment_label_versions",
       "fulfillment_label_print_events",
       "fulfillment_releases",
       "fulfillment_rejections",
@@ -119,5 +148,65 @@ describe("fulfillment completion persistence contracts", () => {
       expect(() => value.sqlite.prepare(`UPDATE ${table} SET id = id`).run()).toThrow(`${table} are append-only`);
       expect(() => value.sqlite.prepare(`DELETE FROM ${table}`).run()).toThrow(`${table} are append-only`);
     }
+  });
+
+  it("rejects unsafe reservation consumption and identity changes at the database boundary", () => {
+    const value = database();
+    seedChain(value);
+
+    expect(() => value.sqlite.prepare(`
+      UPDATE inventory_reservations
+      SET status = 'CONSUMED', consumed_at = '2026-08-09T00:00:00.000Z', consumed_by = 'doctor-001', consumed_dispense_id = 'fake-dispense'
+      WHERE id = 'reservation-001'
+    `).run()).toThrow(/consumed reservation|dispense evidence|consumption evidence/i);
+    expect(() => value.sqlite.prepare(`
+      UPDATE inventory_reservations
+      SET status = 'RELEASED', released_at = '2026-08-09T00:00:00.000Z', released_by = 'doctor-001', release_reason = 'ปล่อยรายการ',
+        consumed_at = '2026-08-09T00:00:00.000Z', consumed_by = 'doctor-001', consumed_dispense_id = 'dispense-001'
+      WHERE id = 'reservation-001'
+    `).run()).toThrow(/consumed|release|consumption evidence/i);
+    expect(() => value.sqlite.prepare(
+      "INSERT INTO inventory_reservations (id, clinic_id, visit_id, medication_decision_id, medication_decision_version, status, created_at, created_by, consumed_at, consumed_by, consumed_dispense_id) VALUES ('invalid-consumed', 'clinic', 'visit-001', 'decision-001', 1, 'ACTIVE', '2026-08-09T00:00:00.000Z', 'doctor-001', '2026-08-09T00:00:00.000Z', 'doctor-001', 'dispense-001')",
+    ).run()).toThrow(/consumed|ACTIVE|consumption evidence/i);
+    expect(() => value.sqlite.prepare(
+      "INSERT INTO inventory_reservations (id, clinic_id, visit_id, medication_decision_id, medication_decision_version, status, created_at, created_by) VALUES ('invalid-released', 'clinic', 'visit-001', 'decision-001', 1, 'RELEASED', '2026-08-09T00:00:00.000Z', 'doctor-001')",
+    ).run()).toThrow(/ACTIVE|reservation/i);
+    expect(() => value.sqlite.prepare(
+      "UPDATE inventory_reservations SET visit_id = 'visit-other' WHERE id = 'reservation-001'",
+    ).run()).toThrow(/reservation|identity|terminal/i);
+    expect(() => value.sqlite.prepare(`
+      UPDATE inventory_reservations
+      SET status = 'CONSUMED', consumed_at = '2026-08-09T00:00:00.000Z', consumed_by = 'doctor-001', consumed_dispense_id = 'dispense-001'
+      WHERE id = 'reservation-001'
+    `).run()).not.toThrow();
+    expect(value.sqlite.prepare("SELECT status, consumed_dispense_id FROM inventory_reservations WHERE id = 'reservation-001'").get())
+      .toEqual({ status: "CONSUMED", consumed_dispense_id: "dispense-001" });
+    expect(() => value.sqlite.prepare(
+      "UPDATE inventory_reservations SET consumed_at = '2026-08-09T00:00:01.000Z' WHERE id = 'reservation-001'",
+    ).run()).toThrow(/consumption evidence/i);
+  });
+
+  it("enforces preparation creation, revision, completion, identity, and deletion rules", () => {
+    const value = database();
+    seedChain(value);
+
+    expect(() => value.sqlite.prepare(
+      "INSERT INTO fulfillment_preparations (id, clinic_id, visit_id, reservation_id, medication_decision_id, medication_decision_version, label_version_id, revision, status, minimum_print_sequence, created_at, created_by, completed_at, completed_by) VALUES ('invalid-preparation', 'clinic', 'visit-001', 'reservation-001', 'decision-001', 1, 'label-001', 2, 'ACTIVE', 1, '2026-08-09T00:00:00.000Z', 'doctor-001', NULL, NULL)",
+    ).run()).toThrow(/preparation|revision|reservation/i);
+    expect(() => value.sqlite.prepare(
+      "UPDATE fulfillment_preparations SET status = 'COMPLETED', revision = 3, completed_at = '2026-08-09T00:00:00.000Z', completed_by = 'doctor-001' WHERE id = 'preparation-001'",
+    ).run()).toThrow(/preparation|revision/i);
+    expect(() => value.sqlite.prepare(
+      "UPDATE fulfillment_preparations SET status = 'COMPLETED', revision = 2, completed_at = '2026-08-09T00:00:00.000Z', completed_by = 'doctor-001' WHERE id = 'preparation-001'",
+    ).run()).not.toThrow();
+    expect(() => value.sqlite.prepare(
+      "UPDATE fulfillment_preparations SET status = 'ACTIVE', revision = 3, completed_at = NULL, completed_by = NULL WHERE id = 'preparation-001'",
+    ).run()).toThrow(/preparation|revision/i);
+    expect(() => value.sqlite.prepare(
+      "UPDATE fulfillment_preparations SET reservation_id = 'reservation-other' WHERE id = 'preparation-001'",
+    ).run()).toThrow(/preparation|identity/i);
+    expect(() => value.sqlite.prepare(
+      "DELETE FROM fulfillment_preparations WHERE id = 'preparation-001'",
+    ).run()).toThrow(/preparation|append-only/i);
   });
 });

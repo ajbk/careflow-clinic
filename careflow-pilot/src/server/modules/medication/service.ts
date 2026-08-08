@@ -88,6 +88,17 @@ function toDto(row: MedicationRow): MedicationDto {
   };
 }
 
+function medicationEvidenceSnapshot(medication: MedicationDto): Omit<MedicationDto, "internalBarcode"> {
+  return {
+    id: medication.id,
+    displayName: medication.displayName,
+    strengthText: medication.strengthText,
+    dosageFormText: medication.dosageFormText,
+    canonicalUnit: medication.canonicalUnit,
+    revision: medication.revision,
+  };
+}
+
 function escapeLike(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
 }
@@ -373,9 +384,9 @@ export function createMedicationService(input: MedicationServiceOptions): Medica
         });
       }
       const items = draftItems.map((item) => {
-        const { internalBarcode: _internalBarcode, ...medicationSnapshot } = assertMedicationRevision(
+        const medicationSnapshot = medicationEvidenceSnapshot(assertMedicationRevision(
           tx, item.medicationId, item.medicationRevision,
-        );
+        ));
         return {
           ...medicationSnapshot,
           quantity: item.quantity,
@@ -440,9 +451,9 @@ export function createMedicationService(input: MedicationServiceOptions): Medica
         return signed;
       }
       const items = decisionInput.items.map((item) => {
-        const { internalBarcode: _internalBarcode, ...medicationSnapshot } = assertMedicationRevision(
+        const medicationSnapshot = medicationEvidenceSnapshot(assertMedicationRevision(
           tx, item.medicationId, item.medicationRevision,
-        );
+        ));
         return {
           ...medicationSnapshot,
           quantity: item.quantity,

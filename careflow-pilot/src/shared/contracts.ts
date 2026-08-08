@@ -819,11 +819,15 @@ export type FulfillmentDispenseDto = z.infer<typeof fulfillmentDispenseSchema>;
 export const fulfillmentPickListSchema = z.strictObject({
   visit: visitSummarySchema,
   patient: patientSchema,
-  medicationDecision: z.strictObject({
-    id: fulfillmentIdSchema,
-    version: z.number().int().min(1),
-    kind: z.literal("ORDER"),
-  }).nullable(),
+  medicationDecision: z.discriminatedUnion("kind", [
+    z.strictObject({ id: fulfillmentIdSchema, version: z.number().int().min(1), kind: z.literal("ORDER") }),
+    z.strictObject({
+      id: fulfillmentIdSchema,
+      version: z.number().int().min(1),
+      kind: z.literal("NO_MEDICATION"),
+      noMedicationReason: fulfillmentTextSchema(500),
+    }),
+  ]).nullable(),
   label: fulfillmentCurrentLabelSchema,
   reservation: z.strictObject({
     id: fulfillmentIdSchema,
@@ -833,6 +837,14 @@ export const fulfillmentPickListSchema = z.strictObject({
   release: fulfillmentReleaseSchema,
   dispense: fulfillmentDispenseSchema,
   allowedActions: z.array(z.enum(["START_PREPARATION", "PRINT_LABEL", "CONFIRM_ALLOCATION", "COMPLETE_PREPARATION", "ABANDON_PREPARATION", "RELEASE", "REJECT", "HANDOFF"])),
+}).superRefine((pickList, context) => {
+  if (pickList.medicationDecision === null || pickList.medicationDecision.kind === "NO_MEDICATION") {
+    for (const artifact of ["label", "reservation", "preparation", "release", "dispense"] as const) {
+      if (pickList[artifact] !== null) {
+        context.addIssue({ code: "custom", path: [artifact], message: "NO_MEDICATION or absent decisions cannot have fulfillment artifacts" });
+      }
+    }
+  }
 });
 export type FulfillmentPickListDto = z.infer<typeof fulfillmentPickListSchema>;
 

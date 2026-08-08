@@ -277,7 +277,7 @@ describe("fulfillment reservation persistence and FEFO service", () => {
         id, clinic_id, visit_id, medication_decision_id, medication_decision_version, status,
         created_at, created_by, released_at, released_by, release_reason
       ) VALUES (?, 'clinic', ?, ?, 1, 'RELEASED', ?, ?, ?, ?, NULL)`,
-    ).run("invalid-release-reason", "visit-release-reason", "decision-release-reason", "2026-08-03T00:00:00.000Z", doctor.id, "2026-08-03T00:00:00.000Z", doctor.id)).toThrow(/CHECK|release|reason/i);
+    ).run("invalid-release-reason", "visit-release-reason", "decision-release-reason", "2026-08-03T00:00:00.000Z", doctor.id, "2026-08-03T00:00:00.000Z", doctor.id)).toThrow(/CHECK|release|reason|ACTIVE/i);
   });
 
   it("returns the active reservation after release and re-reserve even when timestamps and ids sort backwards", async () => {

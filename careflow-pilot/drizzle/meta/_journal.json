@@ -71,6 +71,13 @@
       "when": 1786224095182,
       "tag": "0009_fulfillment_completion",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1786225000000,
+      "tag": "0010_fulfillment_hardening",
+      "breakpoints": true
     }
   ]
 }

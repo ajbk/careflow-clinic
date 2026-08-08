@@ -89,6 +89,7 @@ const appendOnlyTables = [
   "fulfillment_rejections",
   "fulfillment_dispenses",
   "fulfillment_dispense_lines",
+  "fulfillment_label_versions",
 ] as const;
 
 function appendOnlyTriggerSql(table: (typeof appendOnlyTables)[number], operation: "update" | "delete"): string {
@@ -105,10 +106,17 @@ const clinicalTriggerNames = appendOnlyTables.flatMap((table) => [
   `${table}_block_delete`,
 ]);
 
+const preparationDeleteTriggerSql = `CREATE TRIGGER \`fulfillment_preparations_block_delete\`
+BEFORE DELETE ON \`fulfillment_preparations\`
+BEGIN
+  SELECT RAISE(ABORT, 'fulfillment_preparations are append-only');
+END;`;
+
 const knownAppendOnlyTriggerNames = [
   "audit_events_block_update",
   "audit_events_block_delete",
   ...clinicalTriggerNames,
+  "fulfillment_preparations_block_delete",
 ] as const;
 
 export interface ResetSyntheticDependencies {
@@ -245,6 +253,7 @@ function restoreClinicalTriggers(sqlite: Database.Database): void {
     sqlite.exec(appendOnlyTriggerSql(table, "update"));
     sqlite.exec(appendOnlyTriggerSql(table, "delete"));
   }
+  sqlite.exec(preparationDeleteTriggerSql);
 }
 
 function dropKnownAppendOnlyTriggers(sqlite: Database.Database): void {
@@ -306,7 +315,7 @@ function verifyReset(sqlite: Database.Database): void {
     .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%_block_%' AND name <> 'audit_events_block_update' AND name <> 'audit_events_block_delete' ORDER BY name")
     .pluck()
     .all() as string[];
-  if (clinicalTriggerNamesAfterReset.join(",") !== [...clinicalTriggerNames].sort().join(",")) {
+  if (clinicalTriggerNamesAfterReset.join(",") !== [...clinicalTriggerNames, "fulfillment_preparations_block_delete"].sort().join(",")) {
     fail("Clinical append-only triggers were not restored");
   }
   const clinicalAuditCount = sqlite
