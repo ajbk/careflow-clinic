@@ -117,6 +117,12 @@ describe("authenticated fulfillment reservation routes", () => {
     expect(test.database.db.select().from(auditEvents).all().map((row) => row.action)).toEqual([
       "inventory.reservation-created", "visit.preparation-started",
     ]);
+    const createdAudit = test.database.db.select().from(auditEvents).all()
+      .find((event) => event.action === "inventory.reservation-created");
+    expect(JSON.parse(createdAudit?.metadataJson ?? "{}")).toMatchObject({
+      visitId: "visit-route-001",
+      allocations: [{ lotId: "lot-route-001", quantity: 3, unit: "เม็ด" }],
+    });
 
     const releaseBody = {
       expectedRevisions: { visit: 4 },
@@ -134,6 +140,12 @@ describe("authenticated fulfillment reservation routes", () => {
     });
     expect(releaseReplay.statusCode).toBe(200);
     expect(releaseReplay.json().data).toEqual(released.json().data);
+    const releasedAudit = test.database.db.select().from(auditEvents).all()
+      .find((event) => event.action === "inventory.reservation-released");
+    expect(JSON.parse(releasedAudit?.metadataJson ?? "{}")).toMatchObject({
+      visitId: "visit-route-001",
+      allocations: [{ lotId: "lot-route-001", quantity: 3, unit: "เม็ด" }],
+    });
   });
 
   it("enforces strict reservation commands and Doctor reserve permission", async () => {

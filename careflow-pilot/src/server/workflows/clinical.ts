@@ -161,6 +161,7 @@ export function createClinicalWorkflow(input: {
     visit: VisitSummaryDto,
     reason: string,
     trigger: "allergy-safety" | "medication-revision",
+    nextStatus: "AWAITING_ORDER_REVISION" | "AWAITING_PREPARATION" | "AWAITING_CHARGE",
   ): void => {
     if (visit.status !== "PREPARING") return;
     const released = input.inventory?.releaseActiveReservation(tx, actor, visit.id, reason);
@@ -176,7 +177,16 @@ export function createClinicalWorkflow(input: {
       entityRevision: 1,
       reason,
       occurredAt,
-      metadata: { visitId: visit.id, trigger },
+      metadata: {
+        visitId: visit.id,
+        trigger,
+        allocations: released.allocations.map((allocation) => ({
+          lotId: allocation.lotId,
+          lotNumber: allocation.lotNumberSnapshot,
+          quantity: allocation.quantity,
+          unit: allocation.unitSnapshot,
+        })),
+      },
     });
     appendAuditEvent({
       tx,
@@ -188,7 +198,7 @@ export function createClinicalWorkflow(input: {
       entityRevision: visit.revision + 1,
       reason,
       occurredAt,
-      metadata: { previousStatus: "PREPARING", nextStatus: "AWAITING_ORDER_REVISION", trigger },
+      metadata: { previousStatus: "PREPARING", nextStatus, trigger },
     });
   };
   const normalizeFinalizedReference = (reference: unknown): CurrentFinalizationReplayReference => {
@@ -365,7 +375,7 @@ export function createClinicalWorkflow(input: {
       if (!decision || decision.kind !== "ORDER") {
         throw new ApiError({ code: "INVALID_STATE", messageTh: "Visit นี้ไม่มีคำสั่งยาที่ต้องทบทวน" });
       }
-      releasePreparationReservation(tx, actor, visit, body.payload.reason, "allergy-safety");
+      releasePreparationReservation(tx, actor, visit, body.payload.reason, "allergy-safety", "AWAITING_ORDER_REVISION");
       input.beforeAllergySafetyTransition?.();
       return { patient, allergy, visit: input.visits.transitionAllergySafety(tx, actor, visit, body.payload.reason) };
     },
@@ -390,7 +400,14 @@ export function createClinicalWorkflow(input: {
         tx, actor, visitId, body.expectedRevisions.medicationDecision,
         body.payload.decision, body.payload.revisionReason,
       );
-      releasePreparationReservation(tx, actor, visit, body.payload.revisionReason, "medication-revision");
+      releasePreparationReservation(
+        tx,
+        actor,
+        visit,
+        body.payload.revisionReason,
+        "medication-revision",
+        medicationDecision.kind === "ORDER" ? "AWAITING_PREPARATION" : "AWAITING_CHARGE",
+      );
       input.beforeDecisionRevisionTransition?.();
       return {
         visit: input.visits.transitionDecisionRevision(tx, actor, visit, medicationDecision.kind),

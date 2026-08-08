@@ -130,6 +130,12 @@ export function registerInventoryRoutes(input: {
             medicationDecisionId: reservation.medicationDecisionId,
             medicationDecisionVersion: reservation.medicationDecisionVersion,
             allocationCount: reservation.allocations.length,
+            allocations: reservation.allocations.map((allocation) => ({
+              lotId: allocation.lotId,
+              lotNumber: allocation.lotNumberSnapshot,
+              quantity: allocation.quantity,
+              unit: allocation.unitSnapshot,
+            })),
           },
         });
         appendAuditEvent({
@@ -195,7 +201,16 @@ export function registerInventoryRoutes(input: {
           entityRevision: 1,
           reason: body.payload.reason,
           occurredAt,
-          metadata: { visitId, trigger: "manual-release" },
+          metadata: {
+            visitId,
+            trigger: "manual-release",
+            allocations: reservation.allocations.map((allocation) => ({
+              lotId: allocation.lotId,
+              lotNumber: allocation.lotNumberSnapshot,
+              quantity: allocation.quantity,
+              unit: allocation.unitSnapshot,
+            })),
+          },
         });
         appendAuditEvent({
           tx,
