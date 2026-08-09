@@ -320,17 +320,34 @@ describe("Thai checkout workflow", () => {
     await user.type(reason, "เกณฑ์ช่วยเหลือผู้ป่วย");
     await user.click(within(dialog).getByRole("button", { name: "ยืนยันยกเว้นเต็มจำนวน" }));
     expect(await within(dialog).findByText("ข้อมูลการชำระเงินเปลี่ยนแปลงแล้ว")).toBeInTheDocument();
+    const reload = within(dialog).getByRole("button", { name: "โหลดข้อมูลล่าสุด" });
+    await waitFor(() => expect(reload).toHaveFocus());
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    expect(document.body).not.toHaveFocus();
 
     server.use(http.get("/api/checkout/visit-42", () => HttpResponse.json({ data: refreshedCheckout })));
-    await user.click(within(dialog).getByRole("button", { name: "โหลดข้อมูลล่าสุด" }));
+    await user.click(reload);
     await waitFor(() => expect(reason).toBeDisabled());
     expect(reason).toHaveValue("เกณฑ์ช่วยเหลือผู้ป่วย");
-    expect(within(dialog).getByRole("button", { name: "ยืนยันยกเว้นเต็มจำนวน" })).toBeDisabled();
+    const submit = within(dialog).getByRole("button", { name: "ยืนยันยกเว้นเต็มจำนวน" });
+    const cancel = within(dialog).getByRole("button", { name: "ยกเลิก" });
+    expect(submit).toBeDisabled();
+    await waitFor(() => expect(cancel).toHaveFocus());
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    expect(document.body).not.toHaveFocus();
     expect(within(dialog).getByRole("status")).toHaveTextContent("สิทธิ์ยกเว้นเต็มจำนวนไม่พร้อมสำหรับสถานะล่าสุด");
     const job = screen.getByRole("region", { name: "งานชำระเงินปัจจุบัน" });
     expect(within(job).queryByRole("button", { name: "ยกเว้นเต็มจำนวน" })).not.toBeInTheDocument();
-    await user.click(within(dialog).getByRole("button", { name: "ยืนยันยกเว้นเต็มจำนวน" }));
+    await user.click(submit);
     expect(mutationRequests).toBe(1);
+    await user.tab();
+    expect(cancel).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(cancel).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "ยกเว้นเต็มจำนวน" })).not.toBeInTheDocument();
+    await waitFor(() => expect(job).toHaveFocus());
+    expect(document.body).not.toHaveFocus();
   });
 
   it("keeps an open waiver draft disabled when Checkout becomes stale without sending a command", async () => {
@@ -345,6 +362,7 @@ describe("Thai checkout workflow", () => {
     const dialog = screen.getByRole("dialog", { name: "ยกเว้นเต็มจำนวน" });
     const reason = within(dialog).getByLabelText("เหตุผลการยกเว้น");
     await user.type(reason, "เกณฑ์ช่วยเหลือผู้ป่วย");
+    expect(reason).toHaveFocus();
 
     server.use(http.get("/api/checkout/visit-42", () => apiError("INTERNAL_ERROR", "ระบบชำระเงินไม่พร้อมใช้งาน", 503)));
     window.dispatchEvent(new Event("focus"));
@@ -354,9 +372,22 @@ describe("Thai checkout workflow", () => {
     const submit = within(dialog).getByRole("button", { name: "ยืนยันยกเว้นเต็มจำนวน" });
     expect(submit).toBeDisabled();
     expect(within(dialog).getByRole("status")).toHaveTextContent("ข้อมูลการชำระเงินไม่เป็นปัจจุบัน จึงยังยกเว้นไม่ได้");
-    expect(within(dialog).getByRole("button", { name: "โหลดข้อมูลล่าสุด" })).toBeInTheDocument();
+    const reload = within(dialog).getByRole("button", { name: "โหลดข้อมูลล่าสุด" });
+    const cancel = within(dialog).getByRole("button", { name: "ยกเลิก" });
+    await waitFor(() => expect(reload).toHaveFocus());
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    expect(document.body).not.toHaveFocus();
     await user.click(submit);
     expect(mutationRequests).toBe(0);
+    await user.tab({ shift: true });
+    expect(cancel).toHaveFocus();
+    await user.tab();
+    expect(reload).toHaveFocus();
+    const job = screen.getByRole("region", { name: "งานชำระเงินปัจจุบัน" });
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "ยกเว้นเต็มจำนวน" })).not.toBeInTheDocument();
+    await waitFor(() => expect(job).toHaveFocus());
+    expect(document.body).not.toHaveFocus();
   });
 
   it("allows an Assistant only the server-authorized exact Cash action", async () => {

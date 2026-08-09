@@ -1,4 +1,4 @@
-import type { KeyboardEvent, ReactElement } from "react";
+import type { KeyboardEvent, ReactElement, Ref } from "react";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import type { CheckoutDto } from "../../shared/contracts";
@@ -129,6 +129,7 @@ function CheckoutEvidence({ data, jobPanel }: { data: CheckoutDto; jobPanel: Rea
 
 interface CheckoutJobPanelProps {
   data: CheckoutDto;
+  panelRef: Ref<HTMLElement>;
   isDoctor: boolean;
   disabled: boolean;
   finalizePending: boolean;
@@ -145,6 +146,7 @@ interface CheckoutJobPanelProps {
 
 function CheckoutJobPanel({
   data,
+  panelRef,
   isDoctor,
   disabled,
   finalizePending,
@@ -162,7 +164,7 @@ function CheckoutJobPanel({
   const hasCollectionAction = can(data, "RECORD_CASH") || can(data, "CONFIRM_PROMPTPAY") || can(data, "APPROVE_FULL_WAIVER");
 
   return (
-    <section className="checkout-state-summary checkout-job-panel" aria-label="งานชำระเงินปัจจุบัน">
+    <section ref={panelRef} className="checkout-state-summary checkout-job-panel" aria-label="งานชำระเงินปัจจุบัน" tabIndex={-1}>
       <SectionHeading title="งานชำระเงินปัจจุบัน" description="สถานะและงานที่ระบบอนุญาตสำหรับ Visit นี้" />
       <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
       <dl className="checkout-state-meta">
@@ -233,6 +235,14 @@ function WaiverDialog({ reason, reasonError, commandError, localError, authorize
     (reasonField ?? dialog)?.focus();
   }, []);
 
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(waiverFocusableSelector));
+    if (focusable.includes(document.activeElement as HTMLElement)) return;
+    (focusable[0] ?? dialog).focus();
+  }, [authorized, blocked, commandPending, reloadPending, stale]);
+
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape" && !commandPending) {
       event.preventDefault();
@@ -250,10 +260,11 @@ function WaiverDialog({ reason, reasonError, commandError, localError, authorize
     }
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
-    if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+    const activeIsFocusable = focusable.includes(document.activeElement as HTMLElement);
+    if (event.shiftKey && (document.activeElement === first || !activeIsFocusable)) {
       event.preventDefault();
       last.focus();
-    } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+    } else if (!event.shiftKey && (document.activeElement === last || !activeIsFocusable)) {
       event.preventDefault();
       first.focus();
     }
@@ -291,6 +302,7 @@ export function CheckoutScreen(): ReactElement {
   const approveWaiverAttempt = useRef<SavedAttempt<ApproveFullWaiverAttempt> | null>(null);
   const cashAttempt = useRef<RecordCashAttempt | null>(null);
   const promptPayAttempt = useRef<SavedAttempt<ConfirmPromptPayAttempt> | null>(null);
+  const jobPanelRef = useRef<HTMLElement>(null);
   const waiverOpener = useRef<HTMLElement | null>(null);
   const waiverWasOpen = useRef(false);
   const [waiverMode, setWaiverMode] = useState<WaiverMode | null>(null);
@@ -309,7 +321,11 @@ export function CheckoutScreen(): ReactElement {
     waiverWasOpen.current = false;
     const opener = waiverOpener.current;
     waiverOpener.current = null;
-    if (opener?.isConnected) opener.focus();
+    if (opener?.isConnected) {
+      opener.focus();
+      if (document.activeElement === opener) return;
+    }
+    jobPanelRef.current?.focus();
   }, [waiverMode]);
 
   const resetAttempts = () => {
@@ -453,6 +469,7 @@ export function CheckoutScreen(): ReactElement {
       {(commandError || localError) && !waiverMode ? <div className="checkout-command-error" role="alert"><strong>{localError || commandMessage(commandError)}</strong>{blocked ? <span>คำสั่งถูกระงับจนกว่าจะโหลดข้อมูลล่าสุด</span> : null}{blocked ? <ActionButton type="button" variant="secondary" onClick={() => void reload()} disabled={checkout.isFetching}>โหลดข้อมูลล่าสุด</ActionButton> : null}</div> : null}
       <CheckoutEvidence data={data} jobPanel={<CheckoutJobPanel
         data={data}
+        panelRef={jobPanelRef}
         isDoctor={auth.session?.user.role === "doctor"}
         disabled={disabled}
         finalizePending={finalize.isPending}
