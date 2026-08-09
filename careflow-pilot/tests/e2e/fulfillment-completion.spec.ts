@@ -175,6 +175,12 @@ test("reject/reprint, stale evidence, inventory safeguards, and role denial rema
 
     await assistant.goto(`${server.baseURL}/dispensing/${patient.visitId}`);
     await assistant.getByRole("button", { name: "เริ่มเตรียมยา" }).click();
+    const active = (await (await assistant.request.get(`${server.baseURL}/api/dispensing/${patient.visitId}`)).json()).data as { visit: { revision: number }; preparation: { id: string; revision: number }; reservation: { allocations: Array<{ id: string }> } };
+    const confirmationsBefore = Number((server.database.sqlite.prepare("SELECT count(*) AS count FROM fulfillment_preparation_confirmations").get() as { count: number }).count);
+    const missingReason = await assistant.request.post(`${server.baseURL}/api/dispensing/${patient.visitId}/preparation-confirmations`, { headers: { "idempotency-key": "completion-manual-without-reason" }, data: { expectedRevisions: { visit: active.visit.revision, preparation: active.preparation.revision }, payload: { method: "MANUAL", preparationId: active.preparation.id, allocationId: active.reservation.allocations[0]?.id } } });
+    expect(missingReason.status()).toBe(422);
+    expect((await missingReason.json()).error.code).toBe("VALIDATION_FAILED");
+    expect(Number((server.database.sqlite.prepare("SELECT count(*) AS count FROM fulfillment_preparation_confirmations").get() as { count: number }).count)).toBe(confirmationsBefore);
     await printCurrentLabel(assistant, server.baseURL, patient.visitId);
     await assistant.goto(`${server.baseURL}/dispensing/${patient.visitId}`);
     await assistant.getByLabel("เหตุผลการยืนยันด้วยตนเอง").fill("เครื่องสแกนทดสอบไม่พร้อม");
@@ -191,6 +197,14 @@ test("reject/reprint, stale evidence, inventory safeguards, and role denial rema
     // stale artifact must fail before it can alter the Visit.
     await assistant.goto(`${server.baseURL}/dispensing/${patient.visitId}`);
     await assistant.getByRole("button", { name: "เริ่มเตรียมยา" }).click();
+    await assistant.getByLabel("เหตุผลการยืนยันด้วยตนเอง").fill("ยืนยันรอบที่สองเพื่อทดสอบฉลากใหม่");
+    await assistant.getByRole("button", { name: "ยืนยันด้วยตนเอง" }).click();
+    await assistant.getByRole("button", { name: "เสร็จสิ้นการเตรียมยา" }).click();
+    await expect(assistant.getByRole("alert")).toContainText("คำขอพิมพ์ฉลากรอบใหม่");
+    await printCurrentLabel(assistant, server.baseURL, patient.visitId);
+    await assistant.goto(`${server.baseURL}/dispensing/${patient.visitId}`);
+    await assistant.getByRole("button", { name: "เสร็จสิ้นการเตรียมยา" }).click();
+    await expect(assistant.getByText("AWAITING_RELEASE", { exact: true })).toBeVisible();
     const current = await assistant.request.get(`${server.baseURL}/api/dispensing/${patient.visitId}`);
     const data = (await current.json()).data as { visit: { revision: number }; preparation: { id: string; revision: number }; medicationDecision: { id: string; version: number }; label: { id: string }; reservation: { id: string } };
     const stale = await doctor.request.post(`${server.baseURL}/api/dispensing/${patient.visitId}/release`, {
