@@ -146,6 +146,7 @@ function seedFulfillmentAuditEvidence(databasePath: string): void {
       "label.version-created",
       "label.print-requested",
       "preparation.rejected",
+      "fulfillment.artifacts-invalidated",
       "fulfillment.released",
       "fulfillment.rejected",
       "medication.release-created",

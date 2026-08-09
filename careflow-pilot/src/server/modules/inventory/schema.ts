@@ -88,6 +88,7 @@ export const inventoryStockMovements = sqliteTable(
     actorId: text("actor_id").notNull().references(() => staffAccounts.id),
   },
   (table) => [
+    uniqueIndex("inventory_stock_movements_source_lot_unique").on(table.sourceType, table.sourceId, table.lotId),
     check("inventory_stock_movements_movement_type_check", sql`${table.movementType} IN ('RECEIPT', 'DISPENSE')`),
     check("inventory_stock_movements_quantity_delta_check", sql`${table.quantityDelta} BETWEEN -999999 AND 999999 AND ${table.quantityDelta} <> 0`),
     check("inventory_stock_movements_source_type_check", sql`${table.sourceType} IN ('RECEIPT', 'DISPENSE')`),

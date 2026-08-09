@@ -92,6 +92,13 @@
       "when": 1786233352972,
       "tag": "0012_inventory_revision",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1786234980764,
+      "tag": "0013_stock_movement_source_lot_unique",
+      "breakpoints": true
     }
   ]
 }

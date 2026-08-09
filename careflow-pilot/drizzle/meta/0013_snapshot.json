@@ -1,0 +1,5335 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "2c46ac57-61a2-4424-9274-024e19f4fe6b",
+  "prevId": "a699c5d0-2515-494f-86b4-ffb720ec370a",
+  "tables": {
+    "audit_events": {
+      "name": "audit_events",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "clinic_id": {
+          "name": "clinic_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "actor_role": {
+          "name": "actor_role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "entity_type": {
+          "name": "entity_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "entity_id": {
+          "name": "entity_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "entity_revision": {
+          "name": "entity_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "metadata_json": {
+          "name": "metadata_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'{}'"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "audit_events_clinic_id_clinic_config_id_fk": {
+          "name": "audit_events_clinic_id_clinic_config_id_fk",
+          "tableFrom": "audit_events",
+          "tableTo": "clinic_config",
+          "columnsFrom": [
+            "clinic_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "audit_events_actor_id_staff_accounts_id_fk": {
+          "name": "audit_events_actor_id_staff_accounts_id_fk",
+          "tableFrom": "audit_events",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "actor_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "audit_events_actor_role_check": {
+          "name": "audit_events_actor_role_check",
+          "value": "\"audit_events\".\"actor_role\" IN ('assistant', 'doctor', 'system')"
+        },
+        "audit_events_entity_revision_check": {
+          "name": "audit_events_entity_revision_check",
+          "value": "\"audit_events\".\"entity_revision\" >= 1"
+        },
+        "audit_events_metadata_json_check": {
+          "name": "audit_events_metadata_json_check",
+          "value": "json_valid(\"audit_events\".\"metadata_json\")"
+        },
+        "audit_events_actor_identity_check": {
+          "name": "audit_events_actor_identity_check",
+          "value": "(\"audit_events\".\"actor_role\" = 'system' AND \"audit_events\".\"actor_id\" IS NULL) OR (\"audit_events\".\"actor_role\" IN ('assistant', 'doctor') AND \"audit_events\".\"actor_id\" IS NOT NULL)"
+        }
+      }
+    },
+    "clinic_config": {
+      "name": "clinic_config",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "timezone": {
+          "name": "timezone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "synthetic_only": {
+          "name": "synthetic_only",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "clinic_config_id_check": {
+          "name": "clinic_config_id_check",
+          "value": "\"clinic_config\".\"id\" = 'clinic'"
+        },
+        "clinic_config_name_check": {
+          "name": "clinic_config_name_check",
+          "value": "length(trim(\"clinic_config\".\"name\")) BETWEEN 1 AND 120"
+        },
+        "clinic_config_timezone_check": {
+          "name": "clinic_config_timezone_check",
+          "value": "\"clinic_config\".\"timezone\" = 'Asia/Bangkok'"
+        },
+        "clinic_config_synthetic_only_check": {
+          "name": "clinic_config_synthetic_only_check",
+          "value": "\"clinic_config\".\"synthetic_only\" = 1"
+        }
+      }
+    },
+    "clinic_counters": {
+      "name": "clinic_counters",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "clinic_counters_value_check": {
+          "name": "clinic_counters_value_check",
+          "value": "\"clinic_counters\".\"value\" >= 0"
+        }
+      }
+    },
+    "idempotency_records": {
+      "name": "idempotency_records",
+      "columns": {
+        "clinic_id": {
+          "name": "clinic_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "request_hash": {
+          "name": "request_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "response_status": {
+          "name": "response_status",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "response_json": {
+          "name": "response_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "idempotency_records_clinic_id_clinic_config_id_fk": {
+          "name": "idempotency_records_clinic_id_clinic_config_id_fk",
+          "tableFrom": "idempotency_records",
+          "tableTo": "clinic_config",
+          "columnsFrom": [
+            "clinic_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "idempotency_records_actor_id_staff_accounts_id_fk": {
+          "name": "idempotency_records_actor_id_staff_accounts_id_fk",
+          "tableFrom": "idempotency_records",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "actor_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "idempotency_records_actor_id_key_pk": {
+          "columns": [
+            "actor_id",
+            "key"
+          ],
+          "name": "idempotency_records_actor_id_key_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "idempotency_records_status_check": {
+          "name": "idempotency_records_status_check",
+          "value": "\"idempotency_records\".\"response_status\" BETWEEN 100 AND 599"
+        },
+        "idempotency_records_response_json_check": {
+          "name": "idempotency_records_response_json_check",
+          "value": "json_valid(\"idempotency_records\".\"response_json\")"
+        }
+      }
+    },
+    "platform_metadata": {
+      "name": "platform_metadata",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "sessions": {
+      "name": "sessions",
+      "columns": {
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "staff_id": {
+          "name": "staff_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_seen_at": {
+          "name": "last_seen_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "sessions_staff_id_staff_accounts_id_fk": {
+          "name": "sessions_staff_id_staff_accounts_id_fk",
+          "tableFrom": "sessions",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "staff_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "staff_accounts": {
+      "name": "staff_accounts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "clinic_id": {
+          "name": "clinic_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "username": {
+          "name": "username",
+          "type": "text collate nocase",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "password_hash": {
+          "name": "password_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "must_change_password": {
+          "name": "must_change_password",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "pilot_acknowledged_at": {
+          "name": "pilot_acknowledged_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "active": {
+          "name": "active",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "last_password_changed_at": {
+          "name": "last_password_changed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "disabled_at": {
+          "name": "disabled_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "staff_accounts_clinic_username_unique": {
+          "name": "staff_accounts_clinic_username_unique",
+          "columns": [
+            "clinic_id",
+            "username"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "staff_accounts_clinic_id_clinic_config_id_fk": {
+          "name": "staff_accounts_clinic_id_clinic_config_id_fk",
+          "tableFrom": "staff_accounts",
+          "tableTo": "clinic_config",
+          "columnsFrom": [
+            "clinic_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "staff_accounts_role_check": {
+          "name": "staff_accounts_role_check",
+          "value": "\"staff_accounts\".\"role\" IN ('assistant', 'doctor')"
+        },
+        "staff_accounts_must_change_password_check": {
+          "name": "staff_accounts_must_change_password_check",
+          "value": "\"staff_accounts\".\"must_change_password\" IN (0, 1)"
+        },
+        "staff_accounts_active_check": {
+          "name": "staff_accounts_active_check",
+          "value": "\"staff_accounts\".\"active\" IN (0, 1)"
+        },
+        "staff_accounts_revision_check": {
+          "name": "staff_accounts_revision_check",
+          "value": "\"staff_accounts\".\"revision\" >= 1"
+        }
+      }
+    },
+    "patient_allergy_items": {
+      "name": "patient_allergy_items",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "allergy_revision_id": {
+          "name": "allergy_revision_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "position": {
+          "name": "position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "substance": {
+          "name": "substance",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reaction": {
+          "name": "reaction",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "severity": {
+          "name": "severity",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "patient_allergy_items_revision_position_unique": {
+          "name": "patient_allergy_items_revision_position_unique",
+          "columns": [
+            "allergy_revision_id",
+            "position"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "patient_allergy_items_allergy_revision_id_patient_allergy_revisions_id_fk": {
+          "name": "patient_allergy_items_allergy_revision_id_patient_allergy_revisions_id_fk",
+          "tableFrom": "patient_allergy_items",
+          "tableTo": "patient_allergy_revisions",
+          "columnsFrom": [
+            "allergy_revision_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "patient_allergy_items_position_check": {
+          "name": "patient_allergy_items_position_check",
+          "value": "\"patient_allergy_items\".\"position\" >= 0"
+        },
+        "patient_allergy_items_substance_check": {
+          "name": "patient_allergy_items_substance_check",
+          "value": "length(\"patient_allergy_items\".\"substance\") BETWEEN 1 AND 200"
+        },
+        "patient_allergy_items_reaction_check": {
+          "name": "patient_allergy_items_reaction_check",
+          "value": "length(\"patient_allergy_items\".\"reaction\") BETWEEN 1 AND 300"
+        },
+        "patient_allergy_items_severity_check": {
+          "name": "patient_allergy_items_severity_check",
+          "value": "\"patient_allergy_items\".\"severity\" IN ('UNKNOWN', 'MILD', 'MODERATE', 'SEVERE')"
+        },
+        "patient_allergy_items_note_check": {
+          "name": "patient_allergy_items_note_check",
+          "value": "\"patient_allergy_items\".\"note\" IS NULL OR length(\"patient_allergy_items\".\"note\") <= 500"
+        }
+      }
+    },
+    "patient_allergy_revisions": {
+      "name": "patient_allergy_revisions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "patient_id": {
+          "name": "patient_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_text": {
+          "name": "source_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reviewed_by": {
+          "name": "reviewed_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reviewed_at": {
+          "name": "reviewed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "patient_allergy_revisions_patient_revision_unique": {
+          "name": "patient_allergy_revisions_patient_revision_unique",
+          "columns": [
+            "patient_id",
+            "revision"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "patient_allergy_revisions_patient_id_patients_id_fk": {
+          "name": "patient_allergy_revisions_patient_id_patients_id_fk",
+          "tableFrom": "patient_allergy_revisions",
+          "tableTo": "patients",
+          "columnsFrom": [
+            "patient_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "patient_allergy_revisions_reviewed_by_staff_accounts_id_fk": {
+          "name": "patient_allergy_revisions_reviewed_by_staff_accounts_id_fk",
+          "tableFrom": "patient_allergy_revisions",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "reviewed_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "patient_allergy_revisions_revision_check": {
+          "name": "patient_allergy_revisions_revision_check",
+          "value": "\"patient_allergy_revisions\".\"revision\" >= 1"
+        },
+        "patient_allergy_revisions_state_check": {
+          "name": "patient_allergy_revisions_state_check",
+          "value": "\"patient_allergy_revisions\".\"state\" IN ('UNKNOWN', 'NONE_KNOWN', 'PRESENT')"
+        },
+        "patient_allergy_revisions_source_text_check": {
+          "name": "patient_allergy_revisions_source_text_check",
+          "value": "length(\"patient_allergy_revisions\".\"source_text\") BETWEEN 1 AND 500"
+        },
+        "patient_allergy_revisions_reason_check": {
+          "name": "patient_allergy_revisions_reason_check",
+          "value": "length(\"patient_allergy_revisions\".\"reason\") BETWEEN 1 AND 500"
+        }
+      }
+    },
+    "patients": {
+      "name": "patients",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "clinic_id": {
+          "name": "clinic_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "hn": {
+          "name": "hn",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "birth_date": {
+          "name": "birth_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "sex": {
+          "name": "sex",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "patients_clinic_hn_unique": {
+          "name": "patients_clinic_hn_unique",
+          "columns": [
+            "clinic_id",
+            "hn"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "patients_clinic_id_clinic_config_id_fk": {
+          "name": "patients_clinic_id_clinic_config_id_fk",
+          "tableFrom": "patients",
+          "tableTo": "clinic_config",
+          "columnsFrom": [
+            "clinic_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "patients_hn_check": {
+          "name": "patients_hn_check",
+          "value": "length(\"patients\".\"hn\") = 11 AND \"patients\".\"hn\" GLOB 'DEMO-[0-9][0-9][0-9][0-9][0-9][0-9]'"
+        },
+        "patients_display_name_check": {
+          "name": "patients_display_name_check",
+          "value": "\"patients\".\"display_name\" = 'ผู้ป่วยทดสอบ ' || substr(\"patients\".\"hn\", 6)"
+        },
+        "patients_phone_check": {
+          "name": "patients_phone_check",
+          "value": "length(\"patients\".\"phone\") = 10 AND \"patients\".\"phone\" GLOB '000000[0-9][0-9][0-9][0-9]'"
+        },
+        "patients_phone_hn_check": {
+          "name": "patients_phone_hn_check",
+          "value": "\"patients\".\"phone\" = '000000' || substr(\"patients\".\"hn\", -4)"
+        },
+        "patients_sex_check": {
+          "name": "patients_sex_check",
+          "value": "\"patients\".\"sex\" IN ('female', 'male', 'unknown')"
+        },
+        "patients_demographics_check": {
+          "name": "patients_demographics_check",
+          "value": "\"patients\".\"birth_date\" = '1990-01-01' AND \"patients\".\"sex\" = 'unknown'"
+        },
+        "patients_revision_check": {
+          "name": "patients_revision_check",
+          "value": "\"patients\".\"revision\" >= 1"
+        }
+      }
+    },
+    "intake_observations": {
+      "name": "intake_observations",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "visit_id": {
+          "name": "visit_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "weight_kg": {
+          "name": "weight_kg",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "height_cm": {
+          "name": "height_cm",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "temperature_c": {
+          "name": "temperature_c",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "systolic_mmhg": {
+          "name": "systolic_mmhg",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "diastolic_mmhg": {
+          "name": "diastolic_mmhg",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "heart_rate_bpm": {
+          "name": "heart_rate_bpm",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "spo2_percent": {
+          "name": "spo2_percent",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "recorded_by": {
+          "name": "recorded_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "recorded_at": {
+          "name": "recorded_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "intake_observations_visit_id_unique": {
+          "name": "intake_observations_visit_id_unique",
+          "columns": [
+            "visit_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "intake_observations_visit_id_visits_id_fk": {
+          "name": "intake_observations_visit_id_visits_id_fk",
+          "tableFrom": "intake_observations",
+          "tableTo": "visits",
+          "columnsFrom": [
+            "visit_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "intake_observations_recorded_by_staff_accounts_id_fk": {
+          "name": "intake_observations_recorded_by_staff_accounts_id_fk",
+          "tableFrom": "intake_observations",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "recorded_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "intake_weight_check": {
+          "name": "intake_weight_check",
+          "value": "\"intake_observations\".\"weight_kg\" IS NULL OR \"intake_observations\".\"weight_kg\" BETWEEN 1 AND 350"
+        },
+        "intake_height_check": {
+          "name": "intake_height_check",
+          "value": "\"intake_observations\".\"height_cm\" IS NULL OR \"intake_observations\".\"height_cm\" BETWEEN 30 AND 250"
+        },
+        "intake_temperature_check": {
+          "name": "intake_temperature_check",
+          "value": "\"intake_observations\".\"temperature_c\" IS NULL OR \"intake_observations\".\"temperature_c\" BETWEEN 30 AND 45"
+        },
+        "intake_systolic_check": {
+          "name": "intake_systolic_check",
+          "value": "\"intake_observations\".\"systolic_mmhg\" IS NULL OR \"intake_observations\".\"systolic_mmhg\" BETWEEN 50 AND 260"
+        },
+        "intake_diastolic_check": {
+          "name": "intake_diastolic_check",
+          "value": "\"intake_observations\".\"diastolic_mmhg\" IS NULL OR \"intake_observations\".\"diastolic_mmhg\" BETWEEN 30 AND 180"
+        },
+        "intake_heart_rate_check": {
+          "name": "intake_heart_rate_check",
+          "value": "\"intake_observations\".\"heart_rate_bpm\" IS NULL OR \"intake_observations\".\"heart_rate_bpm\" BETWEEN 20 AND 250"
+        },
+        "intake_spo2_check": {
+          "name": "intake_spo2_check",
+          "value": "\"intake_observations\".\"spo2_percent\" IS NULL OR \"intake_observations\".\"spo2_percent\" BETWEEN 50 AND 100"
+        },
+        "intake_blood_pressure_relationship_check": {
+          "name": "intake_blood_pressure_relationship_check",
+          "value": "\"intake_observations\".\"systolic_mmhg\" IS NULL OR \"intake_observations\".\"diastolic_mmhg\" IS NULL OR \"intake_observations\".\"systolic_mmhg\" >= \"intake_observations\".\"diastolic_mmhg\""
+        }
+      }
+    },
+    "visits": {
+      "name": "visits",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "clinic_id": {
+          "name": "clinic_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "patient_id": {
+          "name": "patient_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'WAITING'"
+        },
+        "chief_complaint": {
+          "name": "chief_complaint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "arrived_at": {
+          "name": "arrived_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "closed_at": {
+          "name": "closed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "visits_clinic_patient_active_unique": {
+          "name": "visits_clinic_patient_active_unique",
+          "columns": [
+            "clinic_id",
+            "patient_id"
+          ],
+          "isUnique": true,
+          "where": "\"visits\".\"status\" <> 'CLOSED'"
+        },
+        "visits_clinic_status_arrived_index": {
+          "name": "visits_clinic_status_arrived_index",
+          "columns": [
+            "clinic_id",
+            "status",
+            "arrived_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "visits_clinic_id_clinic_config_id_fk": {
+          "name": "visits_clinic_id_clinic_config_id_fk",
+          "tableFrom": "visits",
+          "tableTo": "clinic_config",
+          "columnsFrom": [
+            "clinic_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "visits_patient_id_patients_id_fk": {
+          "name": "visits_patient_id_patients_id_fk",
+          "tableFrom": "visits",
+          "tableTo": "patients",
+          "columnsFrom": [
+            "patient_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "visits_created_by_staff_accounts_id_fk": {
+          "name": "visits_created_by_staff_accounts_id_fk",
+          "tableFrom": "visits",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "visits_status_check": {
+          "name": "visits_status_check",
+          "value": "\"visits\".\"status\" IN ('WAITING', 'CONSULTING', 'AWAITING_PREPARATION', 'PREPARING', 'AWAITING_RELEASE', 'AWAITING_HANDOFF', 'AWAITING_ORDER_REVISION', 'AWAITING_CHARGE', 'AWAITING_PAYMENT', 'READY_TO_CLOSE', 'CLOSED')"
+        },
+        "visits_chief_complaint_check": {
+          "name": "visits_chief_complaint_check",
+          "value": "length(trim(\"visits\".\"chief_complaint\")) BETWEEN 1 AND 500"
+        },
+        "visits_revision_check": {
+          "name": "visits_revision_check",
+          "value": "\"visits\".\"revision\" >= 1"
+        }
+      }
+    },
+    "clinical_note_amendments": {
+      "name": "clinical_note_amendments",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "clinical_note_id": {
+          "name": "clinical_note_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "content": {
+          "name": "content",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "signed_by": {
+          "name": "signed_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "signed_by_display_name": {
+          "name": "signed_by_display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'legacy signer snapshot unavailable'"
+        },
+        "signed_at": {
+          "name": "signed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "content_hash": {
+          "name": "content_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "clinical_note_amendments_note_version_unique": {
+          "name": "clinical_note_amendments_note_version_unique",
+          "columns": [
+            "clinical_note_id",
+            "version"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "clinical_note_amendments_clinical_note_id_clinical_notes_id_fk": {
+          "name": "clinical_note_amendments_clinical_note_id_clinical_notes_id_fk",
+          "tableFrom": "clinical_note_amendments",
+          "tableTo": "clinical_notes",
+          "columnsFrom": [
+            "clinical_note_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "clinical_note_amendments_signed_by_staff_accounts_id_fk": {
+          "name": "clinical_note_amendments_signed_by_staff_accounts_id_fk",
+          "tableFrom": "clinical_note_amendments",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "signed_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "clinical_note_amendments_version_check": {
+          "name": "clinical_note_amendments_version_check",
+          "value": "\"clinical_note_amendments\".\"version\" >= 1"
+        },
+        "clinical_note_amendments_content_check": {
+          "name": "clinical_note_amendments_content_check",
+          "value": "length(\"clinical_note_amendments\".\"content\") BETWEEN 1 AND 4000"
+        },
+        "clinical_note_amendments_reason_check": {
+          "name": "clinical_note_amendments_reason_check",
+          "value": "length(\"clinical_note_amendments\".\"reason\") BETWEEN 1 AND 500"
+        },
+        "clinical_note_amendments_content_hash_check": {
+          "name": "clinical_note_amendments_content_hash_check",
+          "value": "length(\"clinical_note_amendments\".\"content_hash\") = 64 AND \"clinical_note_amendments\".\"content_hash\" NOT GLOB '*[^0-9a-f]*'"
+        }
+      }
+    },
+    "clinical_note_diagnoses": {
+      "name": "clinical_note_diagnoses",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "clinical_note_id": {
+          "name": "clinical_note_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "position": {
+          "name": "position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "diagnosis_text": {
+          "name": "diagnosis_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "clinical_note_diagnoses_note_position_unique": {
+          "name": "clinical_note_diagnoses_note_position_unique",
+          "columns": [
+            "clinical_note_id",
+            "position"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "clinical_note_diagnoses_clinical_note_id_clinical_notes_id_fk": {
+          "name": "clinical_note_diagnoses_clinical_note_id_clinical_notes_id_fk",
+          "tableFrom": "clinical_note_diagnoses",
+          "tableTo": "clinical_notes",
+          "columnsFrom": [
+            "clinical_note_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "clinical_note_diagnoses_position_check": {
+          "name": "clinical_note_diagnoses_position_check",
+          "value": "\"clinical_note_diagnoses\".\"position\" >= 0"
+        },
+        "clinical_note_diagnoses_text_check": {
+          "name": "clinical_note_diagnoses_text_check",
+          "value": "length(\"clinical_note_diagnoses\".\"diagnosis_text\") BETWEEN 1 AND 300"
+        }
+      }
+    },
+    "clinical_note_draft_diagnoses": {
+      "name": "clinical_note_draft_diagnoses",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "draft_id": {
+          "name": "draft_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "position": {
+          "name": "position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "diagnosis_text": {
+          "name": "diagnosis_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "clinical_note_draft_diagnoses_draft_position_unique": {
+          "name": "clinical_note_draft_diagnoses_draft_position_unique",
+          "columns": [
+            "draft_id",
+            "position"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "clinical_note_draft_diagnoses_draft_id_clinical_note_drafts_id_fk": {
+          "name": "clinical_note_draft_diagnoses_draft_id_clinical_note_drafts_id_fk",
+          "tableFrom": "clinical_note_draft_diagnoses",
+          "tableTo": "clinical_note_drafts",
+          "columnsFrom": [
+            "draft_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "clinical_note_draft_diagnoses_position_check": {
+          "name": "clinical_note_draft_diagnoses_position_check",
+          "value": "\"clinical_note_draft_diagnoses\".\"position\" >= 0"
+        },
+        "clinical_note_draft_diagnoses_text_check": {
+          "name": "clinical_note_draft_diagnoses_text_check",
+          "value": "length(\"clinical_note_draft_diagnoses\".\"diagnosis_text\") BETWEEN 1 AND 300"
+        }
+      }
+    },
+    "clinical_note_drafts": {
+      "name": "clinical_note_drafts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "visit_id": {
+          "name": "visit_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "subjective": {
+          "name": "subjective",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "objective": {
+          "name": "objective",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "assessment": {
+          "name": "assessment",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "plan": {
+          "name": "plan",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "clinical_note_drafts_visit_id_unique": {
+          "name": "clinical_note_drafts_visit_id_unique",
+          "columns": [
+            "visit_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "clinical_note_drafts_visit_id_visits_id_fk": {
+          "name": "clinical_note_drafts_visit_id_visits_id_fk",
+          "tableFrom": "clinical_note_drafts",
+          "tableTo": "visits",
+          "columnsFrom": [
+            "visit_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "clinical_note_drafts_created_by_staff_accounts_id_fk": {
+          "name": "clinical_note_drafts_created_by_staff_accounts_id_fk",
+          "tableFrom": "clinical_note_drafts",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "clinical_note_drafts_updated_by_staff_accounts_id_fk": {
+          "name": "clinical_note_drafts_updated_by_staff_accounts_id_fk",
+          "tableFrom": "clinical_note_drafts",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "updated_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "clinical_note_drafts_revision_check": {
+          "name": "clinical_note_drafts_revision_check",
+          "value": "\"clinical_note_drafts\".\"revision\" >= 1"
+        },
+        "clinical_note_drafts_subjective_check": {
+          "name": "clinical_note_drafts_subjective_check",
+          "value": "length(\"clinical_note_drafts\".\"subjective\") BETWEEN 0 AND 4000"
+        },
+        "clinical_note_drafts_objective_check": {
+          "name": "clinical_note_drafts_objective_check",
+          "value": "length(\"clinical_note_drafts\".\"objective\") BETWEEN 0 AND 4000"
+        },
+        "clinical_note_drafts_assessment_check": {
+          "name": "clinical_note_drafts_assessment_check",
+          "value": "length(\"clinical_note_drafts\".\"assessment\") BETWEEN 0 AND 4000"
+        },
+        "clinical_note_drafts_plan_check": {
+          "name": "clinical_note_drafts_plan_check",
+          "value": "length(\"clinical_note_drafts\".\"plan\") BETWEEN 0 AND 4000"
+        }
+      }
+    },
+    "clinical_notes": {
+      "name": "clinical_notes",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "visit_id": {
+          "name": "visit_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "subjective": {
+          "name": "subjective",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "objective": {
+          "name": "objective",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "assessment": {
+          "name": "assessment",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "plan": {
+          "name": "plan",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_draft_revision": {
+          "name": "source_draft_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "signed_by": {
+          "name": "signed_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "signed_by_display_name": {
+          "name": "signed_by_display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'legacy signer snapshot unavailable'"
+        },
+        "signed_at": {
+          "name": "signed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "content_hash": {
+          "name": "content_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "clinical_notes_visit_version_unique": {
+          "name": "clinical_notes_visit_version_unique",
+          "columns": [
+            "visit_id",
+            "version"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "clinical_notes_visit_id_visits_id_fk": {
+          "name": "clinical_notes_visit_id_visits_id_fk",
+          "tableFrom": "clinical_notes",
+          "tableTo": "visits",
+          "columnsFrom": [
+            "visit_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "clinical_notes_signed_by_staff_accounts_id_fk": {
+          "name": "clinical_notes_signed_by_staff_accounts_id_fk",
+          "tableFrom": "clinical_notes",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "signed_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "clinical_notes_version_check": {
+          "name": "clinical_notes_version_check",
+          "value": "\"clinical_notes\".\"version\" >= 1"
+        },
+        "clinical_notes_subjective_check": {
+          "name": "clinical_notes_subjective_check",
+          "value": "length(\"clinical_notes\".\"subjective\") BETWEEN 1 AND 4000"
+        },
+        "clinical_notes_objective_check": {
+          "name": "clinical_notes_objective_check",
+          "value": "length(\"clinical_notes\".\"objective\") BETWEEN 1 AND 4000"
+        },
+        "clinical_notes_assessment_check": {
+          "name": "clinical_notes_assessment_check",
+          "value": "length(\"clinical_notes\".\"assessment\") BETWEEN 1 AND 4000"
+        },
+        "clinical_notes_plan_check": {
+          "name": "clinical_notes_plan_check",
+          "value": "length(\"clinical_notes\".\"plan\") BETWEEN 1 AND 4000"
+        },
+        "clinical_notes_source_draft_revision_check": {
+          "name": "clinical_notes_source_draft_revision_check",
+          "value": "\"clinical_notes\".\"source_draft_revision\" >= 1"
+        },
+        "clinical_notes_content_hash_check": {
+          "name": "clinical_notes_content_hash_check",
+          "value": "length(\"clinical_notes\".\"content_hash\") = 64 AND \"clinical_notes\".\"content_hash\" NOT GLOB '*[^0-9a-f]*'"
+        }
+      }
+    },
+    "medication_decision_drafts": {
+      "name": "medication_decision_drafts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "visit_id": {
+          "name": "visit_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'UNDECIDED'"
+        },
+        "no_medication_reason": {
+          "name": "no_medication_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "medication_decision_drafts_visit_id_unique": {
+          "name": "medication_decision_drafts_visit_id_unique",
+          "columns": [
+            "visit_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "medication_decision_drafts_visit_id_visits_id_fk": {
+          "name": "medication_decision_drafts_visit_id_visits_id_fk",
+          "tableFrom": "medication_decision_drafts",
+          "tableTo": "visits",
+          "columnsFrom": [
+            "visit_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "medication_decision_drafts_created_by_staff_accounts_id_fk": {
+          "name": "medication_decision_drafts_created_by_staff_accounts_id_fk",
+          "tableFrom": "medication_decision_drafts",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "medication_decision_drafts_updated_by_staff_accounts_id_fk": {
+          "name": "medication_decision_drafts_updated_by_staff_accounts_id_fk",
+          "tableFrom": "medication_decision_drafts",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "updated_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "medication_decision_drafts_revision_check": {
+          "name": "medication_decision_drafts_revision_check",
+          "value": "\"medication_decision_drafts\".\"revision\" >= 1"
+        },
+        "medication_decision_drafts_kind_check": {
+          "name": "medication_decision_drafts_kind_check",
+          "value": "\"medication_decision_drafts\".\"kind\" IN ('UNDECIDED', 'ORDER', 'NO_MEDICATION')"
+        },
+        "medication_decision_drafts_no_medication_reason_check": {
+          "name": "medication_decision_drafts_no_medication_reason_check",
+          "value": "\"medication_decision_drafts\".\"no_medication_reason\" IS NULL OR length(\"medication_decision_drafts\".\"no_medication_reason\") <= 500"
+        }
+      }
+    },
+    "medication_decisions": {
+      "name": "medication_decisions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "visit_id": {
+          "name": "visit_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "no_medication_reason": {
+          "name": "no_medication_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "revision_reason": {
+          "name": "revision_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "supersedes_id": {
+          "name": "supersedes_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "signed_by": {
+          "name": "signed_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "signed_by_display_name": {
+          "name": "signed_by_display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'legacy signer snapshot unavailable'"
+        },
+        "signed_at": {
+          "name": "signed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "content_hash": {
+          "name": "content_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "medication_decisions_visit_version_unique": {
+          "name": "medication_decisions_visit_version_unique",
+          "columns": [
+            "visit_id",
+            "version"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "medication_decisions_visit_id_visits_id_fk": {
+          "name": "medication_decisions_visit_id_visits_id_fk",
+          "tableFrom": "medication_decisions",
+          "tableTo": "visits",
+          "columnsFrom": [
+            "visit_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "medication_decisions_supersedes_id_medication_decisions_id_fk": {
+          "name": "medication_decisions_supersedes_id_medication_decisions_id_fk",
+          "tableFrom": "medication_decisions",
+          "tableTo": "medication_decisions",
+          "columnsFrom": [
+            "supersedes_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "medication_decisions_signed_by_staff_accounts_id_fk": {
+          "name": "medication_decisions_signed_by_staff_accounts_id_fk",
+          "tableFrom": "medication_decisions",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "signed_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "medication_decisions_version_check": {
+          "name": "medication_decisions_version_check",
+          "value": "\"medication_decisions\".\"version\" >= 1"
+        },
+        "medication_decisions_kind_check": {
+          "name": "medication_decisions_kind_check",
+          "value": "\"medication_decisions\".\"kind\" IN ('ORDER', 'NO_MEDICATION')"
+        },
+        "medication_decisions_no_medication_reason_check": {
+          "name": "medication_decisions_no_medication_reason_check",
+          "value": "\"medication_decisions\".\"no_medication_reason\" IS NULL OR length(\"medication_decisions\".\"no_medication_reason\") BETWEEN 1 AND 500"
+        },
+        "medication_decisions_revision_reason_check": {
+          "name": "medication_decisions_revision_reason_check",
+          "value": "\"medication_decisions\".\"revision_reason\" IS NULL OR length(\"medication_decisions\".\"revision_reason\") BETWEEN 1 AND 500"
+        },
+        "medication_decisions_content_hash_check": {
+          "name": "medication_decisions_content_hash_check",
+          "value": "length(\"medication_decisions\".\"content_hash\") = 64 AND \"medication_decisions\".\"content_hash\" NOT GLOB '*[^0-9a-f]*'"
+        }
+      }
+    },
+    "medication_order_draft_items": {
+      "name": "medication_order_draft_items",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "decision_draft_id": {
+          "name": "decision_draft_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "position": {
+          "name": "position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_id": {
+          "name": "medication_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_revision": {
+          "name": "medication_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "directions_th": {
+          "name": "directions_th",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "medication_order_draft_items_draft_position_unique": {
+          "name": "medication_order_draft_items_draft_position_unique",
+          "columns": [
+            "decision_draft_id",
+            "position"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "medication_order_draft_items_decision_draft_id_medication_decision_drafts_id_fk": {
+          "name": "medication_order_draft_items_decision_draft_id_medication_decision_drafts_id_fk",
+          "tableFrom": "medication_order_draft_items",
+          "tableTo": "medication_decision_drafts",
+          "columnsFrom": [
+            "decision_draft_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "medication_order_draft_items_medication_id_medications_id_fk": {
+          "name": "medication_order_draft_items_medication_id_medications_id_fk",
+          "tableFrom": "medication_order_draft_items",
+          "tableTo": "medications",
+          "columnsFrom": [
+            "medication_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "medication_order_draft_items_position_check": {
+          "name": "medication_order_draft_items_position_check",
+          "value": "\"medication_order_draft_items\".\"position\" >= 0"
+        },
+        "medication_order_draft_items_medication_revision_check": {
+          "name": "medication_order_draft_items_medication_revision_check",
+          "value": "\"medication_order_draft_items\".\"medication_revision\" >= 1"
+        },
+        "medication_order_draft_items_quantity_check": {
+          "name": "medication_order_draft_items_quantity_check",
+          "value": "\"medication_order_draft_items\".\"quantity\" BETWEEN 1 AND 9999"
+        },
+        "medication_order_draft_items_directions_th_check": {
+          "name": "medication_order_draft_items_directions_th_check",
+          "value": "length(\"medication_order_draft_items\".\"directions_th\") BETWEEN 1 AND 500"
+        }
+      }
+    },
+    "medication_order_items": {
+      "name": "medication_order_items",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_decision_id": {
+          "name": "medication_decision_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "position": {
+          "name": "position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_id": {
+          "name": "medication_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_revision": {
+          "name": "medication_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_name_snapshot": {
+          "name": "display_name_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "strength_snapshot": {
+          "name": "strength_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "dosage_form_snapshot": {
+          "name": "dosage_form_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "unit_snapshot": {
+          "name": "unit_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "directions_th": {
+          "name": "directions_th",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "medication_order_items_decision_position_unique": {
+          "name": "medication_order_items_decision_position_unique",
+          "columns": [
+            "medication_decision_id",
+            "position"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "medication_order_items_medication_decision_id_medication_decisions_id_fk": {
+          "name": "medication_order_items_medication_decision_id_medication_decisions_id_fk",
+          "tableFrom": "medication_order_items",
+          "tableTo": "medication_decisions",
+          "columnsFrom": [
+            "medication_decision_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "medication_order_items_medication_id_medications_id_fk": {
+          "name": "medication_order_items_medication_id_medications_id_fk",
+          "tableFrom": "medication_order_items",
+          "tableTo": "medications",
+          "columnsFrom": [
+            "medication_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "medication_order_items_position_check": {
+          "name": "medication_order_items_position_check",
+          "value": "\"medication_order_items\".\"position\" >= 0"
+        },
+        "medication_order_items_medication_revision_check": {
+          "name": "medication_order_items_medication_revision_check",
+          "value": "\"medication_order_items\".\"medication_revision\" >= 1"
+        },
+        "medication_order_items_display_name_snapshot_check": {
+          "name": "medication_order_items_display_name_snapshot_check",
+          "value": "length(\"medication_order_items\".\"display_name_snapshot\") BETWEEN 1 AND 200"
+        },
+        "medication_order_items_strength_snapshot_check": {
+          "name": "medication_order_items_strength_snapshot_check",
+          "value": "length(\"medication_order_items\".\"strength_snapshot\") BETWEEN 1 AND 100"
+        },
+        "medication_order_items_dosage_form_snapshot_check": {
+          "name": "medication_order_items_dosage_form_snapshot_check",
+          "value": "length(\"medication_order_items\".\"dosage_form_snapshot\") BETWEEN 1 AND 100"
+        },
+        "medication_order_items_unit_snapshot_check": {
+          "name": "medication_order_items_unit_snapshot_check",
+          "value": "length(\"medication_order_items\".\"unit_snapshot\") BETWEEN 1 AND 100"
+        },
+        "medication_order_items_quantity_check": {
+          "name": "medication_order_items_quantity_check",
+          "value": "\"medication_order_items\".\"quantity\" BETWEEN 1 AND 9999"
+        },
+        "medication_order_items_directions_th_check": {
+          "name": "medication_order_items_directions_th_check",
+          "value": "length(\"medication_order_items\".\"directions_th\") BETWEEN 1 AND 500"
+        }
+      }
+    },
+    "medications": {
+      "name": "medications",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "strength_text": {
+          "name": "strength_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "dosage_form_text": {
+          "name": "dosage_form_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "canonical_unit": {
+          "name": "canonical_unit",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "internal_barcode": {
+          "name": "internal_barcode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "active": {
+          "name": "active",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "medications_id_check": {
+          "name": "medications_id_check",
+          "value": "length(\"medications\".\"id\") = 12 AND \"medications\".\"id\" GLOB 'DEMO-MED-[0-9][0-9][0-9]'"
+        },
+        "medications_display_name_check": {
+          "name": "medications_display_name_check",
+          "value": "length(\"medications\".\"display_name\") BETWEEN 1 AND 200"
+        },
+        "medications_strength_text_check": {
+          "name": "medications_strength_text_check",
+          "value": "length(\"medications\".\"strength_text\") BETWEEN 1 AND 100"
+        },
+        "medications_dosage_form_text_check": {
+          "name": "medications_dosage_form_text_check",
+          "value": "length(\"medications\".\"dosage_form_text\") BETWEEN 1 AND 100"
+        },
+        "medications_canonical_unit_check": {
+          "name": "medications_canonical_unit_check",
+          "value": "length(\"medications\".\"canonical_unit\") BETWEEN 1 AND 100"
+        },
+        "medications_active_check": {
+          "name": "medications_active_check",
+          "value": "\"medications\".\"active\" IN (0, 1)"
+        },
+        "medications_revision_check": {
+          "name": "medications_revision_check",
+          "value": "\"medications\".\"revision\" >= 1"
+        }
+      }
+    },
+    "inventory_lots": {
+      "name": "inventory_lots",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "clinic_id": {
+          "name": "clinic_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_id": {
+          "name": "medication_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_revision": {
+          "name": "medication_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "display_name_snapshot": {
+          "name": "display_name_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "strength_snapshot": {
+          "name": "strength_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "dosage_form_snapshot": {
+          "name": "dosage_form_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "unit_snapshot": {
+          "name": "unit_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "lot_number": {
+          "name": "lot_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expiry_date": {
+          "name": "expiry_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "supplier_name": {
+          "name": "supplier_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'AVAILABLE'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "inventory_lots_clinic_medication_lot_unique": {
+          "name": "inventory_lots_clinic_medication_lot_unique",
+          "columns": [
+            "clinic_id",
+            "medication_id",
+            "lot_number"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "inventory_lots_clinic_id_clinic_config_id_fk": {
+          "name": "inventory_lots_clinic_id_clinic_config_id_fk",
+          "tableFrom": "inventory_lots",
+          "tableTo": "clinic_config",
+          "columnsFrom": [
+            "clinic_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "inventory_lots_medication_id_medications_id_fk": {
+          "name": "inventory_lots_medication_id_medications_id_fk",
+          "tableFrom": "inventory_lots",
+          "tableTo": "medications",
+          "columnsFrom": [
+            "medication_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "inventory_lots_created_by_staff_accounts_id_fk": {
+          "name": "inventory_lots_created_by_staff_accounts_id_fk",
+          "tableFrom": "inventory_lots",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "inventory_lots_medication_revision_check": {
+          "name": "inventory_lots_medication_revision_check",
+          "value": "\"inventory_lots\".\"medication_revision\" >= 1"
+        },
+        "inventory_lots_revision_check": {
+          "name": "inventory_lots_revision_check",
+          "value": "\"inventory_lots\".\"revision\" >= 1"
+        },
+        "inventory_lots_display_name_snapshot_check": {
+          "name": "inventory_lots_display_name_snapshot_check",
+          "value": "length(\"inventory_lots\".\"display_name_snapshot\") BETWEEN 1 AND 200"
+        },
+        "inventory_lots_strength_snapshot_check": {
+          "name": "inventory_lots_strength_snapshot_check",
+          "value": "length(\"inventory_lots\".\"strength_snapshot\") BETWEEN 1 AND 100"
+        },
+        "inventory_lots_dosage_form_snapshot_check": {
+          "name": "inventory_lots_dosage_form_snapshot_check",
+          "value": "length(\"inventory_lots\".\"dosage_form_snapshot\") BETWEEN 1 AND 100"
+        },
+        "inventory_lots_unit_snapshot_check": {
+          "name": "inventory_lots_unit_snapshot_check",
+          "value": "length(\"inventory_lots\".\"unit_snapshot\") BETWEEN 1 AND 100"
+        },
+        "inventory_lots_lot_number_check": {
+          "name": "inventory_lots_lot_number_check",
+          "value": "length(trim(\"inventory_lots\".\"lot_number\")) BETWEEN 1 AND 100"
+        },
+        "inventory_lots_expiry_date_check": {
+          "name": "inventory_lots_expiry_date_check",
+          "value": "\"inventory_lots\".\"expiry_date\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'"
+        },
+        "inventory_lots_supplier_name_check": {
+          "name": "inventory_lots_supplier_name_check",
+          "value": "length(trim(\"inventory_lots\".\"supplier_name\")) BETWEEN 1 AND 200"
+        },
+        "inventory_lots_status_check": {
+          "name": "inventory_lots_status_check",
+          "value": "\"inventory_lots\".\"status\" IN ('AVAILABLE', 'QUARANTINED')"
+        }
+      }
+    },
+    "inventory_receipt_lines": {
+      "name": "inventory_receipt_lines",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "receipt_id": {
+          "name": "receipt_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "lot_id": {
+          "name": "lot_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "unit_snapshot": {
+          "name": "unit_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "inventory_receipt_lines_receipt_id_inventory_receipts_id_fk": {
+          "name": "inventory_receipt_lines_receipt_id_inventory_receipts_id_fk",
+          "tableFrom": "inventory_receipt_lines",
+          "tableTo": "inventory_receipts",
+          "columnsFrom": [
+            "receipt_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "inventory_receipt_lines_lot_id_inventory_lots_id_fk": {
+          "name": "inventory_receipt_lines_lot_id_inventory_lots_id_fk",
+          "tableFrom": "inventory_receipt_lines",
+          "tableTo": "inventory_lots",
+          "columnsFrom": [
+            "lot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "inventory_receipt_lines_quantity_check": {
+          "name": "inventory_receipt_lines_quantity_check",
+          "value": "\"inventory_receipt_lines\".\"quantity\" BETWEEN 1 AND 999999"
+        },
+        "inventory_receipt_lines_unit_snapshot_check": {
+          "name": "inventory_receipt_lines_unit_snapshot_check",
+          "value": "length(\"inventory_receipt_lines\".\"unit_snapshot\") BETWEEN 1 AND 100"
+        }
+      }
+    },
+    "inventory_receipts": {
+      "name": "inventory_receipts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "clinic_id": {
+          "name": "clinic_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "supplier_name": {
+          "name": "supplier_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "received_at": {
+          "name": "received_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "received_by": {
+          "name": "received_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "inventory_receipts_clinic_id_clinic_config_id_fk": {
+          "name": "inventory_receipts_clinic_id_clinic_config_id_fk",
+          "tableFrom": "inventory_receipts",
+          "tableTo": "clinic_config",
+          "columnsFrom": [
+            "clinic_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "inventory_receipts_received_by_staff_accounts_id_fk": {
+          "name": "inventory_receipts_received_by_staff_accounts_id_fk",
+          "tableFrom": "inventory_receipts",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "received_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "inventory_receipts_supplier_name_check": {
+          "name": "inventory_receipts_supplier_name_check",
+          "value": "length(trim(\"inventory_receipts\".\"supplier_name\")) BETWEEN 1 AND 200"
+        },
+        "inventory_receipts_note_check": {
+          "name": "inventory_receipts_note_check",
+          "value": "length(\"inventory_receipts\".\"note\") <= 500"
+        }
+      }
+    },
+    "inventory_reservation_allocations": {
+      "name": "inventory_reservation_allocations",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reservation_id": {
+          "name": "reservation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_order_item_id": {
+          "name": "medication_order_item_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "lot_id": {
+          "name": "lot_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "position": {
+          "name": "position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_id": {
+          "name": "medication_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "lot_number_snapshot": {
+          "name": "lot_number_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expiry_date_snapshot": {
+          "name": "expiry_date_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "unit_snapshot": {
+          "name": "unit_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "allocated_at": {
+          "name": "allocated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "inventory_reservation_allocations_lot_index": {
+          "name": "inventory_reservation_allocations_lot_index",
+          "columns": [
+            "lot_id"
+          ],
+          "isUnique": false
+        },
+        "inventory_reservation_allocations_reservation_item_lot_unique": {
+          "name": "inventory_reservation_allocations_reservation_item_lot_unique",
+          "columns": [
+            "reservation_id",
+            "medication_order_item_id",
+            "lot_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "inventory_reservation_allocations_reservation_id_inventory_reservations_id_fk": {
+          "name": "inventory_reservation_allocations_reservation_id_inventory_reservations_id_fk",
+          "tableFrom": "inventory_reservation_allocations",
+          "tableTo": "inventory_reservations",
+          "columnsFrom": [
+            "reservation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "inventory_reservation_allocations_medication_order_item_id_medication_order_items_id_fk": {
+          "name": "inventory_reservation_allocations_medication_order_item_id_medication_order_items_id_fk",
+          "tableFrom": "inventory_reservation_allocations",
+          "tableTo": "medication_order_items",
+          "columnsFrom": [
+            "medication_order_item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "inventory_reservation_allocations_lot_id_inventory_lots_id_fk": {
+          "name": "inventory_reservation_allocations_lot_id_inventory_lots_id_fk",
+          "tableFrom": "inventory_reservation_allocations",
+          "tableTo": "inventory_lots",
+          "columnsFrom": [
+            "lot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "inventory_reservation_allocations_medication_id_medications_id_fk": {
+          "name": "inventory_reservation_allocations_medication_id_medications_id_fk",
+          "tableFrom": "inventory_reservation_allocations",
+          "tableTo": "medications",
+          "columnsFrom": [
+            "medication_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "inventory_reservation_allocations_position_check": {
+          "name": "inventory_reservation_allocations_position_check",
+          "value": "\"inventory_reservation_allocations\".\"position\" >= 0"
+        },
+        "inventory_reservation_allocations_quantity_check": {
+          "name": "inventory_reservation_allocations_quantity_check",
+          "value": "\"inventory_reservation_allocations\".\"quantity\" BETWEEN 1 AND 999999"
+        },
+        "inventory_reservation_allocations_medication_id_check": {
+          "name": "inventory_reservation_allocations_medication_id_check",
+          "value": "length(\"inventory_reservation_allocations\".\"medication_id\") > 0"
+        },
+        "inventory_reservation_allocations_lot_number_snapshot_check": {
+          "name": "inventory_reservation_allocations_lot_number_snapshot_check",
+          "value": "length(trim(\"inventory_reservation_allocations\".\"lot_number_snapshot\")) BETWEEN 1 AND 100"
+        },
+        "inventory_reservation_allocations_expiry_date_snapshot_check": {
+          "name": "inventory_reservation_allocations_expiry_date_snapshot_check",
+          "value": "\"inventory_reservation_allocations\".\"expiry_date_snapshot\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'"
+        },
+        "inventory_reservation_allocations_unit_snapshot_check": {
+          "name": "inventory_reservation_allocations_unit_snapshot_check",
+          "value": "length(\"inventory_reservation_allocations\".\"unit_snapshot\") BETWEEN 1 AND 100"
+        }
+      }
+    },
+    "inventory_reservations": {
+      "name": "inventory_reservations",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "clinic_id": {
+          "name": "clinic_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "visit_id": {
+          "name": "visit_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_decision_id": {
+          "name": "medication_decision_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_decision_version": {
+          "name": "medication_decision_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'ACTIVE'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "released_at": {
+          "name": "released_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "released_by": {
+          "name": "released_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "release_reason": {
+          "name": "release_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "consumed_at": {
+          "name": "consumed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "consumed_by": {
+          "name": "consumed_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "consumed_dispense_id": {
+          "name": "consumed_dispense_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "inventory_reservations_active_visit_decision_unique": {
+          "name": "inventory_reservations_active_visit_decision_unique",
+          "columns": [
+            "clinic_id",
+            "visit_id",
+            "medication_decision_id",
+            "medication_decision_version"
+          ],
+          "isUnique": true,
+          "where": "\"inventory_reservations\".\"status\" = 'ACTIVE'"
+        },
+        "inventory_reservations_visit_created_index": {
+          "name": "inventory_reservations_visit_created_index",
+          "columns": [
+            "clinic_id",
+            "visit_id",
+            "created_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "inventory_reservations_clinic_id_clinic_config_id_fk": {
+          "name": "inventory_reservations_clinic_id_clinic_config_id_fk",
+          "tableFrom": "inventory_reservations",
+          "tableTo": "clinic_config",
+          "columnsFrom": [
+            "clinic_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "inventory_reservations_visit_id_visits_id_fk": {
+          "name": "inventory_reservations_visit_id_visits_id_fk",
+          "tableFrom": "inventory_reservations",
+          "tableTo": "visits",
+          "columnsFrom": [
+            "visit_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "inventory_reservations_medication_decision_id_medication_decisions_id_fk": {
+          "name": "inventory_reservations_medication_decision_id_medication_decisions_id_fk",
+          "tableFrom": "inventory_reservations",
+          "tableTo": "medication_decisions",
+          "columnsFrom": [
+            "medication_decision_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "inventory_reservations_created_by_staff_accounts_id_fk": {
+          "name": "inventory_reservations_created_by_staff_accounts_id_fk",
+          "tableFrom": "inventory_reservations",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "inventory_reservations_released_by_staff_accounts_id_fk": {
+          "name": "inventory_reservations_released_by_staff_accounts_id_fk",
+          "tableFrom": "inventory_reservations",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "released_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "inventory_reservations_consumed_by_staff_accounts_id_fk": {
+          "name": "inventory_reservations_consumed_by_staff_accounts_id_fk",
+          "tableFrom": "inventory_reservations",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "consumed_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "inventory_reservations_decision_version_check": {
+          "name": "inventory_reservations_decision_version_check",
+          "value": "\"inventory_reservations\".\"medication_decision_version\" >= 1"
+        },
+        "inventory_reservations_status_check": {
+          "name": "inventory_reservations_status_check",
+          "value": "\"inventory_reservations\".\"status\" IN ('ACTIVE', 'RELEASED', 'CONSUMED')"
+        },
+        "inventory_reservations_release_fields_check": {
+          "name": "inventory_reservations_release_fields_check",
+          "value": "(\"inventory_reservations\".\"status\" <> 'RELEASED' AND \"inventory_reservations\".\"released_at\" IS NULL AND \"inventory_reservations\".\"released_by\" IS NULL AND \"inventory_reservations\".\"release_reason\" IS NULL)\n        OR (\"inventory_reservations\".\"status\" = 'RELEASED' AND \"inventory_reservations\".\"released_at\" IS NOT NULL AND \"inventory_reservations\".\"released_by\" IS NOT NULL AND length(trim(\"inventory_reservations\".\"release_reason\")) BETWEEN 1 AND 500)"
+        },
+        "inventory_reservations_release_reason_check": {
+          "name": "inventory_reservations_release_reason_check",
+          "value": "\"inventory_reservations\".\"release_reason\" IS NULL OR length(\"inventory_reservations\".\"release_reason\") <= 500"
+        }
+      }
+    },
+    "inventory_stock_movements": {
+      "name": "inventory_stock_movements",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "clinic_id": {
+          "name": "clinic_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "lot_id": {
+          "name": "lot_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "movement_type": {
+          "name": "movement_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "quantity_delta": {
+          "name": "quantity_delta",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_type": {
+          "name": "source_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_id": {
+          "name": "source_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "inventory_stock_movements_source_lot_unique": {
+          "name": "inventory_stock_movements_source_lot_unique",
+          "columns": [
+            "source_type",
+            "source_id",
+            "lot_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "inventory_stock_movements_clinic_id_clinic_config_id_fk": {
+          "name": "inventory_stock_movements_clinic_id_clinic_config_id_fk",
+          "tableFrom": "inventory_stock_movements",
+          "tableTo": "clinic_config",
+          "columnsFrom": [
+            "clinic_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "inventory_stock_movements_lot_id_inventory_lots_id_fk": {
+          "name": "inventory_stock_movements_lot_id_inventory_lots_id_fk",
+          "tableFrom": "inventory_stock_movements",
+          "tableTo": "inventory_lots",
+          "columnsFrom": [
+            "lot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "inventory_stock_movements_actor_id_staff_accounts_id_fk": {
+          "name": "inventory_stock_movements_actor_id_staff_accounts_id_fk",
+          "tableFrom": "inventory_stock_movements",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "actor_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "inventory_stock_movements_movement_type_check": {
+          "name": "inventory_stock_movements_movement_type_check",
+          "value": "\"inventory_stock_movements\".\"movement_type\" IN ('RECEIPT', 'DISPENSE')"
+        },
+        "inventory_stock_movements_quantity_delta_check": {
+          "name": "inventory_stock_movements_quantity_delta_check",
+          "value": "\"inventory_stock_movements\".\"quantity_delta\" BETWEEN -999999 AND 999999 AND \"inventory_stock_movements\".\"quantity_delta\" <> 0"
+        },
+        "inventory_stock_movements_source_type_check": {
+          "name": "inventory_stock_movements_source_type_check",
+          "value": "\"inventory_stock_movements\".\"source_type\" IN ('RECEIPT', 'DISPENSE')"
+        },
+        "inventory_stock_movements_shape_check": {
+          "name": "inventory_stock_movements_shape_check",
+          "value": "(\"inventory_stock_movements\".\"movement_type\" = 'RECEIPT' AND \"inventory_stock_movements\".\"source_type\" = 'RECEIPT' AND \"inventory_stock_movements\".\"quantity_delta\" > 0) OR (\"inventory_stock_movements\".\"movement_type\" = 'DISPENSE' AND \"inventory_stock_movements\".\"source_type\" = 'DISPENSE' AND \"inventory_stock_movements\".\"quantity_delta\" < 0)"
+        },
+        "inventory_stock_movements_reason_check": {
+          "name": "inventory_stock_movements_reason_check",
+          "value": "length(\"inventory_stock_movements\".\"reason\") <= 500"
+        }
+      }
+    },
+    "fulfillment_artifact_invalidations": {
+      "name": "fulfillment_artifact_invalidations",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "clinic_id": {
+          "name": "clinic_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "visit_id": {
+          "name": "visit_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "artifact_type": {
+          "name": "artifact_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "artifact_id": {
+          "name": "artifact_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "trigger": {
+          "name": "trigger",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "invalidated_at": {
+          "name": "invalidated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "invalidated_by": {
+          "name": "invalidated_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "replacement_decision_id": {
+          "name": "replacement_decision_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "fulfillment_artifact_invalidations_artifact_unique": {
+          "name": "fulfillment_artifact_invalidations_artifact_unique",
+          "columns": [
+            "artifact_type",
+            "artifact_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "fulfillment_artifact_invalidations_clinic_id_clinic_config_id_fk": {
+          "name": "fulfillment_artifact_invalidations_clinic_id_clinic_config_id_fk",
+          "tableFrom": "fulfillment_artifact_invalidations",
+          "tableTo": "clinic_config",
+          "columnsFrom": [
+            "clinic_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_artifact_invalidations_visit_id_visits_id_fk": {
+          "name": "fulfillment_artifact_invalidations_visit_id_visits_id_fk",
+          "tableFrom": "fulfillment_artifact_invalidations",
+          "tableTo": "visits",
+          "columnsFrom": [
+            "visit_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_artifact_invalidations_invalidated_by_staff_accounts_id_fk": {
+          "name": "fulfillment_artifact_invalidations_invalidated_by_staff_accounts_id_fk",
+          "tableFrom": "fulfillment_artifact_invalidations",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "invalidated_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_artifact_invalidations_replacement_decision_id_medication_decisions_id_fk": {
+          "name": "fulfillment_artifact_invalidations_replacement_decision_id_medication_decisions_id_fk",
+          "tableFrom": "fulfillment_artifact_invalidations",
+          "tableTo": "medication_decisions",
+          "columnsFrom": [
+            "replacement_decision_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "fulfillment_artifact_invalidations_type_check": {
+          "name": "fulfillment_artifact_invalidations_type_check",
+          "value": "\"fulfillment_artifact_invalidations\".\"artifact_type\" IN ('LABEL', 'PREPARATION', 'RELEASE')"
+        },
+        "fulfillment_artifact_invalidations_trigger_check": {
+          "name": "fulfillment_artifact_invalidations_trigger_check",
+          "value": "\"fulfillment_artifact_invalidations\".\"trigger\" IN ('ABANDON', 'REJECT', 'ALLERGY_REVISION', 'ORDER_REVISION')"
+        },
+        "fulfillment_artifact_invalidations_reason_check": {
+          "name": "fulfillment_artifact_invalidations_reason_check",
+          "value": "length(trim(\"fulfillment_artifact_invalidations\".\"reason\")) BETWEEN 1 AND 500"
+        },
+        "fulfillment_artifact_invalidations_replacement_check": {
+          "name": "fulfillment_artifact_invalidations_replacement_check",
+          "value": "(\"fulfillment_artifact_invalidations\".\"trigger\" = 'ORDER_REVISION' AND \"fulfillment_artifact_invalidations\".\"replacement_decision_id\" IS NOT NULL) OR (\"fulfillment_artifact_invalidations\".\"trigger\" <> 'ORDER_REVISION' AND \"fulfillment_artifact_invalidations\".\"replacement_decision_id\" IS NULL)"
+        }
+      }
+    },
+    "fulfillment_dispense_lines": {
+      "name": "fulfillment_dispense_lines",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "dispense_id": {
+          "name": "dispense_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reservation_allocation_id": {
+          "name": "reservation_allocation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_order_item_id": {
+          "name": "medication_order_item_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_id": {
+          "name": "medication_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "lot_id": {
+          "name": "lot_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_name_snapshot": {
+          "name": "display_name_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "strength_snapshot": {
+          "name": "strength_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "dosage_form_snapshot": {
+          "name": "dosage_form_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "unit_snapshot": {
+          "name": "unit_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "lot_number_snapshot": {
+          "name": "lot_number_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expiry_date_snapshot": {
+          "name": "expiry_date_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "directions_th_snapshot": {
+          "name": "directions_th_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "fulfillment_dispense_lines_reservation_allocation_id_unique": {
+          "name": "fulfillment_dispense_lines_reservation_allocation_id_unique",
+          "columns": [
+            "reservation_allocation_id"
+          ],
+          "isUnique": true
+        },
+        "fulfillment_dispense_lines_dispense_index": {
+          "name": "fulfillment_dispense_lines_dispense_index",
+          "columns": [
+            "dispense_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "fulfillment_dispense_lines_dispense_id_fulfillment_dispenses_id_fk": {
+          "name": "fulfillment_dispense_lines_dispense_id_fulfillment_dispenses_id_fk",
+          "tableFrom": "fulfillment_dispense_lines",
+          "tableTo": "fulfillment_dispenses",
+          "columnsFrom": [
+            "dispense_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_dispense_lines_reservation_allocation_id_inventory_reservation_allocations_id_fk": {
+          "name": "fulfillment_dispense_lines_reservation_allocation_id_inventory_reservation_allocations_id_fk",
+          "tableFrom": "fulfillment_dispense_lines",
+          "tableTo": "inventory_reservation_allocations",
+          "columnsFrom": [
+            "reservation_allocation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_dispense_lines_medication_order_item_id_medication_order_items_id_fk": {
+          "name": "fulfillment_dispense_lines_medication_order_item_id_medication_order_items_id_fk",
+          "tableFrom": "fulfillment_dispense_lines",
+          "tableTo": "medication_order_items",
+          "columnsFrom": [
+            "medication_order_item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_dispense_lines_medication_id_medications_id_fk": {
+          "name": "fulfillment_dispense_lines_medication_id_medications_id_fk",
+          "tableFrom": "fulfillment_dispense_lines",
+          "tableTo": "medications",
+          "columnsFrom": [
+            "medication_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_dispense_lines_lot_id_inventory_lots_id_fk": {
+          "name": "fulfillment_dispense_lines_lot_id_inventory_lots_id_fk",
+          "tableFrom": "fulfillment_dispense_lines",
+          "tableTo": "inventory_lots",
+          "columnsFrom": [
+            "lot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "fulfillment_dispense_lines_quantity_check": {
+          "name": "fulfillment_dispense_lines_quantity_check",
+          "value": "\"fulfillment_dispense_lines\".\"quantity\" BETWEEN 1 AND 999999"
+        },
+        "fulfillment_dispense_lines_display_name_snapshot_check": {
+          "name": "fulfillment_dispense_lines_display_name_snapshot_check",
+          "value": "length(\"fulfillment_dispense_lines\".\"display_name_snapshot\") BETWEEN 1 AND 200"
+        },
+        "fulfillment_dispense_lines_strength_snapshot_check": {
+          "name": "fulfillment_dispense_lines_strength_snapshot_check",
+          "value": "length(\"fulfillment_dispense_lines\".\"strength_snapshot\") BETWEEN 1 AND 100"
+        },
+        "fulfillment_dispense_lines_dosage_form_snapshot_check": {
+          "name": "fulfillment_dispense_lines_dosage_form_snapshot_check",
+          "value": "length(\"fulfillment_dispense_lines\".\"dosage_form_snapshot\") BETWEEN 1 AND 100"
+        },
+        "fulfillment_dispense_lines_unit_snapshot_check": {
+          "name": "fulfillment_dispense_lines_unit_snapshot_check",
+          "value": "length(\"fulfillment_dispense_lines\".\"unit_snapshot\") BETWEEN 1 AND 100"
+        },
+        "fulfillment_dispense_lines_lot_number_snapshot_check": {
+          "name": "fulfillment_dispense_lines_lot_number_snapshot_check",
+          "value": "length(trim(\"fulfillment_dispense_lines\".\"lot_number_snapshot\")) BETWEEN 1 AND 100"
+        },
+        "fulfillment_dispense_lines_expiry_date_snapshot_check": {
+          "name": "fulfillment_dispense_lines_expiry_date_snapshot_check",
+          "value": "\"fulfillment_dispense_lines\".\"expiry_date_snapshot\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'"
+        },
+        "fulfillment_dispense_lines_directions_snapshot_check": {
+          "name": "fulfillment_dispense_lines_directions_snapshot_check",
+          "value": "length(\"fulfillment_dispense_lines\".\"directions_th_snapshot\") BETWEEN 1 AND 500"
+        }
+      }
+    },
+    "fulfillment_dispenses": {
+      "name": "fulfillment_dispenses",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "clinic_id": {
+          "name": "clinic_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "visit_id": {
+          "name": "visit_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_decision_id": {
+          "name": "medication_decision_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_decision_version": {
+          "name": "medication_decision_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "label_version_id": {
+          "name": "label_version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "preparation_id": {
+          "name": "preparation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "release_id": {
+          "name": "release_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reservation_id": {
+          "name": "reservation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "handed_off_at": {
+          "name": "handed_off_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "handed_off_by": {
+          "name": "handed_off_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "fulfillment_dispenses_visit_id_unique": {
+          "name": "fulfillment_dispenses_visit_id_unique",
+          "columns": [
+            "visit_id"
+          ],
+          "isUnique": true
+        },
+        "fulfillment_dispenses_release_id_unique": {
+          "name": "fulfillment_dispenses_release_id_unique",
+          "columns": [
+            "release_id"
+          ],
+          "isUnique": true
+        },
+        "fulfillment_dispenses_reservation_id_unique": {
+          "name": "fulfillment_dispenses_reservation_id_unique",
+          "columns": [
+            "reservation_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "fulfillment_dispenses_clinic_id_clinic_config_id_fk": {
+          "name": "fulfillment_dispenses_clinic_id_clinic_config_id_fk",
+          "tableFrom": "fulfillment_dispenses",
+          "tableTo": "clinic_config",
+          "columnsFrom": [
+            "clinic_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_dispenses_visit_id_visits_id_fk": {
+          "name": "fulfillment_dispenses_visit_id_visits_id_fk",
+          "tableFrom": "fulfillment_dispenses",
+          "tableTo": "visits",
+          "columnsFrom": [
+            "visit_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_dispenses_medication_decision_id_medication_decisions_id_fk": {
+          "name": "fulfillment_dispenses_medication_decision_id_medication_decisions_id_fk",
+          "tableFrom": "fulfillment_dispenses",
+          "tableTo": "medication_decisions",
+          "columnsFrom": [
+            "medication_decision_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_dispenses_label_version_id_fulfillment_label_versions_id_fk": {
+          "name": "fulfillment_dispenses_label_version_id_fulfillment_label_versions_id_fk",
+          "tableFrom": "fulfillment_dispenses",
+          "tableTo": "fulfillment_label_versions",
+          "columnsFrom": [
+            "label_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_dispenses_preparation_id_fulfillment_preparations_id_fk": {
+          "name": "fulfillment_dispenses_preparation_id_fulfillment_preparations_id_fk",
+          "tableFrom": "fulfillment_dispenses",
+          "tableTo": "fulfillment_preparations",
+          "columnsFrom": [
+            "preparation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_dispenses_release_id_fulfillment_releases_id_fk": {
+          "name": "fulfillment_dispenses_release_id_fulfillment_releases_id_fk",
+          "tableFrom": "fulfillment_dispenses",
+          "tableTo": "fulfillment_releases",
+          "columnsFrom": [
+            "release_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_dispenses_reservation_id_inventory_reservations_id_fk": {
+          "name": "fulfillment_dispenses_reservation_id_inventory_reservations_id_fk",
+          "tableFrom": "fulfillment_dispenses",
+          "tableTo": "inventory_reservations",
+          "columnsFrom": [
+            "reservation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_dispenses_handed_off_by_staff_accounts_id_fk": {
+          "name": "fulfillment_dispenses_handed_off_by_staff_accounts_id_fk",
+          "tableFrom": "fulfillment_dispenses",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "handed_off_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "fulfillment_dispenses_decision_version_check": {
+          "name": "fulfillment_dispenses_decision_version_check",
+          "value": "\"fulfillment_dispenses\".\"medication_decision_version\" >= 1"
+        }
+      }
+    },
+    "fulfillment_label_items": {
+      "name": "fulfillment_label_items",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "label_version_id": {
+          "name": "label_version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_order_item_id": {
+          "name": "medication_order_item_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "position": {
+          "name": "position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_id": {
+          "name": "medication_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_revision": {
+          "name": "medication_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_name_snapshot": {
+          "name": "display_name_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "strength_snapshot": {
+          "name": "strength_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "dosage_form_snapshot": {
+          "name": "dosage_form_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "unit_snapshot": {
+          "name": "unit_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "directions_th_snapshot": {
+          "name": "directions_th_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "internal_barcode_snapshot": {
+          "name": "internal_barcode_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "fulfillment_label_items_label_position_unique": {
+          "name": "fulfillment_label_items_label_position_unique",
+          "columns": [
+            "label_version_id",
+            "position"
+          ],
+          "isUnique": true
+        },
+        "fulfillment_label_items_order_item_unique": {
+          "name": "fulfillment_label_items_order_item_unique",
+          "columns": [
+            "medication_order_item_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "fulfillment_label_items_label_version_id_fulfillment_label_versions_id_fk": {
+          "name": "fulfillment_label_items_label_version_id_fulfillment_label_versions_id_fk",
+          "tableFrom": "fulfillment_label_items",
+          "tableTo": "fulfillment_label_versions",
+          "columnsFrom": [
+            "label_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_label_items_medication_order_item_id_medication_order_items_id_fk": {
+          "name": "fulfillment_label_items_medication_order_item_id_medication_order_items_id_fk",
+          "tableFrom": "fulfillment_label_items",
+          "tableTo": "medication_order_items",
+          "columnsFrom": [
+            "medication_order_item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_label_items_medication_id_medications_id_fk": {
+          "name": "fulfillment_label_items_medication_id_medications_id_fk",
+          "tableFrom": "fulfillment_label_items",
+          "tableTo": "medications",
+          "columnsFrom": [
+            "medication_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "fulfillment_label_items_position_check": {
+          "name": "fulfillment_label_items_position_check",
+          "value": "\"fulfillment_label_items\".\"position\" >= 0"
+        },
+        "fulfillment_label_items_medication_revision_check": {
+          "name": "fulfillment_label_items_medication_revision_check",
+          "value": "\"fulfillment_label_items\".\"medication_revision\" >= 1"
+        },
+        "fulfillment_label_items_quantity_check": {
+          "name": "fulfillment_label_items_quantity_check",
+          "value": "\"fulfillment_label_items\".\"quantity\" BETWEEN 1 AND 9999"
+        },
+        "fulfillment_label_items_display_name_snapshot_check": {
+          "name": "fulfillment_label_items_display_name_snapshot_check",
+          "value": "length(\"fulfillment_label_items\".\"display_name_snapshot\") BETWEEN 1 AND 200"
+        },
+        "fulfillment_label_items_strength_snapshot_check": {
+          "name": "fulfillment_label_items_strength_snapshot_check",
+          "value": "length(\"fulfillment_label_items\".\"strength_snapshot\") BETWEEN 1 AND 100"
+        },
+        "fulfillment_label_items_dosage_form_snapshot_check": {
+          "name": "fulfillment_label_items_dosage_form_snapshot_check",
+          "value": "length(\"fulfillment_label_items\".\"dosage_form_snapshot\") BETWEEN 1 AND 100"
+        },
+        "fulfillment_label_items_unit_snapshot_check": {
+          "name": "fulfillment_label_items_unit_snapshot_check",
+          "value": "length(\"fulfillment_label_items\".\"unit_snapshot\") BETWEEN 1 AND 100"
+        },
+        "fulfillment_label_items_directions_snapshot_check": {
+          "name": "fulfillment_label_items_directions_snapshot_check",
+          "value": "length(\"fulfillment_label_items\".\"directions_th_snapshot\") BETWEEN 1 AND 500"
+        },
+        "fulfillment_label_items_barcode_snapshot_check": {
+          "name": "fulfillment_label_items_barcode_snapshot_check",
+          "value": "length(\"fulfillment_label_items\".\"internal_barcode_snapshot\") BETWEEN 1 AND 64 AND \"fulfillment_label_items\".\"internal_barcode_snapshot\" NOT GLOB '*[^!-~]*'"
+        }
+      }
+    },
+    "fulfillment_label_print_events": {
+      "name": "fulfillment_label_print_events",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "label_version_id": {
+          "name": "label_version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "sequence": {
+          "name": "sequence",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "requested_at": {
+          "name": "requested_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "requested_by": {
+          "name": "requested_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "renderer_version": {
+          "name": "renderer_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "media_size_snapshot": {
+          "name": "media_size_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "fulfillment_label_print_events_label_sequence_unique": {
+          "name": "fulfillment_label_print_events_label_sequence_unique",
+          "columns": [
+            "label_version_id",
+            "sequence"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "fulfillment_label_print_events_label_version_id_fulfillment_label_versions_id_fk": {
+          "name": "fulfillment_label_print_events_label_version_id_fulfillment_label_versions_id_fk",
+          "tableFrom": "fulfillment_label_print_events",
+          "tableTo": "fulfillment_label_versions",
+          "columnsFrom": [
+            "label_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_label_print_events_requested_by_staff_accounts_id_fk": {
+          "name": "fulfillment_label_print_events_requested_by_staff_accounts_id_fk",
+          "tableFrom": "fulfillment_label_print_events",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "requested_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "fulfillment_label_print_events_sequence_check": {
+          "name": "fulfillment_label_print_events_sequence_check",
+          "value": "\"fulfillment_label_print_events\".\"sequence\" >= 1"
+        },
+        "fulfillment_label_print_events_renderer_version_check": {
+          "name": "fulfillment_label_print_events_renderer_version_check",
+          "value": "length(\"fulfillment_label_print_events\".\"renderer_version\") BETWEEN 1 AND 100"
+        },
+        "fulfillment_label_print_events_media_size_check": {
+          "name": "fulfillment_label_print_events_media_size_check",
+          "value": "\"fulfillment_label_print_events\".\"media_size_snapshot\" = '80x100mm'"
+        }
+      }
+    },
+    "fulfillment_label_versions": {
+      "name": "fulfillment_label_versions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "clinic_id": {
+          "name": "clinic_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "visit_id": {
+          "name": "visit_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_decision_id": {
+          "name": "medication_decision_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_decision_version": {
+          "name": "medication_decision_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "patient_hn_snapshot": {
+          "name": "patient_hn_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "patient_display_name_snapshot": {
+          "name": "patient_display_name_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "clinic_name_snapshot": {
+          "name": "clinic_name_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "fulfillment_label_versions_decision_unique": {
+          "name": "fulfillment_label_versions_decision_unique",
+          "columns": [
+            "medication_decision_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "fulfillment_label_versions_clinic_id_clinic_config_id_fk": {
+          "name": "fulfillment_label_versions_clinic_id_clinic_config_id_fk",
+          "tableFrom": "fulfillment_label_versions",
+          "tableTo": "clinic_config",
+          "columnsFrom": [
+            "clinic_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_label_versions_visit_id_visits_id_fk": {
+          "name": "fulfillment_label_versions_visit_id_visits_id_fk",
+          "tableFrom": "fulfillment_label_versions",
+          "tableTo": "visits",
+          "columnsFrom": [
+            "visit_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_label_versions_medication_decision_id_medication_decisions_id_fk": {
+          "name": "fulfillment_label_versions_medication_decision_id_medication_decisions_id_fk",
+          "tableFrom": "fulfillment_label_versions",
+          "tableTo": "medication_decisions",
+          "columnsFrom": [
+            "medication_decision_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_label_versions_created_by_staff_accounts_id_fk": {
+          "name": "fulfillment_label_versions_created_by_staff_accounts_id_fk",
+          "tableFrom": "fulfillment_label_versions",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "fulfillment_label_versions_decision_version_check": {
+          "name": "fulfillment_label_versions_decision_version_check",
+          "value": "\"fulfillment_label_versions\".\"medication_decision_version\" >= 1"
+        },
+        "fulfillment_label_versions_version_check": {
+          "name": "fulfillment_label_versions_version_check",
+          "value": "\"fulfillment_label_versions\".\"version\" >= 1"
+        },
+        "fulfillment_label_versions_patient_hn_snapshot_check": {
+          "name": "fulfillment_label_versions_patient_hn_snapshot_check",
+          "value": "length(\"fulfillment_label_versions\".\"patient_hn_snapshot\") BETWEEN 1 AND 100"
+        },
+        "fulfillment_label_versions_patient_display_name_snapshot_check": {
+          "name": "fulfillment_label_versions_patient_display_name_snapshot_check",
+          "value": "length(\"fulfillment_label_versions\".\"patient_display_name_snapshot\") BETWEEN 1 AND 200"
+        },
+        "fulfillment_label_versions_clinic_name_snapshot_check": {
+          "name": "fulfillment_label_versions_clinic_name_snapshot_check",
+          "value": "length(\"fulfillment_label_versions\".\"clinic_name_snapshot\") BETWEEN 1 AND 200"
+        }
+      }
+    },
+    "fulfillment_preparation_confirmations": {
+      "name": "fulfillment_preparation_confirmations",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "preparation_id": {
+          "name": "preparation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reservation_allocation_id": {
+          "name": "reservation_allocation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_order_item_id": {
+          "name": "medication_order_item_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_id": {
+          "name": "medication_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "lot_id": {
+          "name": "lot_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "method": {
+          "name": "method",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "barcode_snapshot": {
+          "name": "barcode_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "manual_reason": {
+          "name": "manual_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "confirmed_at": {
+          "name": "confirmed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "confirmed_by": {
+          "name": "confirmed_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "fulfillment_preparation_confirmations_preparation_allocation_unique": {
+          "name": "fulfillment_preparation_confirmations_preparation_allocation_unique",
+          "columns": [
+            "preparation_id",
+            "reservation_allocation_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "fulfillment_preparation_confirmations_preparation_id_fulfillment_preparations_id_fk": {
+          "name": "fulfillment_preparation_confirmations_preparation_id_fulfillment_preparations_id_fk",
+          "tableFrom": "fulfillment_preparation_confirmations",
+          "tableTo": "fulfillment_preparations",
+          "columnsFrom": [
+            "preparation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_preparation_confirmations_reservation_allocation_id_inventory_reservation_allocations_id_fk": {
+          "name": "fulfillment_preparation_confirmations_reservation_allocation_id_inventory_reservation_allocations_id_fk",
+          "tableFrom": "fulfillment_preparation_confirmations",
+          "tableTo": "inventory_reservation_allocations",
+          "columnsFrom": [
+            "reservation_allocation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_preparation_confirmations_medication_order_item_id_medication_order_items_id_fk": {
+          "name": "fulfillment_preparation_confirmations_medication_order_item_id_medication_order_items_id_fk",
+          "tableFrom": "fulfillment_preparation_confirmations",
+          "tableTo": "medication_order_items",
+          "columnsFrom": [
+            "medication_order_item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_preparation_confirmations_medication_id_medications_id_fk": {
+          "name": "fulfillment_preparation_confirmations_medication_id_medications_id_fk",
+          "tableFrom": "fulfillment_preparation_confirmations",
+          "tableTo": "medications",
+          "columnsFrom": [
+            "medication_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_preparation_confirmations_lot_id_inventory_lots_id_fk": {
+          "name": "fulfillment_preparation_confirmations_lot_id_inventory_lots_id_fk",
+          "tableFrom": "fulfillment_preparation_confirmations",
+          "tableTo": "inventory_lots",
+          "columnsFrom": [
+            "lot_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_preparation_confirmations_confirmed_by_staff_accounts_id_fk": {
+          "name": "fulfillment_preparation_confirmations_confirmed_by_staff_accounts_id_fk",
+          "tableFrom": "fulfillment_preparation_confirmations",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "confirmed_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "fulfillment_preparation_confirmations_quantity_check": {
+          "name": "fulfillment_preparation_confirmations_quantity_check",
+          "value": "\"fulfillment_preparation_confirmations\".\"quantity\" BETWEEN 1 AND 999999"
+        },
+        "fulfillment_preparation_confirmations_method_check": {
+          "name": "fulfillment_preparation_confirmations_method_check",
+          "value": "\"fulfillment_preparation_confirmations\".\"method\" IN ('BARCODE', 'MANUAL')"
+        },
+        "fulfillment_preparation_confirmations_evidence_check": {
+          "name": "fulfillment_preparation_confirmations_evidence_check",
+          "value": "(\"fulfillment_preparation_confirmations\".\"method\" = 'BARCODE' AND \"fulfillment_preparation_confirmations\".\"barcode_snapshot\" IS NOT NULL AND length(\"fulfillment_preparation_confirmations\".\"barcode_snapshot\") BETWEEN 1 AND 64 AND \"fulfillment_preparation_confirmations\".\"barcode_snapshot\" NOT GLOB '*[^!-~]*' AND \"fulfillment_preparation_confirmations\".\"manual_reason\" IS NULL) OR (\"fulfillment_preparation_confirmations\".\"method\" = 'MANUAL' AND \"fulfillment_preparation_confirmations\".\"barcode_snapshot\" IS NULL AND \"fulfillment_preparation_confirmations\".\"manual_reason\" IS NOT NULL AND length(trim(\"fulfillment_preparation_confirmations\".\"manual_reason\")) BETWEEN 1 AND 500)"
+        }
+      }
+    },
+    "fulfillment_preparations": {
+      "name": "fulfillment_preparations",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "clinic_id": {
+          "name": "clinic_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "visit_id": {
+          "name": "visit_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reservation_id": {
+          "name": "reservation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_decision_id": {
+          "name": "medication_decision_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_decision_version": {
+          "name": "medication_decision_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "label_version_id": {
+          "name": "label_version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'ACTIVE'"
+        },
+        "minimum_print_sequence": {
+          "name": "minimum_print_sequence",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "completed_by": {
+          "name": "completed_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "fulfillment_preparations_reservation_id_unique": {
+          "name": "fulfillment_preparations_reservation_id_unique",
+          "columns": [
+            "reservation_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "fulfillment_preparations_clinic_id_clinic_config_id_fk": {
+          "name": "fulfillment_preparations_clinic_id_clinic_config_id_fk",
+          "tableFrom": "fulfillment_preparations",
+          "tableTo": "clinic_config",
+          "columnsFrom": [
+            "clinic_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_preparations_visit_id_visits_id_fk": {
+          "name": "fulfillment_preparations_visit_id_visits_id_fk",
+          "tableFrom": "fulfillment_preparations",
+          "tableTo": "visits",
+          "columnsFrom": [
+            "visit_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_preparations_reservation_id_inventory_reservations_id_fk": {
+          "name": "fulfillment_preparations_reservation_id_inventory_reservations_id_fk",
+          "tableFrom": "fulfillment_preparations",
+          "tableTo": "inventory_reservations",
+          "columnsFrom": [
+            "reservation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_preparations_medication_decision_id_medication_decisions_id_fk": {
+          "name": "fulfillment_preparations_medication_decision_id_medication_decisions_id_fk",
+          "tableFrom": "fulfillment_preparations",
+          "tableTo": "medication_decisions",
+          "columnsFrom": [
+            "medication_decision_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_preparations_label_version_id_fulfillment_label_versions_id_fk": {
+          "name": "fulfillment_preparations_label_version_id_fulfillment_label_versions_id_fk",
+          "tableFrom": "fulfillment_preparations",
+          "tableTo": "fulfillment_label_versions",
+          "columnsFrom": [
+            "label_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_preparations_created_by_staff_accounts_id_fk": {
+          "name": "fulfillment_preparations_created_by_staff_accounts_id_fk",
+          "tableFrom": "fulfillment_preparations",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_preparations_completed_by_staff_accounts_id_fk": {
+          "name": "fulfillment_preparations_completed_by_staff_accounts_id_fk",
+          "tableFrom": "fulfillment_preparations",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "completed_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "fulfillment_preparations_decision_version_check": {
+          "name": "fulfillment_preparations_decision_version_check",
+          "value": "\"fulfillment_preparations\".\"medication_decision_version\" >= 1"
+        },
+        "fulfillment_preparations_revision_check": {
+          "name": "fulfillment_preparations_revision_check",
+          "value": "\"fulfillment_preparations\".\"revision\" >= 1"
+        },
+        "fulfillment_preparations_minimum_print_sequence_check": {
+          "name": "fulfillment_preparations_minimum_print_sequence_check",
+          "value": "\"fulfillment_preparations\".\"minimum_print_sequence\" >= 1"
+        },
+        "fulfillment_preparations_status_check": {
+          "name": "fulfillment_preparations_status_check",
+          "value": "\"fulfillment_preparations\".\"status\" IN ('ACTIVE', 'COMPLETED')"
+        },
+        "fulfillment_preparations_completion_fields_check": {
+          "name": "fulfillment_preparations_completion_fields_check",
+          "value": "(\"fulfillment_preparations\".\"status\" = 'ACTIVE' AND \"fulfillment_preparations\".\"completed_at\" IS NULL AND \"fulfillment_preparations\".\"completed_by\" IS NULL) OR (\"fulfillment_preparations\".\"status\" = 'COMPLETED' AND \"fulfillment_preparations\".\"completed_at\" IS NOT NULL AND \"fulfillment_preparations\".\"completed_by\" IS NOT NULL)"
+        }
+      }
+    },
+    "fulfillment_rejections": {
+      "name": "fulfillment_rejections",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "clinic_id": {
+          "name": "clinic_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "visit_id": {
+          "name": "visit_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "preparation_id": {
+          "name": "preparation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reservation_id": {
+          "name": "reservation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "label_version_id": {
+          "name": "label_version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "print_sequence_at_rejection": {
+          "name": "print_sequence_at_rejection",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "rejected_at": {
+          "name": "rejected_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "rejected_by": {
+          "name": "rejected_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "fulfillment_rejections_preparation_id_unique": {
+          "name": "fulfillment_rejections_preparation_id_unique",
+          "columns": [
+            "preparation_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "fulfillment_rejections_clinic_id_clinic_config_id_fk": {
+          "name": "fulfillment_rejections_clinic_id_clinic_config_id_fk",
+          "tableFrom": "fulfillment_rejections",
+          "tableTo": "clinic_config",
+          "columnsFrom": [
+            "clinic_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_rejections_visit_id_visits_id_fk": {
+          "name": "fulfillment_rejections_visit_id_visits_id_fk",
+          "tableFrom": "fulfillment_rejections",
+          "tableTo": "visits",
+          "columnsFrom": [
+            "visit_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_rejections_preparation_id_fulfillment_preparations_id_fk": {
+          "name": "fulfillment_rejections_preparation_id_fulfillment_preparations_id_fk",
+          "tableFrom": "fulfillment_rejections",
+          "tableTo": "fulfillment_preparations",
+          "columnsFrom": [
+            "preparation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_rejections_reservation_id_inventory_reservations_id_fk": {
+          "name": "fulfillment_rejections_reservation_id_inventory_reservations_id_fk",
+          "tableFrom": "fulfillment_rejections",
+          "tableTo": "inventory_reservations",
+          "columnsFrom": [
+            "reservation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_rejections_label_version_id_fulfillment_label_versions_id_fk": {
+          "name": "fulfillment_rejections_label_version_id_fulfillment_label_versions_id_fk",
+          "tableFrom": "fulfillment_rejections",
+          "tableTo": "fulfillment_label_versions",
+          "columnsFrom": [
+            "label_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_rejections_rejected_by_staff_accounts_id_fk": {
+          "name": "fulfillment_rejections_rejected_by_staff_accounts_id_fk",
+          "tableFrom": "fulfillment_rejections",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "rejected_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "fulfillment_rejections_print_sequence_check": {
+          "name": "fulfillment_rejections_print_sequence_check",
+          "value": "\"fulfillment_rejections\".\"print_sequence_at_rejection\" >= 1"
+        },
+        "fulfillment_rejections_reason_check": {
+          "name": "fulfillment_rejections_reason_check",
+          "value": "length(trim(\"fulfillment_rejections\".\"reason\")) BETWEEN 1 AND 500"
+        }
+      }
+    },
+    "fulfillment_releases": {
+      "name": "fulfillment_releases",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "clinic_id": {
+          "name": "clinic_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "visit_id": {
+          "name": "visit_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_decision_id": {
+          "name": "medication_decision_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "medication_decision_version": {
+          "name": "medication_decision_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "label_version_id": {
+          "name": "label_version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "label_print_event_id": {
+          "name": "label_print_event_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "preparation_id": {
+          "name": "preparation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "preparation_revision": {
+          "name": "preparation_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reservation_id": {
+          "name": "reservation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "released_at": {
+          "name": "released_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "released_by": {
+          "name": "released_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "fulfillment_releases_reservation_id_unique": {
+          "name": "fulfillment_releases_reservation_id_unique",
+          "columns": [
+            "reservation_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "fulfillment_releases_clinic_id_clinic_config_id_fk": {
+          "name": "fulfillment_releases_clinic_id_clinic_config_id_fk",
+          "tableFrom": "fulfillment_releases",
+          "tableTo": "clinic_config",
+          "columnsFrom": [
+            "clinic_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_releases_visit_id_visits_id_fk": {
+          "name": "fulfillment_releases_visit_id_visits_id_fk",
+          "tableFrom": "fulfillment_releases",
+          "tableTo": "visits",
+          "columnsFrom": [
+            "visit_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_releases_medication_decision_id_medication_decisions_id_fk": {
+          "name": "fulfillment_releases_medication_decision_id_medication_decisions_id_fk",
+          "tableFrom": "fulfillment_releases",
+          "tableTo": "medication_decisions",
+          "columnsFrom": [
+            "medication_decision_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_releases_label_version_id_fulfillment_label_versions_id_fk": {
+          "name": "fulfillment_releases_label_version_id_fulfillment_label_versions_id_fk",
+          "tableFrom": "fulfillment_releases",
+          "tableTo": "fulfillment_label_versions",
+          "columnsFrom": [
+            "label_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_releases_label_print_event_id_fulfillment_label_print_events_id_fk": {
+          "name": "fulfillment_releases_label_print_event_id_fulfillment_label_print_events_id_fk",
+          "tableFrom": "fulfillment_releases",
+          "tableTo": "fulfillment_label_print_events",
+          "columnsFrom": [
+            "label_print_event_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_releases_preparation_id_fulfillment_preparations_id_fk": {
+          "name": "fulfillment_releases_preparation_id_fulfillment_preparations_id_fk",
+          "tableFrom": "fulfillment_releases",
+          "tableTo": "fulfillment_preparations",
+          "columnsFrom": [
+            "preparation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_releases_reservation_id_inventory_reservations_id_fk": {
+          "name": "fulfillment_releases_reservation_id_inventory_reservations_id_fk",
+          "tableFrom": "fulfillment_releases",
+          "tableTo": "inventory_reservations",
+          "columnsFrom": [
+            "reservation_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "fulfillment_releases_released_by_staff_accounts_id_fk": {
+          "name": "fulfillment_releases_released_by_staff_accounts_id_fk",
+          "tableFrom": "fulfillment_releases",
+          "tableTo": "staff_accounts",
+          "columnsFrom": [
+            "released_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "fulfillment_releases_decision_version_check": {
+          "name": "fulfillment_releases_decision_version_check",
+          "value": "\"fulfillment_releases\".\"medication_decision_version\" >= 1"
+        },
+        "fulfillment_releases_preparation_revision_check": {
+          "name": "fulfillment_releases_preparation_revision_check",
+          "value": "\"fulfillment_releases\".\"preparation_revision\" >= 1"
+        }
+      }
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

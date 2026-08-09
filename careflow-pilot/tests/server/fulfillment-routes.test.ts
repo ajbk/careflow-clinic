@@ -279,6 +279,19 @@ describe("authenticated fulfillment reservation routes", () => {
       payload: { expectedRevisions: { patient: 1, visit: 4 }, payload: { visitId: "visit-route-001", state: "PRESENT", items: [{ substance: "ยาทดสอบ", reaction: "ผื่น", severity: "MILD", note: null }], sourceText: "ประวัติแพ้", reason: "ทบทวนความปลอดภัย" } },
     });
     expect(allergy.statusCode).toBe(201);
+    const invalidationAudits = test.database.db.select().from(auditEvents).all().filter((event) => event.action === "fulfillment.artifacts-invalidated");
+    expect(invalidationAudits.length).toBeGreaterThan(0);
+    for (const event of invalidationAudits) {
+      expect(JSON.parse(event.metadataJson)).toMatchObject({
+        visitId: "visit-route-001",
+        artifactId: expect.any(String),
+        decisionId: "decision-route-001",
+        decisionVersion: 1,
+        previousStatus: "PREPARING",
+        nextStatus: "AWAITING_ORDER_REVISION",
+        allocations: [{ lotId: "lot-route-001", lotNumberSnapshot: "LOT-ROUTE-001", quantity: 3, unit: "เม็ด" }],
+      });
+    }
     const counts = () => ({ reservations: countRows(test, "SELECT count(*) AS count FROM inventory_reservations"), invalidations: countRows(test, "SELECT count(*) AS count FROM fulfillment_artifact_invalidations"), visits: countRows(test, "SELECT count(*) AS count FROM visits WHERE status='AWAITING_ORDER_REVISION' AND revision=5") });
     const before = counts();
     const print = await test.app.inject({
@@ -314,6 +327,11 @@ describe("authenticated fulfillment reservation routes", () => {
     const complete = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/complete-preparation", headers: { cookie: test.assistantCookie, "idempotency-key": "release-complete" }, payload: { expectedRevisions: { visit: 4, preparation: preparation.revision }, payload: { preparationId: preparation.id } } });
     expect(complete.statusCode).toBe(201);
     const releaseBody = { expectedRevisions: { visit: 5, preparation: 2 }, payload: { decisionId: started.medicationDecision.id, decisionVersion: started.medicationDecision.version, labelVersionId: started.label.id, labelPrintEventId: printedData.preparation.latestPrintEventId, preparationId: preparation.id, reservationId: started.reservation.id } };
+    for (const [field, value] of Object.entries({ decisionId: "wrong-decision", decisionVersion: 2, labelVersionId: "wrong-label", labelPrintEventId: "wrong-print", preparationId: "wrong-preparation", reservationId: "wrong-reservation" })) {
+      const mismatch = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/release", headers: { cookie: test.doctorCookie, "idempotency-key": `release-mismatch-${field}` }, payload: { ...releaseBody, payload: { ...releaseBody.payload, [field]: value } } });
+      expect(mismatch.statusCode).toBe(409);
+    }
+    expect(countRows(test, "SELECT count(*) AS count FROM fulfillment_releases")).toBe(0);
     const assistant = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/release", headers: { cookie: test.assistantCookie, "idempotency-key": "release-assistant" }, payload: releaseBody });
     expect(assistant.statusCode).toBe(403);
     const doctor = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/release", headers: { cookie: test.doctorCookie, "idempotency-key": "release-doctor" }, payload: releaseBody });
@@ -325,10 +343,10 @@ describe("authenticated fulfillment reservation routes", () => {
     const doctorCollision = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/release", headers: { cookie: test.doctorCookie, "idempotency-key": "release-doctor" }, payload: { ...releaseBody, payload: { ...releaseBody.payload, decisionVersion: 2 } } });
     expect(doctorCollision.statusCode).toBe(409);
     expect(doctorCollision.json().error.code).toBe("IDEMPOTENCY_CONFLICT");
-    const audit = test.database.db.select().from(auditEvents).all().find((event) => event.action === "fulfillment.released");
-    expect(JSON.parse(audit?.metadataJson ?? "{}")).toMatchObject({ visitId: "visit-route-001", decisionId: started.medicationDecision.id, decisionVersion: 1, labelVersionId: started.label.id, labelPrintEventId: printedData.preparation.latestPrintEventId, preparationId: preparation.id, reservationId: started.reservation.id, previousStatus: "AWAITING_RELEASE", nextStatus: "AWAITING_HANDOFF", allocations: [{ allocationId: started.reservation.allocations[0].id, lotId: "lot-route-001", lotNumberSnapshot: "LOT-ROUTE-001", quantity: 3, unit: "เม็ด" }] });
-    const releaseActions = test.database.db.select({ action: auditEvents.action }).from(auditEvents).all().map((row) => row.action);
-    expect(releaseActions).toContain("medication.release-created");
+    const releaseAuditRows = test.database.db.select().from(auditEvents).all();
+    const releaseAudit = releaseAuditRows.find((event) => event.action === "medication.release-created");
+    expect(JSON.parse(releaseAudit?.metadataJson ?? "{}")).toMatchObject({ visitId: "visit-route-001", decisionId: started.medicationDecision.id, decisionVersion: 1, labelVersionId: started.label.id, labelPrintEventId: printedData.preparation.latestPrintEventId, preparationId: preparation.id, reservationId: started.reservation.id, previousStatus: "AWAITING_RELEASE", nextStatus: "AWAITING_HANDOFF", allocations: [{ allocationId: started.reservation.allocations[0].id, lotId: "lot-route-001", lotNumberSnapshot: "LOT-ROUTE-001", quantity: 3, unit: "เม็ด" }] });
+    expect(releaseAuditRows.filter((event) => event.action === "fulfillment.released")).toHaveLength(0);
   });
 
   it("records Doctor rejection, preserves the label, and requires a later print sequence", async () => {
@@ -339,13 +357,20 @@ describe("authenticated fulfillment reservation routes", () => {
     const printedData = printed.json().data;
     await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/preparation-confirmations", headers: { cookie: test.assistantCookie, "idempotency-key": "reject-confirm" }, payload: { expectedRevisions: { visit: 4, preparation: preparation.revision }, payload: { method: "BARCODE", preparationId: preparation.id, allocationId: allocation.id, barcode: "CF-DEMO-001" } } });
     await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/complete-preparation", headers: { cookie: test.assistantCookie, "idempotency-key": "reject-complete" }, payload: { expectedRevisions: { visit: 4, preparation: preparation.revision }, payload: { preparationId: preparation.id } } });
-    const rejected = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/reject", headers: { cookie: test.doctorCookie, "idempotency-key": "reject-doctor" }, payload: { expectedRevisions: { visit: 5, preparation: 2 }, payload: { decisionId: started.medicationDecision.id, decisionVersion: started.medicationDecision.version, labelVersionId: started.label.id, labelPrintEventId: printedData.preparation.latestPrintEventId, preparationId: preparation.id, reservationId: started.reservation.id, reason: "จำนวนยาไม่ตรงตามที่จัด" } } });
+    const rejectBody = { expectedRevisions: { visit: 5, preparation: 2 }, payload: { decisionId: started.medicationDecision.id, decisionVersion: started.medicationDecision.version, labelVersionId: started.label.id, labelPrintEventId: printedData.preparation.latestPrintEventId, preparationId: preparation.id, reservationId: started.reservation.id, reason: "จำนวนยาไม่ตรงตามที่จัด" } };
+    for (const [field, value] of Object.entries({ decisionId: "wrong-decision", decisionVersion: 2, labelVersionId: "wrong-label", labelPrintEventId: "wrong-print", preparationId: "wrong-preparation", reservationId: "wrong-reservation" })) {
+      const mismatch = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/reject", headers: { cookie: test.doctorCookie, "idempotency-key": `reject-mismatch-${field}` }, payload: { ...rejectBody, payload: { ...rejectBody.payload, [field]: value } } });
+      expect(mismatch.statusCode).toBe(409);
+    }
+    expect(countRows(test, "SELECT count(*) AS count FROM fulfillment_rejections")).toBe(0);
+    const rejected = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/reject", headers: { cookie: test.doctorCookie, "idempotency-key": "reject-doctor" }, payload: rejectBody });
     expect(rejected.statusCode).toBe(201);
     expect(rejected.json().data).toMatchObject({ visit: { status: "AWAITING_PREPARATION", revision: 6 }, label: { id: started.label.id }, reservation: null, preparation: null });
     const rejectedReplay = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/reject", headers: { cookie: test.doctorCookie, "idempotency-key": "reject-doctor" }, payload: { expectedRevisions: { visit: 5, preparation: 2 }, payload: { decisionId: started.medicationDecision.id, decisionVersion: started.medicationDecision.version, labelVersionId: started.label.id, labelPrintEventId: printedData.preparation.latestPrintEventId, preparationId: preparation.id, reservationId: started.reservation.id, reason: "จำนวนยาไม่ตรงตามที่จัด" } } });
     expect(rejectedReplay.statusCode).toBe(200);
     expect(rejectedReplay.json()).toMatchObject({ data: rejected.json().data, replayed: true });
     const rejectionAudits = test.database.db.select().from(auditEvents).all();
+    expect(rejectionAudits.filter((event) => event.action === "fulfillment.rejected")).toHaveLength(0);
     for (const action of ["preparation.rejected", "inventory.reservation-released"]) {
       const event = rejectionAudits.find((row) => row.action === action);
       expect(event).toBeDefined();
@@ -371,9 +396,21 @@ describe("authenticated fulfillment reservation routes", () => {
     await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/complete-preparation", headers: { cookie: test.assistantCookie, "idempotency-key": "handoff-complete" }, payload: { expectedRevisions: { visit: 4, preparation: preparation.revision }, payload: { preparationId: preparation.id } } });
     const release = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/release", headers: { cookie: test.doctorCookie, "idempotency-key": "handoff-release" }, payload: { expectedRevisions: { visit: 5, preparation: 2 }, payload: { decisionId: started.medicationDecision.id, decisionVersion: started.medicationDecision.version, labelVersionId: started.label.id, labelPrintEventId: printedData.preparation.latestPrintEventId, preparationId: preparation.id, reservationId: started.reservation.id } } });
     const releasedData = release.json().data;
-    expect(test.database.sqlite.prepare("SELECT revision FROM inventory_lots WHERE id = 'lot-route-001'").get()).toEqual({ revision: 1 });
-    test.database.sqlite.prepare("UPDATE inventory_lots SET status = 'QUARANTINED' WHERE id = 'lot-route-001'").run();
     const handoffPayload = { decisionId: started.medicationDecision.id, decisionVersion: started.medicationDecision.version, labelVersionId: started.label.id, releaseId: releasedData.release.id, reservationId: started.reservation.id };
+    for (const [field, value] of Object.entries({ decisionId: "wrong-decision", decisionVersion: 2, labelVersionId: "wrong-label", releaseId: "wrong-release", reservationId: "wrong-reservation" })) {
+      const mismatch = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/handoff", headers: { cookie: test.assistantCookie, "idempotency-key": `handoff-mismatch-${field}` }, payload: { expectedRevisions: { visit: 6 }, payload: { ...handoffPayload, [field]: value } } });
+      expect(mismatch.statusCode).toBe(409);
+    }
+    expect(test.database.sqlite.prepare("SELECT revision FROM inventory_lots WHERE id = 'lot-route-001'").get()).toEqual({ revision: 1 });
+    test.database.sqlite.prepare("UPDATE inventory_lots SET expiry_date = '2026-08-02' WHERE id = 'lot-route-001'").run();
+    const expired = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/handoff", headers: { cookie: test.assistantCookie, "idempotency-key": "handoff-expired" }, payload: { expectedRevisions: { visit: 6 }, payload: { ...handoffPayload } } });
+    expect(expired.statusCode).toBe(409);
+    expect(countRows(test, "SELECT count(*) AS count FROM fulfillment_dispenses")).toBe(0);
+    expect(countRows(test, "SELECT count(*) AS count FROM inventory_stock_movements")).toBe(1);
+    expect(test.database.sqlite.prepare("SELECT status FROM inventory_reservations WHERE id = ?").get(started.reservation.id)).toEqual({ status: "ACTIVE" });
+    expect(test.database.sqlite.prepare("SELECT revision FROM inventory_lots WHERE id = 'lot-route-001'").get()).toEqual({ revision: 1 });
+    test.database.sqlite.prepare("UPDATE inventory_lots SET expiry_date = '2026-08-10' WHERE id = 'lot-route-001'").run();
+    test.database.sqlite.prepare("UPDATE inventory_lots SET status = 'QUARANTINED' WHERE id = 'lot-route-001'").run();
     const staleHandoff = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/handoff", headers: { cookie: test.assistantCookie, "idempotency-key": "handoff-stale" }, payload: { expectedRevisions: { visit: 6 }, payload: { ...handoffPayload, decisionVersion: 2 } } });
     expect(staleHandoff.statusCode).toBe(409);
     expect(countRows(test, "SELECT count(*) AS count FROM fulfillment_dispenses")).toBe(0);
@@ -390,6 +427,7 @@ describe("authenticated fulfillment reservation routes", () => {
     expect(test.database.sqlite.prepare("SELECT sum(quantity_delta) AS quantity FROM inventory_stock_movements WHERE lot_id = 'lot-route-001'").get()).toEqual({ quantity: 2 });
     expect(test.database.sqlite.prepare("SELECT revision FROM inventory_lots WHERE id = 'lot-route-001'").get()).toEqual({ revision: 2 });
     const handoffAudits = test.database.db.select().from(auditEvents).all();
+    expect(handoffAudits.filter((event) => event.action === "fulfillment.handed-off")).toHaveLength(0);
     for (const action of ["inventory.stock-dispensed", "dispense.handoff-confirmed", "visit.handoff-confirmed"]) {
       const event = handoffAudits.find((row) => row.action === action);
       expect(event).toBeDefined();
@@ -448,6 +486,81 @@ describe("authenticated fulfillment reservation routes", () => {
     expect(handoff.statusCode).toBe(201);
     expect(test.database.sqlite.prepare("SELECT revision FROM inventory_lots WHERE id IN ('lot-route-001', 'lot-route-002') ORDER BY id").all()).toEqual([{ revision: 2 }, { revision: 2 }]);
     expect(test.database.sqlite.prepare("SELECT lot_id, quantity_delta FROM inventory_stock_movements WHERE movement_type = 'DISPENSE' ORDER BY lot_id").all()).toEqual([{ lot_id: "lot-route-001", quantity_delta: -3 }, { lot_id: "lot-route-002", quantity_delta: -2 }]);
+    expect(test.database.db.select().from(auditEvents).all().filter((event) => event.action === "inventory.stock-dispensed")).toHaveLength(2);
+  });
+
+  it("rolls back every handoff row when stock becomes insufficient after release", async () => {
+    const test = await fixture();
+    const start = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/reservations", headers: { cookie: test.assistantCookie, "idempotency-key": "insufficient-start" }, payload: { expectedRevisions: { visit: 3, medicationDecision: 1 }, payload: {} } });
+    const started = start.json().data; const preparation = started.preparation; const allocation = started.reservation.allocations[0];
+    const printed = await test.app.inject({ method: "POST", url: `/api/dispensing/visit-route-001/labels/${started.label.id}/print-events`, headers: { cookie: test.assistantCookie, "idempotency-key": "insufficient-print" }, payload: { expectedRevisions: { visit: 4 }, payload: { rendererVersion: "test" } } });
+    const printedData = printed.json().data;
+    await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/preparation-confirmations", headers: { cookie: test.assistantCookie, "idempotency-key": "insufficient-confirm" }, payload: { expectedRevisions: { visit: 4, preparation: preparation.revision }, payload: { method: "BARCODE", preparationId: preparation.id, allocationId: allocation.id, barcode: "CF-DEMO-001" } } });
+    await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/complete-preparation", headers: { cookie: test.assistantCookie, "idempotency-key": "insufficient-complete" }, payload: { expectedRevisions: { visit: 4, preparation: preparation.revision }, payload: { preparationId: preparation.id } } });
+    const release = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/release", headers: { cookie: test.doctorCookie, "idempotency-key": "insufficient-release" }, payload: { expectedRevisions: { visit: 5, preparation: 2 }, payload: { decisionId: started.medicationDecision.id, decisionVersion: 1, labelVersionId: started.label.id, labelPrintEventId: printedData.preparation.latestPrintEventId, preparationId: preparation.id, reservationId: started.reservation.id } } });
+    expect(release.statusCode).toBe(201);
+    test.database.sqlite.exec(`
+      INSERT INTO patients (id, clinic_id, hn, display_name, phone, birth_date, sex, revision, created_at, updated_at)
+      VALUES ('patient-external-stock', 'clinic', 'DEMO-000099', 'ผู้ป่วยทดสอบ 000099', '0000000099', '1990-01-01', 'unknown', 1, '2026-08-03T00:00:00.000Z', '2026-08-03T00:00:00.000Z');
+      INSERT INTO visits (id, clinic_id, patient_id, status, chief_complaint, revision, arrived_at, created_by)
+      VALUES ('visit-external-stock', 'clinic', 'patient-external-stock', 'AWAITING_CHARGE', 'ตัดสต็อกภายนอก', 1, '2026-08-03T00:00:00.000Z', 'doctor-001');
+      INSERT INTO inventory_reservations (id, clinic_id, visit_id, medication_decision_id, medication_decision_version, status, created_at, created_by)
+      VALUES ('reservation-external-stock', 'clinic', 'visit-external-stock', 'decision-route-001', 1, 'ACTIVE', '2026-08-03T00:00:00.000Z', 'doctor-001');
+      INSERT INTO inventory_reservation_allocations (id, reservation_id, medication_order_item_id, lot_id, position, quantity, medication_id, lot_number_snapshot, expiry_date_snapshot, unit_snapshot, allocated_at)
+      VALUES ('allocation-external-stock', 'reservation-external-stock', 'order-route-001', 'lot-route-001', 0, 4, 'DEMO-MED-001', 'LOT-ROUTE-001', '2026-08-10', 'เม็ด', '2026-08-03T00:00:00.000Z');
+      INSERT INTO fulfillment_releases (id, clinic_id, visit_id, medication_decision_id, medication_decision_version, label_version_id, label_print_event_id, preparation_id, preparation_revision, reservation_id, released_at, released_by)
+      VALUES ('release-external-stock', 'clinic', 'visit-external-stock', 'decision-route-001', 1, '${started.label.id}', '${printedData.preparation.latestPrintEventId}', '${preparation.id}', 2, 'reservation-external-stock', '2026-08-03T00:00:00.000Z', 'doctor-001');
+      INSERT INTO fulfillment_dispenses (id, clinic_id, visit_id, medication_decision_id, medication_decision_version, label_version_id, preparation_id, release_id, reservation_id, handed_off_at, handed_off_by)
+      VALUES ('dispense-external-stock', 'clinic', 'visit-external-stock', 'decision-route-001', 1, '${started.label.id}', '${preparation.id}', 'release-external-stock', 'reservation-external-stock', '2026-08-03T00:00:00.000Z', 'doctor-001');
+      INSERT INTO fulfillment_dispense_lines (id, dispense_id, reservation_allocation_id, medication_order_item_id, medication_id, lot_id, quantity, display_name_snapshot, strength_snapshot, dosage_form_snapshot, unit_snapshot, lot_number_snapshot, expiry_date_snapshot, directions_th_snapshot)
+      VALUES ('line-external-stock', 'dispense-external-stock', 'allocation-external-stock', 'order-route-001', 'DEMO-MED-001', 'lot-route-001', 4, '[DEMO] ยาทดสอบชนิด A', '500 หน่วยทดสอบ', 'เม็ดทดสอบ', 'เม็ด', 'LOT-ROUTE-001', '2026-08-10', 'รับประทานตามคำสั่งสังเคราะห์');
+      INSERT INTO inventory_stock_movements (id, clinic_id, lot_id, movement_type, quantity_delta, source_type, source_id, reason, occurred_at, actor_id)
+      VALUES ('movement-external-stock', 'clinic', 'lot-route-001', 'DISPENSE', -4, 'DISPENSE', 'line-external-stock', '', '2026-08-03T00:00:00.000Z', 'doctor-001');
+    `);
+    const handoff = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/handoff", headers: { cookie: test.assistantCookie, "idempotency-key": "insufficient-handoff" }, payload: { expectedRevisions: { visit: 6 }, payload: { decisionId: started.medicationDecision.id, decisionVersion: 1, labelVersionId: started.label.id, releaseId: release.json().data.release.id, reservationId: started.reservation.id } } });
+    expect(handoff.statusCode).toBe(409);
+    expect(countRows(test, "SELECT count(*) AS count FROM fulfillment_dispenses WHERE visit_id = 'visit-route-001'")).toBe(0);
+    expect(countRows(test, "SELECT count(*) AS count FROM fulfillment_dispense_lines WHERE dispense_id NOT LIKE 'dispense-external-stock'")).toBe(0);
+    expect(countRows(test, "SELECT count(*) AS count FROM inventory_stock_movements WHERE lot_id = 'lot-route-001'")).toBe(2);
+    expect(test.database.sqlite.prepare("SELECT sum(quantity_delta) AS quantity FROM inventory_stock_movements WHERE lot_id = 'lot-route-001'").get()).toEqual({ quantity: 1 });
+    expect(test.database.sqlite.prepare("SELECT status FROM inventory_reservations WHERE id = ?").get(started.reservation.id)).toEqual({ status: "ACTIVE" });
+    expect(test.database.sqlite.prepare("SELECT revision FROM inventory_lots WHERE id = 'lot-route-001'").get()).toEqual({ revision: 1 });
+    expect(test.database.db.select().from(auditEvents).all().filter((event) => event.action === "inventory.stock-dispensed")).toHaveLength(0);
+  });
+
+  it("increments a shared lot once when one reservation has multiple allocations", async () => {
+    const test = await fixture();
+    const medication = test.database.db.select().from(medications).where(eq(medications.id, "DEMO-MED-001")).get();
+    if (!medication) throw new Error("missing shared medication fixture");
+    test.database.db.insert(medicationOrderItems).values({
+      id: "order-route-shared-002", medicationDecisionId: "decision-route-001", position: 1, medicationId: medication.id,
+      medicationRevision: medication.revision, displayNameSnapshot: medication.displayName,
+      strengthSnapshot: medication.strengthText, dosageFormSnapshot: medication.dosageFormText,
+      unitSnapshot: medication.canonicalUnit, quantity: 1, directionsTh: "รับประทานยาสังเคราะห์รายการที่สอง",
+    }).run();
+    const start = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/reservations", headers: { cookie: test.assistantCookie, "idempotency-key": "shared-start" }, payload: { expectedRevisions: { visit: 3, medicationDecision: 1 }, payload: {} } });
+    expect(start.statusCode).toBe(201);
+    const started = start.json().data;
+    expect(started.reservation.allocations).toHaveLength(2);
+    expect(started.reservation.allocations.every((allocation: { lotId: string }) => allocation.lotId === "lot-route-001")).toBe(true);
+    expect(started.reservation.allocations.map((allocation: { quantity: number }) => allocation.quantity)).toEqual([3, 1]);
+    const printed = await test.app.inject({ method: "POST", url: `/api/dispensing/visit-route-001/labels/${started.label.id}/print-events`, headers: { cookie: test.assistantCookie, "idempotency-key": "shared-print" }, payload: { expectedRevisions: { visit: 4 }, payload: { rendererVersion: "test" } } });
+    expect(printed.statusCode).toBe(201);
+    let preparation = started.preparation;
+    for (const allocation of started.reservation.allocations) {
+      const item = started.label.items.find((labelItem: { orderItemId: string }) => labelItem.orderItemId === allocation.orderItemId);
+      const confirmed = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/preparation-confirmations", headers: { cookie: test.assistantCookie, "idempotency-key": `shared-confirm-${allocation.id}` }, payload: { expectedRevisions: { visit: 4, preparation: preparation.revision }, payload: { method: "BARCODE", preparationId: preparation.id, allocationId: allocation.id, barcode: item.internalBarcode } } });
+      expect(confirmed.statusCode).toBe(201);
+      preparation = confirmed.json().data.preparation;
+    }
+    const complete = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/complete-preparation", headers: { cookie: test.assistantCookie, "idempotency-key": "shared-complete" }, payload: { expectedRevisions: { visit: 4, preparation: preparation.revision }, payload: { preparationId: preparation.id } } });
+    expect(complete.statusCode).toBe(201);
+    const release = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/release", headers: { cookie: test.doctorCookie, "idempotency-key": "shared-release" }, payload: { expectedRevisions: { visit: 5, preparation: complete.json().data.preparation.revision }, payload: { decisionId: started.medicationDecision.id, decisionVersion: 1, labelVersionId: started.label.id, labelPrintEventId: complete.json().data.preparation.latestPrintEventId, preparationId: preparation.id, reservationId: started.reservation.id } } });
+    expect(release.statusCode).toBe(201);
+    const handoff = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/handoff", headers: { cookie: test.assistantCookie, "idempotency-key": "shared-handoff" }, payload: { expectedRevisions: { visit: 6 }, payload: { decisionId: started.medicationDecision.id, decisionVersion: 1, labelVersionId: started.label.id, releaseId: release.json().data.release.id, reservationId: started.reservation.id } } });
+    expect(handoff.statusCode).toBe(201);
+    expect(test.database.sqlite.prepare("SELECT revision FROM inventory_lots WHERE id = 'lot-route-001'").get()).toEqual({ revision: 2 });
+    expect(test.database.sqlite.prepare("SELECT count(*) AS count, sum(quantity_delta) AS total FROM inventory_stock_movements WHERE lot_id = 'lot-route-001' AND movement_type = 'DISPENSE'").get()).toEqual({ count: 2, total: -4 });
     expect(test.database.db.select().from(auditEvents).all().filter((event) => event.action === "inventory.stock-dispensed")).toHaveLength(2);
   });
 });

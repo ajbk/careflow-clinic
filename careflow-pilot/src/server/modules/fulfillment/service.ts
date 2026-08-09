@@ -164,16 +164,80 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
     return labelFor(tx, visitId) ?? invalidState("สร้างฉลากยาไม่สำเร็จ");
   };
   const invalidate = (tx: AuditedTransaction, actor: Actor, visitId: string, trigger: "ABANDON" | "REJECT" | "ALLERGY_REVISION" | "ORDER_REVISION", reason: string, replacementDecisionId?: string, onlyPreparation = false): void => {
+    const visit = tx.select().from(visits).where(eq(visits.id, visitId)).get();
+    if (!visit) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit" });
+    const currentDecision = tx.select().from(medicationDecisions).where(eq(medicationDecisions.visitId, visitId)).orderBy(desc(medicationDecisions.version)).get();
+    const replacementDecision = replacementDecisionId
+      ? tx.select().from(medicationDecisions).where(eq(medicationDecisions.id, replacementDecisionId)).get()
+      : undefined;
+    const nextStatus = trigger === "ALLERGY_REVISION"
+      ? "AWAITING_ORDER_REVISION"
+      : trigger === "ABANDON" || trigger === "REJECT"
+        ? "AWAITING_PREPARATION"
+        : replacementDecision?.kind === "ORDER" ? "AWAITING_PREPARATION" : "AWAITING_CHARGE";
     const labels = tx.select().from(fulfillmentLabelVersions).where(eq(fulfillmentLabelVersions.visitId, visitId)).all();
     const preparations = tx.select().from(fulfillmentPreparations).where(eq(fulfillmentPreparations.visitId, visitId)).all();
     const releases = tx.select().from(fulfillmentReleases).where(eq(fulfillmentReleases.visitId, visitId)).all();
-    const artifacts: Array<["LABEL" | "PREPARATION" | "RELEASE", string]> = onlyPreparation
-      ? preparations.map((preparation) => ["PREPARATION", preparation.id])
-      : [...labels.map((label) => ["LABEL", label.id] as ["LABEL", string]), ...preparations.map((preparation) => ["PREPARATION", preparation.id] as ["PREPARATION", string]), ...releases.map((release) => ["RELEASE", release.id] as ["RELEASE", string])];
+    type Artifact = {
+      artifactType: "LABEL" | "PREPARATION" | "RELEASE";
+      artifactId: string;
+      label?: typeof fulfillmentLabelVersions.$inferSelect;
+      preparation?: typeof fulfillmentPreparations.$inferSelect;
+      release?: typeof fulfillmentReleases.$inferSelect;
+    };
+    const artifacts: Artifact[] = onlyPreparation
+      ? preparations.map((preparation) => ({ artifactType: "PREPARATION", artifactId: preparation.id, preparation }))
+      : [
+        ...labels.map((label) => ({ artifactType: "LABEL" as const, artifactId: label.id, label })),
+        ...preparations.map((preparation) => ({ artifactType: "PREPARATION" as const, artifactId: preparation.id, preparation })),
+        ...releases.map((release) => ({ artifactType: "RELEASE" as const, artifactId: release.id, release })),
+      ];
     const now = clock().toISOString();
-    for (const [artifactType, artifactId] of artifacts) if (!activeInvalidation(tx, artifactType, artifactId)) {
-      tx.insert(fulfillmentArtifactInvalidations).values({ id: nextId(), clinicId: "clinic", visitId, artifactType, artifactId, trigger, reason, invalidatedAt: now, invalidatedBy: actor.id, replacementDecisionId: trigger === "ORDER_REVISION" ? replacementDecisionId ?? null : null }).run();
-      appendAuditEvent({ tx, actor, id: nextId(), action: "fulfillment.artifacts-invalidated", entityType: "fulfillment_artifact", entityId: artifactId, entityRevision: 1, reason, occurredAt: now, metadata: { visitId, artifactType, artifactId, trigger, replacementDecisionId: replacementDecisionId ?? null } });
+    for (const artifact of artifacts) if (!activeInvalidation(tx, artifact.artifactType, artifact.artifactId)) {
+      const linkedPreparation = artifact.preparation
+        ?? preparations.find((preparation) => preparation.labelVersionId === artifact.label?.id || preparation.reservationId === artifact.release?.reservationId);
+      const linkedRelease = artifact.release
+        ?? releases.find((release) => release.labelVersionId === artifact.label?.id || release.preparationId === artifact.preparation?.id);
+      const linkedReservation = artifact.preparation?.reservationId
+        ?? artifact.release?.reservationId
+        ?? linkedPreparation?.reservationId
+        ?? linkedRelease?.reservationId
+        ?? tx.select().from(inventoryReservations).where(and(
+          eq(inventoryReservations.visitId, visitId),
+          eq(inventoryReservations.medicationDecisionId, artifact.label?.medicationDecisionId ?? currentDecision?.id ?? replacementDecisionId ?? ""),
+        )).orderBy(desc(inventoryReservations.createdAt)).get()?.id;
+      const allocationRows = linkedReservation
+        ? tx.select().from(inventoryReservationAllocations).where(eq(inventoryReservationAllocations.reservationId, linkedReservation)).orderBy(asc(inventoryReservationAllocations.position)).all()
+        : [];
+      const decisionId = artifact.label?.medicationDecisionId ?? artifact.preparation?.medicationDecisionId ?? artifact.release?.medicationDecisionId ?? currentDecision?.id ?? replacementDecisionId ?? "";
+      const decisionVersion = artifact.label?.medicationDecisionVersion ?? artifact.preparation?.medicationDecisionVersion ?? artifact.release?.medicationDecisionVersion ?? currentDecision?.version ?? replacementDecision?.version ?? 1;
+      const labelVersionId = artifact.label?.id ?? artifact.preparation?.labelVersionId ?? artifact.release?.labelVersionId ?? linkedPreparation?.labelVersionId ?? linkedRelease?.labelVersionId ?? null;
+      const preparationId = artifact.preparation?.id ?? artifact.release?.preparationId ?? linkedPreparation?.id ?? null;
+      const releaseId = artifact.release?.id ?? linkedRelease?.id ?? null;
+      tx.insert(fulfillmentArtifactInvalidations).values({ id: nextId(), clinicId: "clinic", visitId, artifactType: artifact.artifactType, artifactId: artifact.artifactId, trigger, reason, invalidatedAt: now, invalidatedBy: actor.id, replacementDecisionId: trigger === "ORDER_REVISION" ? replacementDecisionId ?? null : null }).run();
+      appendAuditEvent({ tx, actor, id: nextId(), action: "fulfillment.artifacts-invalidated", entityType: "fulfillment_artifact", entityId: artifact.artifactId, entityRevision: 1, reason, occurredAt: now, metadata: {
+        visitId,
+        artifactType: artifact.artifactType,
+        artifactId: artifact.artifactId,
+        trigger,
+        replacementDecisionId: replacementDecisionId ?? null,
+        decisionId,
+        decisionVersion,
+        labelVersionId,
+        preparationId,
+        releaseId,
+        reservationId: linkedReservation ?? null,
+        previousStatus: visit.status,
+        nextStatus,
+        allocations: allocationRows.map((allocation) => ({
+          allocationId: allocation.id,
+          lotId: allocation.lotId,
+          lotNumber: allocation.lotNumberSnapshot,
+          lotNumberSnapshot: allocation.lotNumberSnapshot,
+          quantity: allocation.quantity,
+          unit: allocation.unitSnapshot,
+        })),
+      } });
     }
   };
   return {
@@ -296,7 +360,6 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
           unit: allocation.unitSnapshot,
         })),
       };
-      appendAuditEvent({ tx, actor, id: nextId(), action: "fulfillment.released", entityType: "fulfillment_release", entityId: releaseId, entityRevision: 1, reason: null, occurredAt: now, metadata: releaseMetadata });
       appendAuditEvent({ tx, actor, id: nextId(), action: "medication.release-created", entityType: "fulfillment_release", entityId: releaseId, entityRevision: 1, reason: null, occurredAt: now, metadata: releaseMetadata });
       return read(tx, visitId);
     },
@@ -344,7 +407,6 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
           unit: allocation.unitSnapshot,
         })),
       };
-      appendAuditEvent({ tx, actor, id: nextId(), action: "fulfillment.rejected", entityType: "fulfillment_rejection", entityId: rejectionId, entityRevision: 1, reason: trimmedReason, occurredAt: now, metadata: rejectionMetadata });
       appendAuditEvent({ tx, actor, id: nextId(), action: "preparation.rejected", entityType: "fulfillment_preparation", entityId: prep.id, entityRevision: prep.revision, reason: trimmedReason, occurredAt: now, metadata: rejectionMetadata });
       appendAuditEvent({ tx, actor, id: nextId(), action: "inventory.reservation-released", entityType: "inventory_reservation", entityId: reservation.id, entityRevision: 1, reason: trimmedReason, occurredAt: released.releasedAt ?? now, metadata: { ...rejectionMetadata, releaseReason: trimmedReason } });
       return read(tx, visitId);
@@ -399,7 +461,6 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
           unit: line.unitSnapshot,
         })),
       };
-      appendAuditEvent({ tx, actor, id: nextId(), action: "fulfillment.handed-off", entityType: "fulfillment_dispense", entityId: dispenseId, entityRevision: 1, reason: null, occurredAt: now, metadata: handoffMetadata });
       appendAuditEvent({ tx, actor, id: nextId(), action: "dispense.handoff-confirmed", entityType: "fulfillment_dispense", entityId: dispenseId, entityRevision: 1, reason: null, occurredAt: now, metadata: handoffMetadata });
       appendAuditEvent({ tx, actor, id: nextId(), action: "visit.handoff-confirmed", entityType: "visit", entityId: visitId, entityRevision: visit.revision + 1, reason: null, occurredAt: now, metadata: handoffMetadata });
       return read(tx, visitId);
