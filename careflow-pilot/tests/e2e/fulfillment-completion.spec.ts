@@ -19,8 +19,11 @@ async function createQueuedPatient(page: Page, complaint: string): Promise<{ hn:
   return { hn: hn as string, visitId: visitId as string };
 }
 
-async function reviewAllergy(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" }).click();
+async function reviewAllergy(page: Page, hn?: string): Promise<void> {
+  const button = hn
+    ? page.locator(".queue-card").filter({ hasText: hn }).getByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" })
+    : page.getByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" });
+  await button.click();
   const dialog = page.getByRole("dialog", { name: "ทบทวนประวัติแพ้ยา" });
   await dialog.getByRole("button", { name: "NONE_KNOWN" }).click();
   await dialog.getByRole("button", { name: "บันทึกการทบทวน" }).click();
@@ -73,12 +76,13 @@ async function printCurrentLabel(page: Page, baseURL: string, visitId: string): 
   await page.goto(`${baseURL}/dispensing/${visitId}/labels`);
   await expect(page.getByText("ขนาดสื่อ 80 × 100 มม.")).toBeVisible();
   await page.emulateMedia({ media: "print" });
-  const printedBounds = await page.locator(".medicine-label").evaluate((element) => ({ width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height, clientHeight: element.clientHeight, scrollHeight: element.scrollHeight }));
+  const printedBounds = await page.locator(".medicine-label").evaluate((element) => ({ width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height, clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, text: element.textContent ?? "" }));
   expect(printedBounds.width).toBeGreaterThanOrEqual(301);
   expect(printedBounds.width).toBeLessThanOrEqual(303);
   expect(printedBounds.height).toBeGreaterThanOrEqual(377);
   expect(printedBounds.height).toBeLessThanOrEqual(379);
   expect(printedBounds.scrollHeight).toBeLessThanOrEqual(printedBounds.clientHeight);
+  expect(printedBounds.text).toContain("รับประทานหลังอาหารทันทีตามคำแนะนำของแพทย์ ".repeat(12).slice(0, 500));
   await page.emulateMedia({ media: "screen" });
   await page.getByRole("button", { name: "บันทึกคำขอพิมพ์และเปิดหน้าต่างพิมพ์" }).click();
   await expect(page.getByText("บันทึกคำขอพิมพ์แล้ว", { exact: false })).toBeVisible();
@@ -93,7 +97,7 @@ test("two browsers complete the signed ORDER through FEFO, release, restart, and
   try {
     await loginAndAcknowledge(assistant, server.baseURL, "assistant");
     const patient = await createQueuedPatient(assistant, "อาการสังเคราะห์สำหรับ E2E ครบวงจร");
-    await reviewAllergy(assistant);
+    await reviewAllergy(assistant, firstPatient.hn);
     await loginAndAcknowledge(doctor, server.baseURL, "doctor");
     await queueDoctorIntoConsultation(doctor, patient.hn);
     await signOrder(doctor, 8, "รับประทานหลังอาหารทันทีตามคำแนะนำของแพทย์ ".repeat(12).slice(0, 500));
@@ -169,7 +173,7 @@ test("reject/reprint, stale evidence, inventory safeguards, and role denial rema
     await loginAndAcknowledge(doctor, server.baseURL, "doctor");
     await receiveLot(assistant, { key: "completion-safety", lotNumber: "COMPLETE-SAFETY", expiryDate: "2031-08-10", quantity: 3 });
     const patient = await createQueuedPatient(assistant, "อาการสังเคราะห์สำหรับเส้นทางปฏิเสธ");
-    await reviewAllergy(assistant);
+    await reviewAllergy(assistant, secondPatient.hn);
     await queueDoctorIntoConsultation(doctor, patient.hn);
     await signOrder(doctor, 1);
 
@@ -324,20 +328,26 @@ test("two browser sessions cannot reserve the final lot twice or create negative
     await loginAndAcknowledge(assistant, server.baseURL, "assistant");
     await loginAndAcknowledge(doctor, server.baseURL, "doctor");
     const lastLot = await receiveLot(assistant, { key: "last-stock-race", lotNumber: "LAST-STOCK-RACE", expiryDate: "2032-12-31", quantity: 1 });
-    const patient = await createQueuedPatient(assistant, "ทดสอบแข่งกันจองยาเม็ดสุดท้าย");
-    await reviewAllergy(assistant); await queueDoctorIntoConsultation(doctor, patient.hn); await signOrder(doctor, 1);
-    const pickList = (await (await assistant.request.get(`${server.baseURL}/api/dispensing/${patient.visitId}`)).json()).data as { visit: { revision: number }; medicationDecision: { version: number }; label: { id: string } };
-    const body = { expectedRevisions: { visit: pickList.visit.revision, medicationDecision: pickList.medicationDecision.version }, payload: { labelVersionId: pickList.label.id } };
+    const firstPatient = await createQueuedPatient(assistant, "ทดสอบแข่งกันจองยาเม็ดสุดท้าย คนที่หนึ่ง");
+    await reviewAllergy(assistant, firstPatient.hn);
+    const secondPatient = await createQueuedPatient(assistant, "ทดสอบแข่งกันจองยาเม็ดสุดท้าย คนที่สอง");
+    await reviewAllergy(assistant, secondPatient.hn);
+    await queueDoctorIntoConsultation(doctor, firstPatient.hn); await signOrder(doctor, 1);
+    await queueDoctorIntoConsultation(doctor, secondPatient.hn); await signOrder(doctor, 1);
+    const firstPickList = (await (await assistant.request.get(`${server.baseURL}/api/dispensing/${firstPatient.visitId}`)).json()).data as { visit: { revision: number }; medicationDecision: { version: number }; label: { id: string } };
+    const secondPickList = (await (await doctor.request.get(`${server.baseURL}/api/dispensing/${secondPatient.visitId}`)).json()).data as { visit: { revision: number }; medicationDecision: { version: number }; label: { id: string } };
+    const firstBody = { expectedRevisions: { visit: firstPickList.visit.revision, medicationDecision: firstPickList.medicationDecision.version }, payload: { labelVersionId: firstPickList.label.id } };
+    const secondBody = { expectedRevisions: { visit: secondPickList.visit.revision, medicationDecision: secondPickList.medicationDecision.version }, payload: { labelVersionId: secondPickList.label.id } };
     const [first, second] = await Promise.all([
-      assistant.request.post(`${server.baseURL}/api/dispensing/${patient.visitId}/reservations`, { headers: { "idempotency-key": "last-stock-race-assistant" }, data: body }),
-      doctor.request.post(`${server.baseURL}/api/dispensing/${patient.visitId}/reservations`, { headers: { "idempotency-key": "last-stock-race-doctor" }, data: body }),
+      assistant.request.post(`${server.baseURL}/api/dispensing/${firstPatient.visitId}/reservations`, { headers: { "idempotency-key": "last-stock-race-assistant" }, data: firstBody }),
+      doctor.request.post(`${server.baseURL}/api/dispensing/${secondPatient.visitId}/reservations`, { headers: { "idempotency-key": "last-stock-race-doctor" }, data: secondBody }),
     ]);
     const responses = [first, second];
     expect(responses.filter((response) => response.status() === 201)).toHaveLength(1);
     expect(responses.filter((response) => response.status() === 409)).toHaveLength(1);
     const losing = responses.find((response) => response.status() === 409);
-    expect((await losing!.json()).error.code).toBe("REVISION_CONFLICT");
-    expect(server.database.sqlite.prepare("SELECT count(*) AS count FROM inventory_reservations WHERE visit_id = ? AND status = 'ACTIVE'").get(patient.visitId)).toEqual({ count: 1 });
+    expect(["LOT_RESERVED", "STOCK_WOULD_BE_NEGATIVE", "RESERVATION_NOT_SELLABLE"]).toContain((await losing!.json()).error.code);
+    expect(server.database.sqlite.prepare("SELECT count(*) AS count FROM inventory_reservations WHERE visit_id IN (?, ?) AND status = 'ACTIVE'").get(firstPatient.visitId, secondPatient.visitId)).toEqual({ count: 1 });
     expect(server.database.sqlite.prepare("SELECT count(*) AS count FROM inventory_reservation_allocations WHERE lot_id = ?").get(lastLot.lot.id)).toEqual({ count: 1 });
     const stock = server.database.sqlite.prepare("SELECT SUM(quantity_delta) AS onHand FROM inventory_stock_movements WHERE lot_id = ?").get(lastLot.lot.id) as { onHand: number };
     expect(stock.onHand).toBe(1);

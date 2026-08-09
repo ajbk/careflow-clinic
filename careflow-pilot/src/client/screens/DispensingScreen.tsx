@@ -44,8 +44,11 @@ export function DispensingScreen(): ReactElement {
   const start = () => { if (!canPrepare || !allowed(data, "START_PREPARATION")) return; setLocalError(""); reserve.mutate({ visitId: data.visit.id, attempt: createReserveDispensingAttempt(data) }); };
   const submitBarcode = () => {
     if (!preparation || !pending || !canPrepare || !allowed(data, "CONFIRM_ALLOCATION")) return;
-    const barcode = scan.trim().toUpperCase(); const labelItem = data.label?.items.find((item) => item.internalBarcode === barcode);
-    const allocation = labelItem ? allocations.find((item) => item.orderItemId === labelItem.orderItemId && !confirmed.has(item.id)) : null;
+    const barcode = scan.trim().toUpperCase();
+    const allocation = data.label?.items
+      .filter((item) => item.internalBarcode === barcode)
+      .map((item) => allocations.find((candidate) => candidate.orderItemId === item.orderItemId && !confirmed.has(candidate.id)))
+      .find((candidate) => candidate !== undefined) ?? null;
     if (!allocation) { setLocalError("บาร์โค้ดไม่ตรงกับรายการจัดยา"); scannerRef.current?.focus(); return; }
     setLocalError(""); setScan(""); confirm.mutate({ visitId: data.visit.id, attempt: createConfirmAllocationAttempt(data, { method: "BARCODE", preparationId: preparation.id, allocationId: allocation.id, barcode }) }, { onSuccess: (result) => focusScannerIfPending(result.data), onError: () => focusScannerIfPending(data) });
   };

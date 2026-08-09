@@ -279,6 +279,29 @@ describe("Preparation and label workflow", () => {
     expect(screen.getByText(/ล็อต LOT-LATE/)).toBeInTheDocument();
   });
 
+  it("uses the next unconfirmed order item when duplicate medication rows share one barcode", async () => {
+    const user = userEvent.setup();
+    const secondLabelItem = { ...label.items[0], orderItemId: "item-2", quantity: 5 };
+    const secondAllocation = { ...allocation, id: "allocation-2", orderItemId: "item-2", lotId: "lot-late", lotNumberSnapshot: "LOT-LATE", quantity: 5 };
+    const duplicatePickList = { ...preparingPickList, label: { ...label, items: [label.items[0], secondLabelItem] }, reservation: { id: "reservation-1", allocations: [allocation, secondAllocation] } };
+    const firstConfirmed = { ...duplicatePickList, preparation: { ...duplicatePickList.preparation, confirmations: [{ allocationId: allocation.id, orderItemId: allocation.orderItemId, lotId: allocation.lotId, method: "BARCODE" as const, barcode: "PARA-500" }] } };
+    const secondConfirmed = { ...firstConfirmed, preparation: { ...firstConfirmed.preparation, confirmations: [...firstConfirmed.preparation.confirmations, { allocationId: secondAllocation.id, orderItemId: secondAllocation.orderItemId, lotId: secondAllocation.lotId, method: "BARCODE" as const, barcode: "PARA-500" }] } };
+    const submitted: string[] = [];
+    server.resetHandlers(
+      http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: duplicatePickList })),
+      http.post("/api/dispensing/visit-42/preparation-confirmations", async ({ request }) => {
+        const body = await request.json() as { payload: { allocationId: string } }; submitted.push(body.payload.allocationId);
+        return HttpResponse.json({ data: submitted.length === 1 ? firstConfirmed : secondConfirmed, replayed: false }, { status: 201 });
+      }),
+    );
+    renderDispensing();
+    const scanner = await screen.findByLabelText("สแกนบาร์โค้ดยา");
+    await user.type(scanner, "PARA-500{enter}");
+    await waitFor(() => expect(submitted).toEqual(["allocation-1"]));
+    await user.type(scanner, "PARA-500{enter}");
+    await waitFor(() => expect(submitted).toEqual(["allocation-1", "allocation-2"]));
+  });
+
   it("restores scanner focus after a confirmation error while another allocation remains", async () => {
     const user = userEvent.setup();
     const secondAllocation = { ...allocation, id: "allocation-2", orderItemId: "item-2", lotId: "lot-late", lotNumberSnapshot: "LOT-LATE", quantity: 5 };

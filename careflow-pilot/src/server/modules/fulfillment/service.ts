@@ -269,12 +269,15 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
     createLabelForSignedOrder: ensureLabel,
     startPreparation(tx, actor, visitId, visitRevision, decisionVersion, labelVersionId) {
       const currentLabel = labelFor(tx, visitId);
-      if (currentLabel && (currentLabel.id !== labelVersionId || currentLabel.medicationDecisionVersion !== decisionVersion)) artifactStale("ฉลากยาปัจจุบันไม่ตรงกับคำสั่งที่เลือก");
+      if (!currentLabel || currentLabel.id !== labelVersionId || currentLabel.medicationDecisionVersion !== decisionVersion) artifactStale("ฉลากยาปัจจุบันไม่ตรงกับคำสั่งที่เลือก");
+      const activeReservation = tx.select().from(inventoryReservations).where(and(
+        eq(inventoryReservations.visitId, visitId), eq(inventoryReservations.status, "ACTIVE"),
+      )).get();
+      if (activeReservation) artifactStale("มีรายการจองยาเดิมที่ยังดำเนินการอยู่");
       input.inventory.reserveForVisit(tx, actor, visitId, visitRevision, decisionVersion);
       const decision = tx.select().from(medicationDecisions).where(eq(medicationDecisions.visitId, visitId)).orderBy(desc(medicationDecisions.version)).get();
       if (!decision) throw new Error("Signed decision disappeared");
-      const label = ensureLabel(tx, actor, visitId, decision.id);
-      if (!label) throw new Error("Label was not created");
+      const label = currentLabel;
       const reservation = tx.select().from(inventoryReservations).where(and(eq(inventoryReservations.visitId, visitId), eq(inventoryReservations.status, "ACTIVE"))).orderBy(desc(inventoryReservations.createdAt)).get();
       if (!reservation) throw new Error("Reservation was not created");
       const existing = tx.select().from(fulfillmentPreparations).where(eq(fulfillmentPreparations.reservationId, reservation.id)).get();
@@ -303,7 +306,7 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
       const now = clock().toISOString();
       const confirmationId = nextId(); const manualReason = payload.method === "MANUAL" ? payload.reason.trim() : null;
       tx.insert(fulfillmentPreparationConfirmations).values({ id: confirmationId, preparationId: prep.id, reservationAllocationId: allocation.id, medicationOrderItemId: allocation.medicationOrderItemId, medicationId: allocation.medicationId, lotId: allocation.lotId, quantity: allocation.quantity, method: payload.method, barcodeSnapshot: payload.method === "BARCODE" ? payload.barcode.trim().toUpperCase() : null, manualReason, confirmedAt: now, confirmedBy: actor.id }).run();
-      appendAuditEvent({ tx, actor, id: nextId(), action: "preparation.allocation-confirmed", entityType: "fulfillment_preparation", entityId: prep.id, entityRevision: prep.revision, reason: manualReason, occurredAt: now, metadata: { visitId, decisionId: prep.medicationDecisionId, decisionVersion: prep.medicationDecisionVersion, labelVersionId: prep.labelVersionId, preparationId: prep.id, reservationId: prep.reservationId, confirmationId, allocationId: allocation.id, orderItemId: allocation.medicationOrderItemId, method: payload.method, barcode: payload.method === "BARCODE" ? payload.barcode.trim().toUpperCase() : null, manualReason, lot: { lotId: allocation.lotId, lotNumber: allocation.lotNumberSnapshot, expiryDate: allocation.expiryDateSnapshot, unit: allocation.unitSnapshot, quantity: allocation.quantity } } }); return read(tx, visitId);
+      appendAuditEvent({ tx, actor, id: nextId(), action: "preparation.allocation-confirmed", entityType: "fulfillment_preparation", entityId: prep.id, entityRevision: prep.revision, reason: manualReason, occurredAt: now, metadata: { visitId, decisionId: prep.medicationDecisionId, decisionVersion: prep.medicationDecisionVersion, labelVersionId: prep.labelVersionId, preparationId: prep.id, reservationId: prep.reservationId, confirmationId, allocationId: allocation.id, orderItemId: allocation.medicationOrderItemId, medicationId: allocation.medicationId, method: payload.method, barcode: payload.method === "BARCODE" ? payload.barcode.trim().toUpperCase() : null, manualReason, lot: { lotId: allocation.lotId, lotNumber: allocation.lotNumberSnapshot, expiryDate: allocation.expiryDateSnapshot, unit: allocation.unitSnapshot, quantity: allocation.quantity } } }); return read(tx, visitId);
     },
     completePreparation(tx, actor, visitId, visitRevision, preparationRevision, preparationId, reservationId) {
       const visit = tx.select().from(visits).where(eq(visits.id, visitId)).get(); if (!visit) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit" }); assertExpectedRevision(visit.revision, visitRevision, "visit");

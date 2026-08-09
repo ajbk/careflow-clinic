@@ -10,6 +10,7 @@ import {
   inventoryStockMovements,
 } from "../../src/server/modules/inventory/index.js";
 import { visits } from "../../src/server/modules/visit/index.js";
+import { fulfillmentLabelItems, fulfillmentLabelVersions } from "../../src/server/modules/fulfillment/index.js";
 import { cookieFrom, login, seedAccount } from "./helpers/auth.js";
 import { createTestApp } from "./helpers/database.js";
 
@@ -54,6 +55,17 @@ async function fixture() {
     medicationRevision: medication.revision, displayNameSnapshot: medication.displayName,
     strengthSnapshot: medication.strengthText, dosageFormSnapshot: medication.dosageFormText,
     unitSnapshot: medication.canonicalUnit, quantity: 3, directionsTh: "รับประทานตามคำสั่งสังเคราะห์",
+  }).run();
+  test.database.db.insert(fulfillmentLabelVersions).values({
+    id: "label-route-001", clinicId: "clinic", visitId: "visit-route-001", medicationDecisionId: "decision-route-001",
+    medicationDecisionVersion: 1, version: 1, createdAt: now, createdBy: doctor.actor.id,
+    patientHnSnapshot: "DEMO-000001", patientDisplayNameSnapshot: "ผู้ป่วยทดสอบ 000001", clinicNameSnapshot: "คลินิกชนบท CareFlow Pilot",
+  }).run();
+  test.database.db.insert(fulfillmentLabelItems).values({
+    id: "label-item-route-001", labelVersionId: "label-route-001", medicationOrderItemId: "order-route-001", position: 0,
+    medicationId: medication.id, medicationRevision: medication.revision, displayNameSnapshot: medication.displayName,
+    strengthSnapshot: medication.strengthText, dosageFormSnapshot: medication.dosageFormText, quantity: 3,
+    unitSnapshot: medication.canonicalUnit, directionsThSnapshot: "รับประทานตามคำสั่งสังเคราะห์", internalBarcodeSnapshot: medication.internalBarcode ?? "CF-DEMO-001",
   }).run();
   test.database.db.insert(inventoryReceipts).values({
     id: "receipt-route-001", clinicId: "clinic", supplierName: "ผู้จำหน่ายสังเคราะห์", note: "รับเข้าทดสอบ",
@@ -111,7 +123,7 @@ describe("authenticated fulfillment reservation routes", () => {
       method: "GET", url: "/api/dispensing/visit-route-001/labels", headers: { cookie: test.assistantCookie },
     });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ data: null });
+    expect(response.json()).toMatchObject({ data: { id: "label-route-001" } });
   });
 
   it("reserves with exact envelope replay, audits start, and releases with exact replay", async () => {
@@ -137,7 +149,7 @@ describe("authenticated fulfillment reservation routes", () => {
     expect(differentKey.statusCode).toBe(409);
     expect(differentKey.json().error.code).toBe("ARTIFACT_STALE");
     expect(test.database.db.select().from(auditEvents).all().map((row) => row.action)).toEqual([
-      "label.version-created", "inventory.reservation-created", "visit.preparation-started",
+      "inventory.reservation-created", "visit.preparation-started",
     ]);
     const createdAudit = test.database.db.select().from(auditEvents).all()
       .find((event) => event.action === "inventory.reservation-created");
@@ -263,6 +275,19 @@ describe("authenticated fulfillment reservation routes", () => {
     expect(completed.statusCode).toBe(201);
     expect(completed.json().data).toMatchObject({ visit: { status: "AWAITING_RELEASE", revision: 5 }, preparation: { status: "COMPLETED", revision: 2 } });
     expect(completed.json().data.allowedActions).toEqual(["RELEASE", "REJECT"]);
+  });
+
+  it("records manual confirmation identity, lot evidence, and non-null reason in its audit chain", async () => {
+    const test = await fixture();
+    const started = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/reservations", headers: { cookie: test.assistantCookie, "idempotency-key": "manual-audit-start" }, payload: { expectedRevisions: { visit: 3, medicationDecision: 1 }, payload: startPayload } });
+    expect(started.statusCode).toBe(201);
+    const data = started.json().data;
+    const allocation = data.reservation.allocations[0];
+    const confirmed = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/preparation-confirmations", headers: { cookie: test.assistantCookie, "idempotency-key": "manual-audit-confirm" }, payload: { expectedRevisions: { visit: 4, preparation: data.preparation.revision }, payload: { method: "MANUAL", preparationId: data.preparation.id, allocationId: allocation.id, reason: "เครื่องสแกนใช้งานไม่ได้" } } });
+    expect(confirmed.statusCode).toBe(201);
+    const audit = test.database.db.select().from(auditEvents).all().find((event) => event.action === "preparation.allocation-confirmed");
+    expect(audit?.reason).toBe("เครื่องสแกนใช้งานไม่ได้");
+    expect(JSON.parse(audit?.metadataJson ?? "{}")).toMatchObject({ decisionId: "decision-route-001", decisionVersion: 1, labelVersionId: "label-route-001", preparationId: data.preparation.id, reservationId: data.reservation.id, allocationId: allocation.id, orderItemId: "order-route-001", medicationId: "DEMO-MED-001", method: "MANUAL", manualReason: "เครื่องสแกนใช้งานไม่ได้", lot: { lotId: "lot-route-001", lotNumber: "LOT-ROUTE-001", expiryDate: "2026-08-10", unit: "เม็ด", quantity: 3 } });
   });
 
   it("rejects every old fulfillment command after clinical invalidation without extra writes", async () => {
@@ -451,6 +476,7 @@ describe("authenticated fulfillment reservation routes", () => {
       strengthSnapshot: medication.strengthText, dosageFormSnapshot: medication.dosageFormText,
       unitSnapshot: medication.canonicalUnit, quantity: 2, directionsTh: "รับประทานยาสังเคราะห์รายการที่สอง",
     }).run();
+    test.database.db.insert(fulfillmentLabelItems).values({ id: "label-item-route-002", labelVersionId: "label-route-001", medicationOrderItemId: "order-route-002", position: 1, medicationId: medication.id, medicationRevision: medication.revision, displayNameSnapshot: medication.displayName, strengthSnapshot: medication.strengthText, dosageFormSnapshot: medication.dosageFormText, quantity: 2, unitSnapshot: medication.canonicalUnit, directionsThSnapshot: "รับประทานยาสังเคราะห์รายการที่สอง", internalBarcodeSnapshot: medication.internalBarcode ?? "CF-DEMO-002" }).run();
     test.database.db.insert(inventoryReceipts).values({
       id: "receipt-route-002", clinicId: "clinic", supplierName: "ผู้จำหน่ายสังเคราะห์", note: "รับเข้าทดสอบล็อตที่สอง",
       receivedAt: now, receivedBy: "doctor-001",
@@ -538,6 +564,7 @@ describe("authenticated fulfillment reservation routes", () => {
       strengthSnapshot: medication.strengthText, dosageFormSnapshot: medication.dosageFormText,
       unitSnapshot: medication.canonicalUnit, quantity: 1, directionsTh: "รับประทานยาสังเคราะห์รายการที่สอง",
     }).run();
+    test.database.db.insert(fulfillmentLabelItems).values({ id: "label-item-route-shared-002", labelVersionId: "label-route-001", medicationOrderItemId: "order-route-shared-002", position: 1, medicationId: medication.id, medicationRevision: medication.revision, displayNameSnapshot: medication.displayName, strengthSnapshot: medication.strengthText, dosageFormSnapshot: medication.dosageFormText, quantity: 1, unitSnapshot: medication.canonicalUnit, directionsThSnapshot: "รับประทานยาสังเคราะห์รายการที่สอง", internalBarcodeSnapshot: medication.internalBarcode ?? "CF-DEMO-001" }).run();
     const start = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/reservations", headers: { cookie: test.assistantCookie, "idempotency-key": "shared-start" }, payload: { expectedRevisions: { visit: 3, medicationDecision: 1 }, payload: startPayload } });
     expect(start.statusCode).toBe(201);
     const started = start.json().data;
