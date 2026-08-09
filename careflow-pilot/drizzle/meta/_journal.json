@@ -148,6 +148,13 @@
       "when": 1786285259857,
       "tag": "0020_post_close_replace_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1786290684221,
+      "tag": "0021_protected_insert_conflict_guards",
+      "breakpoints": true
     }
   ]
 }

@@ -108,13 +108,13 @@ function seedStaffPatientVisit(
   const patientNumber = input.patientSuffix.padStart(6, "0");
   const phoneSuffix = input.patientSuffix.padStart(4, "0");
   value.sqlite.exec(`
-    INSERT OR IGNORE INTO staff_accounts (
+    INSERT INTO staff_accounts (
       id, clinic_id, username, display_name, role, password_hash, must_change_password,
       active, revision, last_password_changed_at, created_at, updated_at
-    ) VALUES (
+    ) SELECT
       '${actor.id}', 'clinic', 'finance-doctor', '${actor.displayName}', 'doctor', 'hash', 0,
       1, 1, '${NOW}', '${NOW}', '${NOW}'
-    );
+    WHERE NOT EXISTS (SELECT 1 FROM staff_accounts WHERE id = '${actor.id}');
     INSERT INTO patients (
       id, clinic_id, hn, display_name, phone, birth_date, sex, revision, created_at, updated_at
     ) VALUES (
@@ -456,6 +456,6 @@ describe("immutable finance charge finalization", () => {
         'finance-invalid-extra-line', ?, 3, 'MEDICATION', 'wrong source', 1, 5, 4,
         'finance-order-item-4', 'finance-dispense-line-a-4'
       )
-    `).run(chargeId)).toThrow(/line total|source|constraint/i);
+    `).run(chargeId)).toThrow(/line total|source|constraint|protected evidence/i);
   });
 });

@@ -382,6 +382,71 @@ describe("Visit completion evidence, privacy, and freeze", () => {
     ]);
   });
 
+  it("keeps the Doctor OPD and Closure chain byte-stable across both closed-Note replacement spellings", async () => {
+    const test = await fixture();
+    await close(test);
+    test.database.sqlite.exec(`
+      INSERT INTO patients (
+        id, clinic_id, hn, display_name, phone, birth_date, sex, revision, created_at, updated_at
+      ) VALUES (
+        'opd-replace-open-patient', 'clinic', 'DEMO-000018', 'ผู้ป่วยทดสอบ 000018',
+        '0000000018', '1990-01-01', 'unknown', 1, '${NOW}', '${NOW}'
+      );
+      INSERT INTO visits (
+        id, clinic_id, patient_id, status, chief_complaint, revision, arrived_at, started_at, created_by
+      ) VALUES (
+        'opd-replace-open-visit', 'clinic', 'opd-replace-open-patient', 'CONSULTING',
+        'ทดสอบป้องกัน OPD', 1, '${NOW}', '${NOW}', 'completion-doctor'
+      );
+    `);
+    const beforeResponse = await test.app.inject({
+      method: "GET",
+      url: "/api/visits/completion-visit/opd-card",
+      headers: { cookie: test.doctorCookie },
+    });
+    expect(beforeResponse.statusCode).toBe(200);
+    const beforeCard = beforeResponse.json().data;
+    const frozenTables = [
+      "visits",
+      "clinical_notes",
+      "clinical_note_diagnoses",
+      "medication_decisions",
+      "finance_charges",
+      "finance_charge_lines",
+      "finance_payments",
+      "visit_closures",
+    ];
+    const frozenBytes = Buffer.from(JSON.stringify(Object.fromEntries(frozenTables.map((table) => [
+      table,
+      test.database.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
+    ]))));
+
+    for (const insertVerb of ["REPLACE", "INSERT OR REPLACE"] as const) {
+      expect(() => test.database.sqlite.prepare(`
+        ${insertVerb} INTO clinical_notes (
+          id, visit_id, version, subjective, objective, assessment, plan, source_draft_revision,
+          signed_by, signed_by_display_name, signed_at, content_hash
+        ) VALUES (
+          'completion-note', 'opd-replace-open-visit', 1, 'replacement S', 'replacement O',
+          'replacement A', 'replacement P', 1, 'completion-doctor', 'พญ. หลักฐาน OPD',
+          '${NOW}', '${"f".repeat(64)}'
+        )
+      `).run()).toThrow("clinical_notes insert conflicts with protected evidence");
+      expect(Buffer.from(JSON.stringify(Object.fromEntries(frozenTables.map((table) => [
+        table,
+        test.database.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
+      ]))))).toEqual(frozenBytes);
+      expect(test.database.sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+      const afterResponse = await test.app.inject({
+        method: "GET",
+        url: "/api/visits/completion-visit/opd-card",
+        headers: { cookie: test.doctorCookie },
+      });
+      expect(afterResponse.statusCode).toBe(200);
+      expect(afterResponse.json().data).toEqual(beforeCard);
+    }
+  });
+
   it("projects an ORDER dispense split across two lots without collapsing its OPD evidence", async () => {
     const test = await fixture("ORDER");
     await close(test);

@@ -501,6 +501,26 @@ describe("guarded synthetic reset", () => {
         { name: "visit_closures_block_delete" },
         { name: "visit_closures_block_update" },
       ]);
+      expect(database.prepare(`
+        SELECT count(*) FROM sqlite_master
+        WHERE type = 'trigger' AND name LIKE '%_protected_insert_conflict_guard'
+      `).pluck().get()).toBe(46);
+      const medicationBeforeReplace = Buffer.from(JSON.stringify(database.prepare(
+        "SELECT * FROM medications WHERE id = 'DEMO-MED-001'",
+      ).get()));
+      database.pragma("recursive_triggers = OFF");
+      expect(() => database.prepare(`
+        INSERT OR REPLACE INTO medications (
+          id, display_name, strength_text, dosage_form_text, canonical_unit,
+          internal_barcode, active, revision, unit_price_baht, created_at, updated_at
+        ) SELECT
+          id, display_name, strength_text, dosage_form_text, canonical_unit,
+          internal_barcode, active, revision, unit_price_baht, created_at, updated_at
+        FROM medications WHERE id = 'DEMO-MED-001'
+      `).run()).toThrow("medications insert conflicts with protected evidence");
+      expect(Buffer.from(JSON.stringify(database.prepare(
+        "SELECT * FROM medications WHERE id = 'DEMO-MED-001'",
+      ).get()))).toEqual(medicationBeforeReplace);
     } finally {
       database.close();
     }
