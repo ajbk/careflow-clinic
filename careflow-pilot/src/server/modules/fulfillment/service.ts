@@ -7,7 +7,7 @@ import type {
 import type { DatabaseHandle } from "../../db/client.js";
 import { ApiError } from "../../errors.js";
 import type { InventoryService } from "../inventory/service.js";
-import { inventoryLots, inventoryReservationAllocations, inventoryReservations } from "../inventory/schema.js";
+import { inventoryLots, inventoryReservationAllocations, inventoryReservations, inventoryStockMovements } from "../inventory/schema.js";
 import { medicationDecisions, medicationOrderItems, medications } from "../medication/schema.js";
 import { patients } from "../patient/schema.js";
 import { appendAuditEvent, assertExpectedRevision, type AppDatabase, type AppTransaction, type AuditedTransaction } from "../platform/index.js";
@@ -25,11 +25,11 @@ export interface FulfillmentService {
   getPickList(visitId: string): FulfillmentPickListDto;
   getCurrentLabel(visitId: string): FulfillmentCurrentLabelDto;
   createLabelForSignedOrder(tx: AuditedTransaction, actor: Actor, visitId: string, decisionId: string): FulfillmentCurrentLabelDto;
-  startPreparation(tx: AuditedTransaction, actor: Actor, visitId: string, visitRevision: number, decisionVersion: number): FulfillmentPickListDto;
-  recordPrintRequest(tx: AuditedTransaction, actor: Actor, visitId: string, labelVersionId: string, visitRevision: number, rendererVersion: string): FulfillmentPickListDto;
+  startPreparation(tx: AuditedTransaction, actor: Actor, visitId: string, visitRevision: number, decisionVersion: number, labelVersionId: string): FulfillmentPickListDto;
+  recordPrintRequest(tx: AuditedTransaction, actor: Actor, visitId: string, labelVersionId: string, visitRevision: number, decisionVersion: number, rendererVersion: string): FulfillmentPickListDto;
   confirmAllocation(tx: AuditedTransaction, actor: Actor, visitId: string, visitRevision: number, preparationRevision: number, payload: FulfillmentConfirmationPayload): FulfillmentPickListDto;
-  completePreparation(tx: AuditedTransaction, actor: Actor, visitId: string, visitRevision: number, preparationRevision: number, preparationId: string): FulfillmentPickListDto;
-  abandonPreparation(tx: AuditedTransaction, actor: Actor, visitId: string, visitRevision: number, preparationRevision: number, preparationId: string, reason: string): FulfillmentPickListDto;
+  completePreparation(tx: AuditedTransaction, actor: Actor, visitId: string, visitRevision: number, preparationRevision: number, preparationId: string, reservationId: string): FulfillmentPickListDto;
+  abandonPreparation(tx: AuditedTransaction, actor: Actor, visitId: string, visitRevision: number, preparationRevision: number, preparationId: string, reservationId: string, reason: string): FulfillmentPickListDto;
   releaseForVisit(tx: AuditedTransaction, actor: Actor, visitId: string, visitRevision: number, preparationRevision: number, payload: FulfillmentReleaseBody["payload"]): FulfillmentPickListDto;
   rejectForVisit(tx: AuditedTransaction, actor: Actor, visitId: string, visitRevision: number, preparationRevision: number, payload: FulfillmentRejectBody["payload"]): FulfillmentPickListDto;
   handoffForVisit(tx: AuditedTransaction, actor: Actor, visitId: string, visitRevision: number, payload: FulfillmentHandoffBody["payload"]): FulfillmentPickListDto;
@@ -45,6 +45,9 @@ export interface FulfillmentServiceOptions {
 }
 
 function invalidState(messageTh: string): never { throw new ApiError({ code: "INVALID_STATE", messageTh }); }
+function artifactStale(messageTh: string): never { throw new ApiError({ code: "ARTIFACT_STALE", messageTh }); }
+function preparationIncomplete(messageTh: string): never { throw new ApiError({ code: "PREPARATION_INCOMPLETE", messageTh }); }
+function reservationNotSellable(messageTh: string): never { throw new ApiError({ code: "RESERVATION_NOT_SELLABLE", messageTh }); }
 function clinicDate(value: Date): string {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(value);
   const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((entry) => entry.type === type)?.value;
@@ -94,6 +97,21 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
       items,
     } : null;
   };
+  const assertReservationSellable = (tx: AuditedTransaction, reservationId: string): void => {
+    const allocations = tx.select().from(inventoryReservationAllocations).where(eq(inventoryReservationAllocations.reservationId, reservationId)).all();
+    if (!allocations.length) reservationNotSellable("รายการจองยาไม่มี allocation");
+    const activeIds = new Set(tx.select({ id: inventoryReservations.id }).from(inventoryReservations).where(eq(inventoryReservations.status, "ACTIVE")).all().map((row) => row.id));
+    const activeAllocations = tx.select().from(inventoryReservationAllocations).all().filter((row) => activeIds.has(row.reservationId));
+    const movements = tx.select().from(inventoryStockMovements).all(); const today = clinicDate(clock());
+    for (const allocation of allocations) {
+      const lot = tx.select().from(inventoryLots).where(eq(inventoryLots.id, allocation.lotId)).get();
+      const onHand = movements.filter((movement) => movement.lotId === allocation.lotId).reduce((sum, movement) => sum + movement.quantityDelta, 0);
+      const reserved = activeAllocations.filter((row) => row.lotId === allocation.lotId).reduce((sum, row) => sum + row.quantity, 0);
+      if (!lot || lot.medicationId !== allocation.medicationId || lot.status !== "AVAILABLE" || lot.expiryDate <= today || onHand < reserved || onHand < allocation.quantity) {
+        reservationNotSellable("ล็อตยาสำหรับรายการจองไม่พร้อมใช้งาน");
+      }
+    }
+  };
   const read = (tx: Reader, visitId: string): FulfillmentPickListDto => {
     const visit = tx.select().from(visits).where(and(eq(visits.id, visitId), eq(visits.clinicId, "clinic"))).get();
     if (!visit) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit" });
@@ -109,7 +127,12 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
       eq(inventoryReservations.visitId, visitId), eq(inventoryReservations.medicationDecisionId, decision.id),
     )).orderBy(desc(inventoryReservations.createdAt)).all().find((row) => row.status !== "RELEASED") : undefined;
     const allocations = reservation ? tx.select().from(inventoryReservationAllocations).where(eq(inventoryReservationAllocations.reservationId, reservation.id))
-      .orderBy(asc(inventoryReservationAllocations.position)).all().map((row) => ({ id: row.id, orderItemId: row.medicationOrderItemId, lotId: row.lotId, quantity: row.quantity })) : [];
+      .orderBy(asc(inventoryReservationAllocations.position)).all().map((row) => {
+        const item = tx.select().from(medicationOrderItems).where(eq(medicationOrderItems.id, row.medicationOrderItemId)).get();
+        const labelItem = item && label ? tx.select().from(fulfillmentLabelItems).where(and(eq(fulfillmentLabelItems.labelVersionId, label.id), eq(fulfillmentLabelItems.medicationOrderItemId, item.id))).get() : undefined;
+        if (!item || !labelItem) throw new Error("Allocation snapshot source missing");
+        return { id: row.id, orderItemId: row.medicationOrderItemId, medicationId: row.medicationId, displayNameSnapshot: item.displayNameSnapshot, strengthSnapshot: item.strengthSnapshot, dosageFormSnapshot: item.dosageFormSnapshot, internalBarcode: labelItem.internalBarcodeSnapshot, lotId: row.lotId, lotNumberSnapshot: row.lotNumberSnapshot, expiryDateSnapshot: row.expiryDateSnapshot, unitSnapshot: row.unitSnapshot, quantity: row.quantity };
+      }) : [];
     const preparationRow = reservation ? tx.select().from(fulfillmentPreparations).where(eq(fulfillmentPreparations.reservationId, reservation.id)).get() : undefined;
     const preparation = preparationRow && !activeInvalidation(tx, "PREPARATION", preparationRow.id) ? {
       id: preparationRow.id, revision: preparationRow.revision, status: preparationRow.status,
@@ -243,7 +266,9 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
   return {
     getPickList: (visitId) => read(input.database.db, visitId), getCurrentLabel: (visitId) => labelFor(input.database.db, visitId), readHandoffChain: (visitId) => read(input.database.db, visitId),
     createLabelForSignedOrder: ensureLabel,
-    startPreparation(tx, actor, visitId, visitRevision, decisionVersion) {
+    startPreparation(tx, actor, visitId, visitRevision, decisionVersion, labelVersionId) {
+      const currentLabel = labelFor(tx, visitId);
+      if (currentLabel && (currentLabel.id !== labelVersionId || currentLabel.medicationDecisionVersion !== decisionVersion)) artifactStale("ฉลากยาปัจจุบันไม่ตรงกับคำสั่งที่เลือก");
       input.inventory.reserveForVisit(tx, actor, visitId, visitRevision, decisionVersion);
       const decision = tx.select().from(medicationDecisions).where(eq(medicationDecisions.visitId, visitId)).orderBy(desc(medicationDecisions.version)).get();
       if (!decision) throw new Error("Signed decision disappeared");
@@ -256,9 +281,9 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
       if (!existing) tx.insert(fulfillmentPreparations).values({ id: nextId(), clinicId: "clinic", visitId, reservationId: reservation.id, medicationDecisionId: decision.id, medicationDecisionVersion: decision.version, labelVersionId: label.id, revision: 1, status: "ACTIVE", minimumPrintSequence: (lastRejection?.printSequenceAtRejection ?? 0) + 1, createdAt: clock().toISOString(), createdBy: actor.id, completedAt: null, completedBy: null }).run();
       return read(tx, visitId);
     },
-    recordPrintRequest(tx, actor, visitId, labelVersionId, visitRevision, rendererVersion) {
+    recordPrintRequest(tx, actor, visitId, labelVersionId, visitRevision, decisionVersion, rendererVersion) {
       const visit = tx.select().from(visits).where(eq(visits.id, visitId)).get(); if (!visit) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit" }); assertExpectedRevision(visit.revision, visitRevision, "visit");
-      const label = labelFor(tx, visitId); if (!label || label.id !== labelVersionId) throw new ApiError({ code: "INVALID_STATE", messageTh: "ฉลากยานี้ไม่พร้อมพิมพ์" });
+      const label = labelFor(tx, visitId); if (!label || label.id !== labelVersionId || label.medicationDecisionVersion !== decisionVersion) artifactStale("ฉลากยานี้ไม่พร้อมพิมพ์");
       const sequence = (tx.select().from(fulfillmentLabelPrintEvents).where(eq(fulfillmentLabelPrintEvents.labelVersionId, label.id)).all().reduce((max, event) => Math.max(max, event.sequence), 0)) + 1;
       const now = clock().toISOString(); const id = nextId();
       tx.insert(fulfillmentLabelPrintEvents).values({ id, labelVersionId: label.id, sequence, requestedAt: now, requestedBy: actor.id, rendererVersion, mediaSizeSnapshot: "80x100mm" }).run();
@@ -267,33 +292,36 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
     confirmAllocation(tx, actor, visitId, visitRevision, preparationRevision, payload) {
       const visit = tx.select().from(visits).where(eq(visits.id, visitId)).get(); if (!visit) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit" }); assertExpectedRevision(visit.revision, visitRevision, "visit");
       const prep = tx.select().from(fulfillmentPreparations).where(eq(fulfillmentPreparations.id, payload.preparationId)).get();
-      if (!prep || prep.visitId !== visitId || prep.status !== "ACTIVE" || activeInvalidation(tx, "PREPARATION", prep.id)) invalidState("รายการจัดยาไม่พร้อมยืนยัน"); assertExpectedRevision(prep.revision, preparationRevision, "preparation");
-      const allocation = tx.select().from(inventoryReservationAllocations).where(and(eq(inventoryReservationAllocations.id, payload.allocationId), eq(inventoryReservationAllocations.reservationId, prep.reservationId))).get(); if (!allocation) invalidState("ไม่พบรายการจัดยาที่เลือก");
+      if (!prep || prep.visitId !== visitId || prep.status !== "ACTIVE" || activeInvalidation(tx, "PREPARATION", prep.id)) artifactStale("รายการจัดยาไม่พร้อมยืนยัน"); assertExpectedRevision(prep.revision, preparationRevision, "preparation");
+      const allocation = tx.select().from(inventoryReservationAllocations).where(and(eq(inventoryReservationAllocations.id, payload.allocationId), eq(inventoryReservationAllocations.reservationId, prep.reservationId))).get(); if (!allocation) artifactStale("ไม่พบรายการจัดยาที่เลือก");
       const existingConfirmation = tx.select({ id: fulfillmentPreparationConfirmations.id }).from(fulfillmentPreparationConfirmations).where(and(eq(fulfillmentPreparationConfirmations.preparationId, prep.id), eq(fulfillmentPreparationConfirmations.reservationAllocationId, allocation.id))).get();
       if (existingConfirmation) throw new ApiError({ code: "ALLOCATION_ALREADY_CONFIRMED", messageTh: "รายการจัดยานี้ได้รับการยืนยันแล้ว" });
-      if (payload.method === "BARCODE") { const medication = tx.select().from(medications).where(eq(medications.id, allocation.medicationId)).get(); if (!medication || medication.internalBarcode !== payload.barcode.trim().toUpperCase()) invalidState("บาร์โค้ดไม่ตรงกับรายการจัดยา"); }
+      const labelItem = tx.select().from(fulfillmentLabelItems).where(and(eq(fulfillmentLabelItems.labelVersionId, prep.labelVersionId), eq(fulfillmentLabelItems.medicationOrderItemId, allocation.medicationOrderItemId))).get();
+      if (payload.method === "BARCODE" && (!labelItem || labelItem.internalBarcodeSnapshot !== payload.barcode.trim().toUpperCase())) throw new ApiError({ code: "BARCODE_MISMATCH", messageTh: "บาร์โค้ดไม่ตรงกับรายการจัดยา" });
       const now = clock().toISOString();
-      tx.insert(fulfillmentPreparationConfirmations).values({ id: nextId(), preparationId: prep.id, reservationAllocationId: allocation.id, medicationOrderItemId: allocation.medicationOrderItemId, medicationId: allocation.medicationId, lotId: allocation.lotId, quantity: allocation.quantity, method: payload.method, barcodeSnapshot: payload.method === "BARCODE" ? payload.barcode.trim().toUpperCase() : null, manualReason: payload.method === "MANUAL" ? payload.reason.trim() : null, confirmedAt: now, confirmedBy: actor.id }).run();
-      appendAuditEvent({ tx, actor, id: nextId(), action: "preparation.allocation-confirmed", entityType: "fulfillment_preparation", entityId: prep.id, entityRevision: prep.revision, reason: null, occurredAt: now, metadata: { visitId, preparationId: prep.id, allocationId: allocation.id, orderItemId: allocation.medicationOrderItemId, lotId: allocation.lotId, quantity: allocation.quantity } }); return read(tx, visitId);
+      const confirmationId = nextId(); const manualReason = payload.method === "MANUAL" ? payload.reason.trim() : null;
+      tx.insert(fulfillmentPreparationConfirmations).values({ id: confirmationId, preparationId: prep.id, reservationAllocationId: allocation.id, medicationOrderItemId: allocation.medicationOrderItemId, medicationId: allocation.medicationId, lotId: allocation.lotId, quantity: allocation.quantity, method: payload.method, barcodeSnapshot: payload.method === "BARCODE" ? payload.barcode.trim().toUpperCase() : null, manualReason, confirmedAt: now, confirmedBy: actor.id }).run();
+      appendAuditEvent({ tx, actor, id: nextId(), action: "preparation.allocation-confirmed", entityType: "fulfillment_preparation", entityId: prep.id, entityRevision: prep.revision, reason: manualReason, occurredAt: now, metadata: { visitId, decisionId: prep.medicationDecisionId, decisionVersion: prep.medicationDecisionVersion, labelVersionId: prep.labelVersionId, preparationId: prep.id, reservationId: prep.reservationId, confirmationId, allocationId: allocation.id, orderItemId: allocation.medicationOrderItemId, method: payload.method, barcode: payload.method === "BARCODE" ? payload.barcode.trim().toUpperCase() : null, manualReason, lot: { lotId: allocation.lotId, lotNumber: allocation.lotNumberSnapshot, expiryDate: allocation.expiryDateSnapshot, unit: allocation.unitSnapshot, quantity: allocation.quantity } } }); return read(tx, visitId);
     },
-    completePreparation(tx, actor, visitId, visitRevision, preparationRevision, preparationId) {
+    completePreparation(tx, actor, visitId, visitRevision, preparationRevision, preparationId, reservationId) {
       const visit = tx.select().from(visits).where(eq(visits.id, visitId)).get(); if (!visit) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit" }); assertExpectedRevision(visit.revision, visitRevision, "visit");
-      const prep = tx.select().from(fulfillmentPreparations).where(eq(fulfillmentPreparations.id, preparationId)).get(); if (!prep || prep.visitId !== visitId || prep.status !== "ACTIVE" || activeInvalidation(tx, "PREPARATION", prep.id)) invalidState("รายการจัดยาไม่พร้อมเสร็จสิ้น"); assertExpectedRevision(prep.revision, preparationRevision, "preparation");
-      const allocationCount = tx.select().from(inventoryReservationAllocations).where(eq(inventoryReservationAllocations.reservationId, prep.reservationId)).all().length; const confirmationCount = tx.select().from(fulfillmentPreparationConfirmations).where(eq(fulfillmentPreparationConfirmations.preparationId, prep.id)).all().length; if (allocationCount !== confirmationCount) invalidState("ยืนยันรายการจัดยาไม่ครบ");
+      const prep = tx.select().from(fulfillmentPreparations).where(eq(fulfillmentPreparations.id, preparationId)).get(); if (!prep || prep.visitId !== visitId || prep.status !== "ACTIVE" || activeInvalidation(tx, "PREPARATION", prep.id) || prep.reservationId !== reservationId) artifactStale("รายการจัดยาไม่พร้อมเสร็จสิ้น"); assertExpectedRevision(prep.revision, preparationRevision, "preparation");
+      const allocationCount = tx.select().from(inventoryReservationAllocations).where(eq(inventoryReservationAllocations.reservationId, prep.reservationId)).all().length; const confirmationCount = tx.select().from(fulfillmentPreparationConfirmations).where(eq(fulfillmentPreparationConfirmations.preparationId, prep.id)).all().length; if (allocationCount !== confirmationCount) preparationIncomplete("ยืนยันรายการจัดยาไม่ครบ");
       const now = clock().toISOString();
+      assertReservationSellable(tx, prep.reservationId);
       const changedPreparation = tx.update(fulfillmentPreparations).set({ status: "COMPLETED", revision: prep.revision + 1, completedAt: now, completedBy: actor.id }).where(and(eq(fulfillmentPreparations.id, prep.id), eq(fulfillmentPreparations.revision, prep.revision))).run();
       if (changedPreparation.changes !== 1) invalidState("รายการจัดยาถูกเปลี่ยนแปลงแล้ว");
       const changedVisit = tx.update(visits).set({ status: "AWAITING_RELEASE", revision: visit.revision + 1 }).where(and(eq(visits.id, visitId), eq(visits.status, "PREPARING"), eq(visits.revision, visit.revision))).run();
       if (changedVisit.changes !== 1) invalidState("Visit ถูกเปลี่ยนแปลงแล้ว");
       appendAuditEvent({ tx, actor, id: nextId(), action: "visit.preparation-completed", entityType: "visit", entityId: visitId, entityRevision: visit.revision + 1, reason: null, occurredAt: now, metadata: { previousStatus: visit.status, nextStatus: "AWAITING_RELEASE", preparationId: prep.id, reservationId: prep.reservationId } }); return read(tx, visitId);
     },
-    abandonPreparation(tx, actor, visitId, visitRevision, preparationRevision, preparationId, reason) {
+    abandonPreparation(tx, actor, visitId, visitRevision, preparationRevision, preparationId, reservationId, reason) {
       const visit = tx.select().from(visits).where(eq(visits.id, visitId)).get();
       if (!visit) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit" });
       assertExpectedRevision(visit.revision, visitRevision, "visit");
       if (visit.status !== "PREPARING") invalidState("สถานะ Visit ไม่อนุญาตให้ยกเลิกการจัดยา");
       const prep = tx.select().from(fulfillmentPreparations).where(eq(fulfillmentPreparations.id, preparationId)).get();
-      if (!prep || prep.visitId !== visitId || prep.status !== "ACTIVE" || activeInvalidation(tx, "PREPARATION", prep.id)) invalidState("รายการจัดยาไม่พร้อมยกเลิก");
+      if (!prep || prep.visitId !== visitId || prep.status !== "ACTIVE" || activeInvalidation(tx, "PREPARATION", prep.id) || prep.reservationId !== reservationId) artifactStale("รายการจัดยาไม่พร้อมยกเลิก");
       assertExpectedRevision(prep.revision, preparationRevision, "preparation");
       const reservation = tx.select().from(inventoryReservations).where(and(
         eq(inventoryReservations.id, prep.reservationId),
@@ -315,25 +343,25 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
       const visit = tx.select().from(visits).where(eq(visits.id, visitId)).get();
       if (!visit) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit" });
       assertExpectedRevision(visit.revision, visitRevision, "visit");
-      if (visit.status !== "AWAITING_RELEASE") invalidState("สถานะ Visit ไม่อนุญาตให้ตรวจปล่อยยา");
+      if (visit.status !== "AWAITING_RELEASE") artifactStale("สถานะ Visit ไม่อนุญาตให้ตรวจปล่อยยา");
       const decision = tx.select().from(medicationDecisions).where(eq(medicationDecisions.visitId, visitId)).orderBy(desc(medicationDecisions.version)).get();
       const prep = tx.select().from(fulfillmentPreparations).where(eq(fulfillmentPreparations.id, payload.preparationId)).get();
       const label = labelFor(tx, visitId);
-      if (!decision || decision.kind !== "ORDER" || decision.id !== payload.decisionId || decision.version !== payload.decisionVersion || !prep || prep.visitId !== visitId || prep.status !== "COMPLETED" || prep.medicationDecisionId !== payload.decisionId || prep.medicationDecisionVersion !== payload.decisionVersion || !label || label.id !== payload.labelVersionId || label.medicationDecisionId !== payload.decisionId || label.medicationDecisionVersion !== payload.decisionVersion || prep.labelVersionId !== payload.labelVersionId || activeInvalidation(tx, "LABEL", label.id) || activeInvalidation(tx, "PREPARATION", prep.id)) invalidState("หลักฐานการเตรียมยาไม่พร้อมตรวจปล่อย");
+      if (!decision || decision.kind !== "ORDER" || decision.id !== payload.decisionId || decision.version !== payload.decisionVersion || !prep || prep.visitId !== visitId || prep.status !== "COMPLETED" || prep.medicationDecisionId !== payload.decisionId || prep.medicationDecisionVersion !== payload.decisionVersion || !label || label.id !== payload.labelVersionId || label.medicationDecisionId !== payload.decisionId || label.medicationDecisionVersion !== payload.decisionVersion || prep.labelVersionId !== payload.labelVersionId || activeInvalidation(tx, "LABEL", label.id) || activeInvalidation(tx, "PREPARATION", prep.id)) artifactStale("หลักฐานการเตรียมยาไม่พร้อมตรวจปล่อย");
       assertExpectedRevision(prep.revision, preparationRevision, "preparation");
       const reservation = tx.select().from(inventoryReservations).where(and(eq(inventoryReservations.id, prep.reservationId), eq(inventoryReservations.status, "ACTIVE"))).get();
-      if (!reservation || reservation.id !== payload.reservationId || reservation.medicationDecisionId !== decision.id || reservation.medicationDecisionVersion !== decision.version) invalidState("รายการจองยาไม่พร้อมตรวจปล่อย");
+      if (!reservation || reservation.id !== payload.reservationId || reservation.medicationDecisionId !== decision.id || reservation.medicationDecisionVersion !== decision.version) reservationNotSellable("รายการจองยาไม่พร้อมตรวจปล่อย");
       const print = tx.select().from(fulfillmentLabelPrintEvents).where(eq(fulfillmentLabelPrintEvents.labelVersionId, label.id)).orderBy(desc(fulfillmentLabelPrintEvents.sequence)).get();
-      if (!print || print.id !== payload.labelPrintEventId || print.labelVersionId !== payload.labelVersionId || print.sequence < prep.minimumPrintSequence) invalidState("ยังไม่มีคำขอพิมพ์ฉลากตามรอบที่ต้องใช้");
+      if (!print || print.id !== payload.labelPrintEventId || print.labelVersionId !== payload.labelVersionId || print.sequence < prep.minimumPrintSequence) throw new ApiError({ code: "LABEL_PRINT_REQUIRED", messageTh: "ยังไม่มีคำขอพิมพ์ฉลากตามรอบที่ต้องใช้" });
       const allocations = tx.select().from(inventoryReservationAllocations).where(eq(inventoryReservationAllocations.reservationId, reservation.id)).all();
       const confirmations = tx.select().from(fulfillmentPreparationConfirmations).where(eq(fulfillmentPreparationConfirmations.preparationId, prep.id)).all();
-      if (allocations.length === 0 || confirmations.length !== allocations.length || allocations.some((allocation) => !confirmations.some((confirmation) => confirmation.reservationAllocationId === allocation.id && confirmation.quantity === allocation.quantity && confirmation.lotId === allocation.lotId && confirmation.medicationOrderItemId === allocation.medicationOrderItemId))) invalidState("การยืนยันรายการจัดยาไม่ครบถ้วน");
+      if (allocations.length === 0 || confirmations.length !== allocations.length || allocations.some((allocation) => !confirmations.some((confirmation) => confirmation.reservationAllocationId === allocation.id && confirmation.quantity === allocation.quantity && confirmation.lotId === allocation.lotId && confirmation.medicationOrderItemId === allocation.medicationOrderItemId))) preparationIncomplete("การยืนยันรายการจัดยาไม่ครบถ้วน");
       for (const allocation of allocations) {
         const lot = tx.select().from(inventoryLots).where(eq(inventoryLots.id, allocation.lotId)).get();
         const today = clinicDate(clock());
-        if (!lot || lot.status !== "AVAILABLE" || lot.expiryDate <= today) invalidState("ล็อตยาสำหรับตรวจปล่อยไม่พร้อมใช้งาน");
+        if (!lot || lot.status !== "AVAILABLE" || lot.expiryDate <= today) reservationNotSellable("ล็อตยาสำหรับตรวจปล่อยไม่พร้อมใช้งาน");
       }
-      if (tx.select({ id: fulfillmentReleases.id }).from(fulfillmentReleases).where(eq(fulfillmentReleases.reservationId, reservation.id)).get()) invalidState("มีหลักฐานการตรวจปล่อยสำหรับรายการจองนี้แล้ว");
+      if (tx.select({ id: fulfillmentReleases.id }).from(fulfillmentReleases).where(eq(fulfillmentReleases.reservationId, reservation.id)).get()) artifactStale("มีหลักฐานการตรวจปล่อยสำหรับรายการจองนี้แล้ว");
       const now = clock().toISOString(); const releaseId = nextId();
       tx.insert(fulfillmentReleases).values({ id: releaseId, clinicId: "clinic", visitId, medicationDecisionId: decision.id, medicationDecisionVersion: decision.version, labelVersionId: label.id, labelPrintEventId: print.id, preparationId: prep.id, preparationRevision: prep.revision, reservationId: reservation.id, releasedAt: now, releasedBy: actor.id }).run();
       const changed = tx.update(visits).set({ status: "AWAITING_HANDOFF", revision: visit.revision + 1 }).where(and(eq(visits.id, visitId), eq(visits.status, "AWAITING_RELEASE"), eq(visits.revision, visit.revision))).run();
@@ -415,12 +443,15 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
       const visit = tx.select().from(visits).where(eq(visits.id, visitId)).get();
       if (!visit) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit" });
       assertExpectedRevision(visit.revision, visitRevision, "visit");
-      if (visit.status !== "AWAITING_HANDOFF") invalidState("สถานะ Visit ไม่อนุญาตให้ส่งมอบยา");
+      if (visit.status !== "AWAITING_HANDOFF") {
+        if (tx.select({ id: fulfillmentDispenses.id }).from(fulfillmentDispenses).where(eq(fulfillmentDispenses.visitId, visitId)).get()) throw new ApiError({ code: "HANDOFF_ALREADY_CONFIRMED", messageTh: "รายการส่งมอบนี้ได้รับการยืนยันแล้ว" });
+        artifactStale("สถานะ Visit ไม่อนุญาตให้ส่งมอบยา");
+      }
       const decision = tx.select().from(medicationDecisions).where(eq(medicationDecisions.visitId, visitId)).orderBy(desc(medicationDecisions.version)).get();
       const label = labelFor(tx, visitId);
       if (!decision || decision.kind !== "ORDER" || decision.id !== payload.decisionId || decision.version !== payload.decisionVersion || !label || label.id !== payload.labelVersionId || label.medicationDecisionId !== payload.decisionId || label.medicationDecisionVersion !== payload.decisionVersion || activeInvalidation(tx, "LABEL", label.id)) invalidState("คำสั่งยาหรือฉลากปัจจุบันไม่พร้อมส่งมอบ");
       const release = tx.select().from(fulfillmentReleases).where(and(eq(fulfillmentReleases.visitId, visitId), eq(fulfillmentReleases.medicationDecisionId, decision.id))).get();
-      if (!release || release.id !== payload.releaseId || activeInvalidation(tx, "RELEASE", release.id) || release.labelVersionId !== label.id || release.medicationDecisionVersion !== payload.decisionVersion) invalidState("หลักฐานการตรวจปล่อยไม่พร้อมส่งมอบ");
+      if (!release || release.id !== payload.releaseId || activeInvalidation(tx, "RELEASE", release.id) || release.labelVersionId !== label.id || release.medicationDecisionVersion !== payload.decisionVersion) throw new ApiError({ code: "RELEASE_REQUIRED", messageTh: "หลักฐานการตรวจปล่อยไม่พร้อมส่งมอบ" });
       const prep = tx.select().from(fulfillmentPreparations).where(eq(fulfillmentPreparations.id, release.preparationId)).get();
       const reservation = tx.select().from(inventoryReservations).where(and(eq(inventoryReservations.id, release.reservationId), eq(inventoryReservations.status, "ACTIVE"))).get();
       if (!prep || prep.status !== "COMPLETED" || prep.medicationDecisionId !== payload.decisionId || prep.medicationDecisionVersion !== payload.decisionVersion || prep.labelVersionId !== payload.labelVersionId || activeInvalidation(tx, "PREPARATION", prep.id) || !reservation || reservation.id !== payload.reservationId || release.reservationId !== payload.reservationId || reservation.medicationDecisionId !== decision.id || reservation.medicationDecisionVersion !== payload.decisionVersion || tx.select({ id: fulfillmentDispenses.id }).from(fulfillmentDispenses).where(eq(fulfillmentDispenses.visitId, visitId)).get()) invalidState("รายการส่งมอบยาไม่พร้อมใช้งาน");

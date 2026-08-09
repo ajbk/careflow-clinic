@@ -20,7 +20,7 @@ const pickListResponseSchema = z.strictObject({ data: fulfillmentPickListSchema 
 const labelResponseSchema = z.strictObject({ data: fulfillmentCurrentLabelSchema });
 const commandResponseSchema = z.strictObject({ data: fulfillmentPickListSchema, replayed: z.boolean() });
 
-export type ReserveDispensingAttempt = CommandAttempt<Record<string, never>, { visit: number; medicationDecision: number }>;
+export type ReserveDispensingAttempt = CommandAttempt<{ labelVersionId: string }, { visit: number; medicationDecision: number }>;
 export type PrintLabelAttempt = CommandAttempt<FulfillmentPrintBody["payload"], FulfillmentPrintBody["expectedRevisions"]>;
 export type ConfirmAllocationAttempt = CommandAttempt<FulfillmentConfirmationBody["payload"], FulfillmentConfirmationBody["expectedRevisions"]>;
 export type CompletePreparationAttempt = CommandAttempt<FulfillmentCompletePreparationBody["payload"], FulfillmentCompletePreparationBody["expectedRevisions"]>;
@@ -43,13 +43,14 @@ function requiredPreparation(data: FulfillmentPickListDto) {
 }
 
 export function createReserveDispensingAttempt(data: FulfillmentPickListDto): ReserveDispensingAttempt {
-  if (!data.medicationDecision || data.medicationDecision.kind !== "ORDER") throw new Error("A signed order is required");
-  return createCommandAttempt({ visit: data.visit.revision, medicationDecision: data.medicationDecision.version }, {});
+  if (!data.medicationDecision || data.medicationDecision.kind !== "ORDER" || !data.label) throw new Error("A current signed label is required");
+  return createCommandAttempt({ visit: data.visit.revision, medicationDecision: data.medicationDecision.version }, { labelVersionId: data.label.id });
 }
 
 export function createPrintLabelAttempt(data: FulfillmentPickListDto): PrintLabelAttempt {
   if (!data.label) throw new Error("A current label is required");
-  return createCommandAttempt({ visit: data.visit.revision }, { rendererVersion: "careflow-label-ui-v1" });
+  if (!data.medicationDecision || data.medicationDecision.kind !== "ORDER") throw new Error("A signed order is required");
+  return createCommandAttempt({ visit: data.visit.revision }, { rendererVersion: "careflow-label-ui-v1", decisionVersion: data.medicationDecision.version });
 }
 
 export function createConfirmAllocationAttempt(data: FulfillmentPickListDto, payload: FulfillmentConfirmationBody["payload"]): ConfirmAllocationAttempt {
@@ -59,12 +60,14 @@ export function createConfirmAllocationAttempt(data: FulfillmentPickListDto, pay
 
 export function createCompletePreparationAttempt(data: FulfillmentPickListDto): CompletePreparationAttempt {
   const preparation = requiredPreparation(data);
-  return createCommandAttempt({ visit: data.visit.revision, preparation: preparation.revision }, { preparationId: preparation.id });
+  if (!data.reservation) throw new Error("An active reservation is required");
+  return createCommandAttempt({ visit: data.visit.revision, preparation: preparation.revision }, { preparationId: preparation.id, reservationId: data.reservation.id });
 }
 
 export function createAbandonPreparationAttempt(data: FulfillmentPickListDto, reason: string): AbandonPreparationAttempt {
   const preparation = requiredPreparation(data);
-  return createCommandAttempt({ visit: data.visit.revision, preparation: preparation.revision }, { preparationId: preparation.id, reason: reason.trim() });
+  if (!data.reservation) throw new Error("An active reservation is required");
+  return createCommandAttempt({ visit: data.visit.revision, preparation: preparation.revision }, { preparationId: preparation.id, reservationId: data.reservation.id, reason: reason.trim() });
 }
 
 function requiredCompletedPreparation(data: FulfillmentPickListDto) {
@@ -133,7 +136,7 @@ function useCommandMutation<TPayload, TRevisions extends Record<string, number>>
   });
 }
 
-export function useReserveDispensing(client: ApiClient = defaultApiClient) { return useCommandMutation<Record<string, never>, { visit: number; medicationDecision: number }>(client, (visitId) => `/api/dispensing/${encodeURIComponent(visitId)}/reservations`); }
+export function useReserveDispensing(client: ApiClient = defaultApiClient) { return useCommandMutation<{ labelVersionId: string }, { visit: number; medicationDecision: number }>(client, (visitId) => `/api/dispensing/${encodeURIComponent(visitId)}/reservations`); }
 export function usePrintLabel(client: ApiClient = defaultApiClient) {
   const queryClient = useQueryClient();
   return useMutation({

@@ -15,7 +15,7 @@ const label = {
   clinicNameSnapshot: "คลินิกฉลากสแนปช็อต", patientHnSnapshot: "HN-LABEL-000042", patientDisplayNameSnapshot: "ผู้ป่วยบนฉลาก 000042",
   items: [{ orderItemId: "item-1", medicationId: "DEMO-MED-001", medicationRevision: 1, internalBarcode: "PARA-500", displayNameSnapshot: "พาราเซตามอล", strengthSnapshot: "500 mg", dosageFormSnapshot: "เม็ด", quantity: 10, unitSnapshot: "เม็ด", directionsThSnapshot: "รับประทานหลังอาหาร" }],
 };
-const allocation = { id: "allocation-1", orderItemId: "item-1", lotId: "lot-early", quantity: 10 };
+const allocation = { id: "allocation-1", orderItemId: "item-1", medicationId: "DEMO-MED-001", displayNameSnapshot: "ยาทดสอบ", strengthSnapshot: "500 มก.", dosageFormSnapshot: "เม็ด", internalBarcode: "PARA-500", lotId: "lot-early", lotNumberSnapshot: "LOT-EARLY", expiryDateSnapshot: "2026-12-31", unitSnapshot: "เม็ด", quantity: 10 };
 const basePickList = { visit, patient, medicationDecision: { id: "decision-1", version: 1, kind: "ORDER" as const }, label, reservation: null, preparation: null, release: null, dispense: null, allowedActions: ["START_PREPARATION", "PRINT_LABEL"] as const };
 const preparingPickList = { ...basePickList, visit: { ...visit, status: "PREPARING" as const, revision: 10 }, reservation: { id: "reservation-1", allocations: [allocation] }, preparation: { id: "preparation-1", revision: 1, status: "ACTIVE" as const, confirmations: [] }, allowedActions: ["PRINT_LABEL", "CONFIRM_ALLOCATION", "COMPLETE_PREPARATION", "ABANDON_PREPARATION"] as const };
 const confirmedPickList = { ...preparingPickList, preparation: { ...preparingPickList.preparation, confirmations: [{ allocationId: allocation.id, orderItemId: allocation.orderItemId, lotId: allocation.lotId, method: "BARCODE" as const, barcode: "PARA-500" }] } };
@@ -256,8 +256,8 @@ describe("Preparation and label workflow", () => {
     const user = userEvent.setup();
     server.resetHandlers(http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: preparingPickList })), http.post("/api/dispensing/visit-42/preparation-confirmations", () => HttpResponse.json({ data: confirmedPickList, replayed: false }, { status: 201 })));
     renderDispensing();
-    expect(await screen.findByText("ล็อต lot-early")).toBeInTheDocument();
-    expect(screen.getByText("จำนวน 10")).toBeInTheDocument();
+    expect(await screen.findByText(/ล็อต LOT-EARLY/)).toBeInTheDocument();
+    expect(screen.getByText("ยาทดสอบ · 500 มก.")).toBeInTheDocument();
     const scanner = screen.getByLabelText("สแกนบาร์โค้ดยา");
     await user.type(scanner, "PARA-500{enter}");
     expect(await screen.findByText("ยืนยันแล้ว")).toBeInTheDocument();
@@ -265,7 +265,7 @@ describe("Preparation and label workflow", () => {
 
   it("restores scanner focus after a successful confirmation when another allocation remains", async () => {
     const user = userEvent.setup();
-    const secondAllocation = { id: "allocation-2", orderItemId: "item-2", lotId: "lot-late", quantity: 5 };
+    const secondAllocation = { ...allocation, id: "allocation-2", orderItemId: "item-2", lotId: "lot-late", lotNumberSnapshot: "LOT-LATE", quantity: 5 };
     const twoAllocationPickList = { ...preparingPickList, reservation: { id: "reservation-1", allocations: [allocation, secondAllocation] } };
     const firstConfirmed = { ...twoAllocationPickList, preparation: { ...twoAllocationPickList.preparation, confirmations: [{ allocationId: allocation.id, orderItemId: allocation.orderItemId, lotId: allocation.lotId, method: "BARCODE" as const, barcode: "PARA-500" }] } };
     server.resetHandlers(
@@ -276,12 +276,12 @@ describe("Preparation and label workflow", () => {
     const scanner = await screen.findByLabelText("สแกนบาร์โค้ดยา");
     await user.type(scanner, "PARA-500{enter}");
     await waitFor(() => expect(scanner).toHaveFocus());
-    expect(screen.getByText("ล็อต lot-late")).toBeInTheDocument();
+    expect(screen.getByText(/ล็อต LOT-LATE/)).toBeInTheDocument();
   });
 
   it("restores scanner focus after a confirmation error while another allocation remains", async () => {
     const user = userEvent.setup();
-    const secondAllocation = { id: "allocation-2", orderItemId: "item-2", lotId: "lot-late", quantity: 5 };
+    const secondAllocation = { ...allocation, id: "allocation-2", orderItemId: "item-2", lotId: "lot-late", lotNumberSnapshot: "LOT-LATE", quantity: 5 };
     const twoAllocationPickList = { ...preparingPickList, reservation: { id: "reservation-1", allocations: [allocation, secondAllocation] } };
     server.resetHandlers(
       http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: twoAllocationPickList })),
@@ -292,7 +292,7 @@ describe("Preparation and label workflow", () => {
     await user.type(scanner, "PARA-500{enter}");
     expect(await screen.findByRole("alert")).toHaveTextContent("ข้อมูล Visit เปลี่ยนแปลงแล้ว");
     expect(scanner).toHaveFocus();
-    expect(screen.getByText("ล็อต lot-late")).toBeInTheDocument();
+    expect(screen.getByText(/ล็อต LOT-LATE/)).toBeInTheDocument();
   });
 
   it("keeps mismatch as a zero-progress local error without sending a command", async () => {

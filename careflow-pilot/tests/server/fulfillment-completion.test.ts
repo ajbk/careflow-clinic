@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   fulfillmentConfirmationBodySchema,
+  fulfillmentCompletePreparationBodySchema,
   fulfillmentCurrentLabelSchema,
   fulfillmentHandoffBodySchema,
   fulfillmentPickListSchema,
   fulfillmentRejectBodySchema,
   fulfillmentReleaseBodySchema,
+  fulfillmentPrintBodySchema,
+  reserveInventoryBodySchema,
 } from "../../src/shared/contracts.js";
 import { createTestDatabase, type TestDatabase } from "./helpers/database.js";
 
@@ -72,6 +75,12 @@ function seedChain(value: TestDatabase): void {
 
 describe("fulfillment completion persistence contracts", () => {
   it("requires a Doctor command to pin every reviewed fulfillment artifact", () => {
+    expect(reserveInventoryBodySchema.safeParse({ expectedRevisions: { visit: 3, medicationDecision: 1 }, payload: {} }).success).toBe(false);
+    expect(reserveInventoryBodySchema.safeParse({ expectedRevisions: { visit: 3, medicationDecision: 1 }, payload: { labelVersionId: "label-001" } }).success).toBe(true);
+    expect(fulfillmentPrintBodySchema.safeParse({ expectedRevisions: { visit: 4 }, payload: { rendererVersion: "test" } }).success).toBe(false);
+    expect(fulfillmentPrintBodySchema.safeParse({ expectedRevisions: { visit: 4 }, payload: { rendererVersion: "test", decisionVersion: 1 } }).success).toBe(true);
+    expect(fulfillmentCompletePreparationBodySchema.safeParse({ expectedRevisions: { visit: 4, preparation: 1 }, payload: { preparationId: "preparation-001" } }).success).toBe(false);
+    expect(fulfillmentCompletePreparationBodySchema.safeParse({ expectedRevisions: { visit: 4, preparation: 1 }, payload: { preparationId: "preparation-001", reservationId: "reservation-001" } }).success).toBe(true);
     expect(fulfillmentReleaseBodySchema.safeParse({ expectedRevisions: { visit: 5, preparation: 2 }, payload: { preparationId: "preparation-001" } }).success).toBe(false);
     expect(fulfillmentRejectBodySchema.safeParse({ expectedRevisions: { visit: 5, preparation: 2 }, payload: { preparationId: "preparation-001", reason: "ไม่ตรง" } }).success).toBe(false);
     expect(fulfillmentHandoffBodySchema.safeParse({ expectedRevisions: { visit: 6 }, payload: {} }).success).toBe(false);
@@ -84,7 +93,7 @@ describe("fulfillment completion persistence contracts", () => {
       patient: { id: "patient-001", hn: "DEMO-000001", displayName: "ผู้ป่วยทดสอบ 000001", phone: "0000000001", birthDate: "1990-01-01", sex: "unknown", revision: 1, createdAt: "2026-08-09T00:00:00.000Z" },
       medicationDecision: { id: "decision-001", version: 1, kind: "ORDER" },
       label: { id: "label-001", medicationDecisionId: "decision-001", medicationDecisionVersion: 1, version: 1, clinicNameSnapshot: "คลินิกทดสอบ", patientHnSnapshot: "DEMO-000001", patientDisplayNameSnapshot: "ผู้ป่วยทดสอบ 000001", items: [{ orderItemId: "order-item-001", medicationId: "DEMO-MED-001", medicationRevision: 1, displayNameSnapshot: "[DEMO] ยาทดสอบชนิด A", strengthSnapshot: "500 หน่วยทดสอบ", dosageFormSnapshot: "เม็ดทดสอบ", quantity: 2, unitSnapshot: "เม็ด", directionsThSnapshot: "ทดสอบ", internalBarcode: "CF-DEMO-001" }] },
-      reservation: { id: "reservation-001", allocations: [{ id: "allocation-001", orderItemId: "order-item-001", lotId: "lot-001", quantity: 2 }] },
+      reservation: { id: "reservation-001", allocations: [{ id: "allocation-001", orderItemId: "order-item-001", medicationId: "DEMO-MED-001", displayNameSnapshot: "[DEMO] ยาทดสอบชนิด A", strengthSnapshot: "500 หน่วยทดสอบ", dosageFormSnapshot: "เม็ดทดสอบ", internalBarcode: "CF-DEMO-001", lotId: "lot-001", lotNumberSnapshot: "LOT-001", expiryDateSnapshot: "2026-12-31", unitSnapshot: "เม็ด", quantity: 2 }] },
       preparation: { id: "preparation-001", revision: 1, status: "COMPLETED", minimumPrintSequence: 1, latestPrintEventId: "print-001", latestPrintSequence: 1, confirmations: [{ allocationId: "allocation-001", orderItemId: "order-item-001", lotId: "lot-001", method: "BARCODE", barcode: "CF-DEMO-001" }] },
       release: { id: "release-001", reservationId: "reservation-001" },
       dispense: { id: "dispense-001", reservationId: "reservation-001", lines: [{ allocationId: "allocation-001", orderItemId: "order-item-001", lotId: "lot-001", quantity: 2 }] },

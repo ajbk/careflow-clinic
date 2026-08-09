@@ -356,7 +356,7 @@ export type InventoryReservationDto = z.infer<typeof inventoryReservationSchema>
 export const reserveInventoryBodySchema = rejectOwnPrototypeKeys(
   z.strictObject({
     expectedRevisions: z.strictObject({ visit: z.number().int().min(1), medicationDecision: z.number().int().min(1) }),
-    payload: z.strictObject({}),
+    payload: z.strictObject({ labelVersionId: z.string().trim().min(1).max(120) }),
   }),
 );
 export type ReserveInventoryBody = z.infer<typeof reserveInventoryBodySchema>;
@@ -831,7 +831,15 @@ export type FulfillmentPrintEventDto = z.infer<typeof fulfillmentPrintEventSchem
 export const fulfillmentAllocationReferenceSchema = z.strictObject({
   id: fulfillmentIdSchema,
   orderItemId: fulfillmentIdSchema,
+  medicationId: z.string().regex(/^DEMO-MED-\d{3}$/),
+  displayNameSnapshot: z.string().trim().min(1).max(200),
+  strengthSnapshot: z.string().trim().min(1).max(100),
+  dosageFormSnapshot: z.string().trim().min(1).max(100),
+  internalBarcode: fulfillmentBarcodeSchema,
   lotId: fulfillmentIdSchema,
+  lotNumberSnapshot: z.string().trim().min(1).max(100),
+  expiryDateSnapshot: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  unitSnapshot: z.string().trim().min(1).max(100),
   quantity: z.number().int().min(1).max(999_999),
 });
 
@@ -953,19 +961,19 @@ export type FulfillmentConfirmationBody = z.infer<typeof fulfillmentConfirmation
 
 export const fulfillmentPrintBodySchema = rejectOwnPrototypeKeys(z.strictObject({
   expectedRevisions: z.strictObject({ visit: z.number().int().min(1) }),
-  payload: z.strictObject({ rendererVersion: z.string().trim().min(1).max(100) }),
+  payload: z.strictObject({ rendererVersion: z.string().trim().min(1).max(100), decisionVersion: z.number().int().min(1) }),
 }));
 export type FulfillmentPrintBody = z.infer<typeof fulfillmentPrintBodySchema>;
 
 export const fulfillmentCompletePreparationBodySchema = rejectOwnPrototypeKeys(z.strictObject({
   expectedRevisions: z.strictObject({ visit: z.number().int().min(1), preparation: z.number().int().min(1) }),
-  payload: z.strictObject({ preparationId: fulfillmentIdSchema }),
+  payload: z.strictObject({ preparationId: fulfillmentIdSchema, reservationId: fulfillmentIdSchema }),
 }));
 export type FulfillmentCompletePreparationBody = z.infer<typeof fulfillmentCompletePreparationBodySchema>;
 
 export const fulfillmentAbandonPreparationBodySchema = rejectOwnPrototypeKeys(z.strictObject({
   expectedRevisions: z.strictObject({ visit: z.number().int().min(1), preparation: z.number().int().min(1) }),
-  payload: z.strictObject({ preparationId: fulfillmentIdSchema, reason: fulfillmentTextSchema(500) }),
+  payload: z.strictObject({ preparationId: fulfillmentIdSchema, reservationId: fulfillmentIdSchema, reason: fulfillmentTextSchema(500) }),
 }));
 export type FulfillmentAbandonPreparationBody = z.infer<typeof fulfillmentAbandonPreparationBodySchema>;
 
@@ -1141,9 +1149,16 @@ export const apiErrorCodeSchema = z.enum([
   "FORBIDDEN",
   "NOT_FOUND",
   "INVALID_STATE",
+  "ARTIFACT_STALE",
+  "BARCODE_MISMATCH",
   "LOT_RESERVED",
   "STOCK_WOULD_BE_NEGATIVE",
   "ALLOCATION_ALREADY_CONFIRMED",
+  "PREPARATION_INCOMPLETE",
+  "LABEL_PRINT_REQUIRED",
+  "RESERVATION_NOT_SELLABLE",
+  "RELEASE_REQUIRED",
+  "HANDOFF_ALREADY_CONFIRMED",
   "REVISION_CONFLICT",
   "IDEMPOTENCY_CONFLICT",
   "ACTIVE_VISIT_EXISTS",

@@ -505,7 +505,7 @@ function readPickList(
 }
 
 function reservationError(messageTh: string): ApiError {
-  return new ApiError({ code: "INVALID_STATE", messageTh });
+  return new ApiError({ code: "RESERVATION_NOT_SELLABLE", messageTh });
 }
 
 function assertReason(reason: string): string {
