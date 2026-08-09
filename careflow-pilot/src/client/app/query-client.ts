@@ -6,6 +6,7 @@ export const queryKeys = {
   dashboard: ["dashboard"] as const,
   queue: ["queue"] as const,
   checkout: (id: string) => ["checkout", id] as const,
+  opdCard: (id: string) => ["opd-card", id] as const,
   patientSearch: (q: string) => ["patients", q] as const,
   medicationSearch: (q: string) => ["medications", q] as const,
   inventory: ["inventory"] as const,

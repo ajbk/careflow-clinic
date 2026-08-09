@@ -15,7 +15,7 @@ import { StockReceptionScreen } from "../screens/StockReceptionScreen";
 import { DispensingScreen } from "../screens/DispensingScreen";
 import { CheckoutScreen } from "../screens/CheckoutScreen";
 import { LabelScreen } from "../screens/LabelScreen";
-import { PilotUnavailableScreen } from "../screens/PilotUnavailableScreen";
+import { OpdCardScreen } from "../screens/OpdCardScreen";
 
 function ShellRoute() {
   return (
@@ -51,7 +51,7 @@ export const appRoutes: RouteObject[] = [
           { path: "dispensing/:visitId", element: <AuthGate requiredPermission="fulfillment:read" showPilotBanner={false}><DispensingScreen /></AuthGate> },
           { path: "dispensing/:visitId/labels", element: <AuthGate requiredPermission="fulfillment:read" showPilotBanner={false}><LabelScreen /></AuthGate> },
           { path: "checkout/:visitId", element: <AuthGate requiredPermission="finance:read" showPilotBanner={false}><CheckoutScreen /></AuthGate> },
-          { path: "visits/:visitId/opd-card", element: <PilotUnavailableScreen title="บัตร OPD" /> },
+          { path: "visits/:visitId/opd-card", element: <AuthGate requiredPermission="opd:read" showPilotBanner={false}><OpdCardScreen /></AuthGate> },
           { path: "inventory", element: <AuthGate requiredPermission="inventory:read" showPilotBanner={false}><InventoryScreen /></AuthGate> },
           { path: "inventory/receive", element: <AuthGate requiredPermission="inventory:receive" showPilotBanner={false}><StockReceptionScreen /></AuthGate> },
         ],

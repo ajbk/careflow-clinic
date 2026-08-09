@@ -44,6 +44,7 @@ function collectionReplayReference(
     resolution,
     patient: data.patient,
     visit: data.visit,
+    responseIncludesResolution: Object.prototype.hasOwnProperty.call(data, "resolution"),
     projection: {
       adjustmentTotalBaht: data.adjustmentTotalBaht,
       netDueBaht: data.netDueBaht,
@@ -152,6 +153,7 @@ export function registerFinanceRoutes(input: {
             chargeId: data.charge.id,
             patient: data.patient,
             visit: data.visit,
+            responseIncludesResolution: Object.prototype.hasOwnProperty.call(data, "resolution"),
             projection: {
               adjustmentTotalBaht: data.adjustmentTotalBaht,
               netDueBaht: data.netDueBaht,

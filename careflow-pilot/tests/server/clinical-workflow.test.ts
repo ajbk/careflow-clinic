@@ -349,6 +349,46 @@ async function finalize(
   });
 }
 
+async function closeNoMedicationVisit(
+  test: Awaited<ReturnType<typeof fixture>>,
+  visitId: string,
+  key: string,
+): Promise<void> {
+  const charge = await test.app.inject({
+    method: "POST",
+    url: `/api/checkout/${visitId}/charge-finalizations`,
+    headers: { cookie: test.doctorCookie, "idempotency-key": `${key}-charge` },
+    payload: {
+      expectedRevisions: { visit: 3, clinicPricing: 1 },
+      payload: { settlementIntent: "FULL_WAIVER", waiverReason: "ปิด Visit เพื่อทดสอบ" },
+    },
+  });
+  expect(charge.statusCode).toBe(201);
+  if (charge.statusCode !== 201) return;
+  const checkout = charge.json().data as {
+    charge: { id: string } | null;
+    resolution?: { kind: string; adjustmentId?: string };
+    visit: { revision: number };
+  };
+  expect(checkout.resolution).toMatchObject({ kind: "COLLECTION_NOT_REQUIRED" });
+  if (!checkout.charge || checkout.resolution?.kind !== "COLLECTION_NOT_REQUIRED" || !checkout.resolution.adjustmentId) {
+    throw new Error("Unable to obtain a Closure-valid waiver fixture");
+  }
+  const closed = await test.app.inject({
+    method: "POST",
+    url: `/api/visits/${visitId}/close`,
+    headers: { cookie: test.doctorCookie, "idempotency-key": `${key}-close` },
+    payload: {
+      expectedRevisions: { visit: checkout.visit.revision },
+      payload: {
+        chargeId: checkout.charge.id,
+        resolution: { kind: "COLLECTION_NOT_REQUIRED", waiverAdjustmentId: checkout.resolution.adjustmentId },
+      },
+    },
+  });
+  expect(closed.statusCode).toBe(201);
+}
+
 async function saveCompleteDraft(
   test: Awaited<ReturnType<typeof fixture>>,
   visitId: string,
@@ -409,8 +449,7 @@ describe("consultation finalization", () => {
     expect(finalized.statusCode).toBe(200);
     const patientId = test.database.db.select().from(visits).where(eq(visits.id, visitId)).get()?.patientId;
     if (!patientId) throw new Error("missing fixture patient");
-    test.database.sqlite.prepare("UPDATE visits SET status='CLOSED', closed_at=? WHERE id=?")
-      .run("2026-08-03T01:00:00.000Z", visitId);
+    await closeNoMedicationVisit(test, visitId, "clinical-close-no-medication-snapshot");
     const laterIntake = await test.app.inject({
       method: "POST",
       url: "/api/visits/intake",

@@ -26,7 +26,7 @@ interface CheckoutLine {
 
 interface CheckoutDto {
   visit: { id: string; status: string; revision: number };
-  charge: { id: string; contentHash: string } | null;
+  charge: { id: string } | null;
   lines: CheckoutLine[];
   grossTotalBaht: number;
   adjustmentTotalBaht: number;

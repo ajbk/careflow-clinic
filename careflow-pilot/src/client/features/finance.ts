@@ -3,14 +3,19 @@ import { useEffect } from "react";
 import { z, type ZodType } from "zod";
 import {
   checkoutDtoSchema,
+  closeVisitResponseSchema,
   collectionResponseSchema,
   finalizeChargeResponseSchema,
+  opdCardResponseSchema,
   type ApproveFullWaiverBody,
+  type CloseVisitBody,
+  type CloseVisitResponse,
   type CheckoutDto,
   type CollectionResponse,
   type ConfirmPromptPayBody,
   type FinalizeChargeBody,
   type FinalizeChargeResponse,
+  type OpdCardDto,
   type RecordCashBody,
 } from "../../shared/contracts";
 import { queryKeys } from "../app/query-client";
@@ -24,6 +29,7 @@ export type FinalizeChargeAttempt = CommandAttempt<FinalizeChargeBody["payload"]
 export type ApproveFullWaiverAttempt = CommandAttempt<ApproveFullWaiverBody["payload"], ApproveFullWaiverBody["expectedRevisions"]>;
 export type RecordCashAttempt = CommandAttempt<RecordCashBody["payload"], RecordCashBody["expectedRevisions"]>;
 export type ConfirmPromptPayAttempt = CommandAttempt<ConfirmPromptPayBody["payload"], ConfirmPromptPayBody["expectedRevisions"]>;
+export type CloseVisitAttempt = CommandAttempt<CloseVisitBody["payload"], CloseVisitBody["expectedRevisions"]>;
 
 type FinanceCommandResponse = FinalizeChargeResponse | CollectionResponse;
 
@@ -34,6 +40,14 @@ function allowed(data: CheckoutDto, action: CheckoutDto["allowedActions"][number
 function requireCharge(data: CheckoutDto) {
   if (!data.charge) throw new Error("A finalized charge is required");
   return data.charge;
+}
+
+function requireTerminalResolution(data: CheckoutDto): Extract<NonNullable<CheckoutDto["resolution"]>, { kind: "PAYMENT" } | { kind: "COLLECTION_NOT_REQUIRED" }> {
+  const resolution = data.resolution;
+  if (!resolution || (resolution.kind !== "PAYMENT" && resolution.kind !== "COLLECTION_NOT_REQUIRED")) {
+    throw new Error("A resolved payment or full waiver is required");
+  }
+  return resolution;
 }
 
 export function getCheckout(
@@ -83,6 +97,31 @@ export function createConfirmPromptPayAttempt(data: CheckoutDto, manualReference
   );
 }
 
+export function createCloseVisitAttempt(data: CheckoutDto): CloseVisitAttempt {
+  allowed(data, "CLOSE_VISIT");
+  const charge = requireCharge(data);
+  const resolution = requireTerminalResolution(data);
+  return createCommandAttempt(
+    { visit: data.visit.revision },
+    {
+      chargeId: charge.id,
+      resolution: resolution.kind === "PAYMENT"
+        ? { kind: "PAYMENT", paymentId: resolution.paymentId }
+        : { kind: "COLLECTION_NOT_REQUIRED", waiverAdjustmentId: resolution.adjustmentId },
+    },
+  );
+}
+
+export function getOpdCard(
+  client: ApiClient = defaultApiClient,
+  visitId: string,
+  signal?: AbortSignal,
+): Promise<OpdCardDto> {
+  return client
+    .get(`/api/visits/${encodeURIComponent(visitId)}/opd-card`, opdCardResponseSchema, signal)
+    .then((response) => response.data);
+}
+
 export function useCheckout(visitId: string, client: ApiClient = defaultApiClient) {
   const queryClient = useQueryClient();
   useEffect(() => {
@@ -104,6 +143,25 @@ export function useCheckout(visitId: string, client: ApiClient = defaultApiClien
           return queryClient.getQueryData<CheckoutDto>(queryKeys.checkout(visitId)) ?? getCheckout(client, visitId, signal);
         }
         return await getCheckout(client, visitId, signal);
+      } catch (error) {
+        if (isApiError(error) && error.status === 401 && typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("careflow-auth-required"));
+        }
+        throw error;
+      }
+    },
+    retry: false,
+    refetchOnWindowFocus: true,
+  });
+}
+
+export function useOpdCard(visitId: string, client: ApiClient = defaultApiClient) {
+  return useQuery({
+    queryKey: queryKeys.opdCard(visitId),
+    enabled: visitId.length > 0,
+    queryFn: async ({ signal }) => {
+      try {
+        return await getOpdCard(client, visitId, signal);
       } catch (error) {
         if (isApiError(error) && error.status === 401 && typeof window !== "undefined") {
           window.dispatchEvent(new CustomEvent("careflow-auth-required"));
@@ -175,4 +233,24 @@ export function useConfirmPromptPay(client: ApiClient = defaultApiClient) {
     (visitId) => `/api/checkout/${encodeURIComponent(visitId)}/payments/promptpay`,
     collectionResponseSchema,
   );
+}
+
+export function useCloseVisit(client: ApiClient = defaultApiClient) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ visitId, attempt }: { visitId: string; attempt: CloseVisitAttempt }) =>
+      client.command<CloseVisitBody["payload"], CloseVisitBody["expectedRevisions"], CloseVisitResponse>(
+        `/api/visits/${encodeURIComponent(visitId)}/close`,
+        attempt,
+        closeVisitResponseSchema,
+      ),
+    retry: false,
+    onSuccess: (_result, variables) => Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.checkout(variables.visitId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.opdCard(variables.visitId), refetchType: "none" }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.visit(variables.visitId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.queue }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
+    ]).then(() => undefined),
+  });
 }

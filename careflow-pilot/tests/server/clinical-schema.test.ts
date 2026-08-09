@@ -144,6 +144,7 @@ describe("clinical evidence schema", () => {
       "platform_metadata",
       "sessions",
       "staff_accounts",
+      "visit_closures",
       "visits",
     ]);
 
@@ -190,6 +191,11 @@ describe("clinical evidence schema", () => {
         'CONSTRAINT "clinical_note_amendments_content_check" CHECK(length("clinical_note_amendments"."content") BETWEEN 1 AND 4000)',
         'CONSTRAINT "clinical_note_amendments_reason_check" CHECK(length("clinical_note_amendments"."reason") BETWEEN 1 AND 500)',
         'CONSTRAINT "clinical_note_amendments_content_hash_check" CHECK(length("clinical_note_amendments"."content_hash") = 64 AND "clinical_note_amendments"."content_hash" NOT GLOB \'*[^0-9a-f]*\')',
+      ],
+      visit_closures: [
+        'CONSTRAINT "visit_closures_visit_revision_check" CHECK("visit_closures"."visit_revision" >= 1)',
+        'CONSTRAINT "visit_closures_resolution_shape_check" CHECK(("visit_closures"."payment_id" IS NOT NULL AND "visit_closures"."waiver_adjustment_id" IS NULL) OR ("visit_closures"."payment_id" IS NULL AND "visit_closures"."waiver_adjustment_id" IS NOT NULL))',
+        'CONSTRAINT "visit_closures_content_hash_check" CHECK(length("visit_closures"."content_hash") = 64 AND "visit_closures"."content_hash" NOT GLOB \'*[^0-9a-f]*\')',
       ],
       medications: [
         'CONSTRAINT "medications_id_check" CHECK(length("medications"."id") = 12 AND "medications"."id" GLOB \'DEMO-MED-[0-9][0-9][0-9]\')',
@@ -267,6 +273,14 @@ describe("clinical evidence schema", () => {
         { table: "clinical_notes", from: "clinical_note_id", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
         { table: "staff_accounts", from: "signed_by", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
       ],
+      visit_closures: [
+        { table: "clinic_config", from: "clinic_id", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+        { table: "finance_charge_adjustments", from: "waiver_adjustment_id", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+        { table: "finance_charges", from: "charge_id", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+        { table: "finance_payments", from: "payment_id", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+        { table: "staff_accounts", from: "doctor_id_snapshot", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+        { table: "visits", from: "visit_id", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
+      ],
       medications: [],
       medication_decision_drafts: [
         { table: "visits", from: "visit_id", to: "id", onUpdate: "NO ACTION", onDelete: "NO ACTION" },
@@ -315,6 +329,10 @@ describe("clinical evidence schema", () => {
       },
       clinical_note_amendments: {
         clinical_note_amendments_note_version_unique: ["clinical_note_id", "version"],
+      },
+      visit_closures: {
+        visit_closures_charge_id_unique: ["charge_id"],
+        visit_closures_visit_id_unique: ["visit_id"],
       },
       medications: {
         medications_active_internal_barcode_unique: ["internal_barcode"],

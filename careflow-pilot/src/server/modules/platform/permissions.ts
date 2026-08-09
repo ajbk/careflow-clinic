@@ -48,6 +48,8 @@ export const permissionsByRole = {
     "finance:record-cash",
     "finance:confirm-promptpay",
     "finance:waive",
+    "visit:close",
+    "opd:read",
   ],
 } as const satisfies Record<Actor["role"], readonly Permission[]>;
 

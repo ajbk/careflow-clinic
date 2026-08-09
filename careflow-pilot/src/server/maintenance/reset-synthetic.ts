@@ -80,6 +80,7 @@ const expectedTables = new Set([
   "sessions",
   "staff_accounts",
   "visits",
+  "visit_closures",
 ]);
 
 const auditTriggerSql = {
@@ -124,10 +125,11 @@ const appendOnlyTables = [
   "finance_charge_lines",
   "finance_charge_adjustments",
   "finance_payments",
+  "visit_closures",
 ] as const;
 
 function appendOnlyTriggerSql(table: (typeof appendOnlyTables)[number], operation: "update" | "delete"): string {
-  const indent = table === "inventory_reservation_allocations" || table === "inventory_stock_movements" || table === "inventory_adjustments" || table === "inventory_lot_status_events" || table.startsWith("fulfillment_") || table.startsWith("finance_") ? "  " : "\t";
+  const indent = table === "inventory_reservation_allocations" || table === "inventory_stock_movements" || table === "inventory_adjustments" || table === "inventory_lot_status_events" || table === "visit_closures" || table.startsWith("fulfillment_") || table.startsWith("finance_") ? "  " : "\t";
   return `CREATE TRIGGER \`${table}_block_${operation}\`
 BEFORE ${operation.toUpperCase()} ON \`${table}\`
 BEGIN
@@ -313,6 +315,7 @@ function verifyReset(sqlite: Database.Database): void {
     ["finance_charge_adjustments", "count(*)"],
     ["finance_charge_lines", "count(*)"],
     ["finance_charges", "count(*)"],
+    ["visit_closures", "count(*)"],
     ["fulfillment_dispenses", "count(*)"],
     ["fulfillment_releases", "count(*)"],
     ["fulfillment_rejections", "count(*)"],
@@ -354,7 +357,7 @@ function verifyReset(sqlite: Database.Database): void {
     fail("Audit append-only triggers were not restored");
   }
   const clinicalTriggerNamesAfterReset = sqlite
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%_block_%' AND name <> 'audit_events_block_update' AND name <> 'audit_events_block_delete' ORDER BY name")
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%_block_%' AND name NOT LIKE '%_after_closure_block_%' AND name <> 'audit_events_block_update' AND name <> 'audit_events_block_delete' ORDER BY name")
     .pluck()
     .all() as string[];
   if (clinicalTriggerNamesAfterReset.join(",") !== [...clinicalTriggerNames, "fulfillment_preparations_block_delete"].sort().join(",")) {
@@ -427,6 +430,7 @@ export function runResetSyntheticData(deps: ResetSyntheticDependencies): number 
     dropKnownAppendOnlyTriggers(sqlite);
     sqlite.exec("DELETE FROM sessions;");
     sqlite.exec("DELETE FROM idempotency_records;");
+    sqlite.exec("DELETE FROM visit_closures;");
     sqlite.exec("DELETE FROM finance_payments;");
     sqlite.exec("DELETE FROM finance_charge_adjustments;");
     sqlite.exec("DELETE FROM finance_charge_lines;");

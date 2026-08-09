@@ -1,21 +1,24 @@
 import type { KeyboardEvent, ReactElement, Ref } from "react";
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import type { CheckoutDto } from "../../shared/contracts";
 import { useAuth } from "../auth/AuthProvider";
 import { ActionButton, Card, Field, PageHeader, SectionHeading, StatusBadge, TextAreaField } from "../components/careflow/ui";
 import {
   createApproveFullWaiverAttempt,
+  createCloseVisitAttempt,
   createConfirmPromptPayAttempt,
   createFinalizeChargeAttempt,
   createFinalizeFullWaiverAttempt,
   createRecordCashAttempt,
   useApproveWaiver,
   useCheckout,
+  useCloseVisit,
   useConfirmPromptPay,
   useFinalizeCharge,
   useRecordCash,
   type ApproveFullWaiverAttempt,
+  type CloseVisitAttempt,
   type ConfirmPromptPayAttempt,
   type FinalizeChargeAttempt,
   type RecordCashAttempt,
@@ -135,12 +138,14 @@ interface CheckoutJobPanelProps {
   finalizePending: boolean;
   cashPending: boolean;
   promptPayPending: boolean;
+  closePending: boolean;
   manualReference: string;
   promptPayError?: string;
   onFinalize(): void;
   onOpenWaiver(mode: WaiverMode): void;
   onCash(): void;
   onPromptPay(): void;
+  onClose(): void;
   onManualReferenceChange(value: string): void;
 }
 
@@ -152,16 +157,20 @@ function CheckoutJobPanel({
   finalizePending,
   cashPending,
   promptPayPending,
+  closePending,
   manualReference,
   promptPayError,
   onFinalize,
   onOpenWaiver,
   onCash,
   onPromptPay,
+  onClose,
   onManualReferenceChange,
 }: CheckoutJobPanelProps): ReactElement {
   const status = checkoutStatus(data);
   const hasCollectionAction = can(data, "RECORD_CASH") || can(data, "CONFIRM_PROMPTPAY") || can(data, "APPROVE_FULL_WAIVER");
+  const canClose = isDoctor && can(data, "CLOSE_VISIT");
+  const canReadOpd = isDoctor && can(data, "READ_OPD");
 
   return (
     <section ref={panelRef} className="checkout-state-summary checkout-job-panel" aria-label="งานชำระเงินปัจจุบัน" tabIndex={-1}>
@@ -194,8 +203,13 @@ function CheckoutJobPanel({
             </div> : <p className="field-hint">รอผู้มีสิทธิ์รับชำระจากระบบ</p>}
           </>
         ) : null}
-        {data.visit.status === "READY_TO_CLOSE" ? <p className="checkout-readonly-copy">{isDoctor ? "หลักฐานการเงินพร้อมแล้ว · การปิด Visit จะเปิดใน Task 5" : "รับชำระแล้ว รอแพทย์ปิด Visit"}</p> : null}
-        {data.visit.status === "CLOSED" ? <p className="checkout-readonly-copy">ปิด Visit แล้ว</p> : null}
+        {data.visit.status === "READY_TO_CLOSE" ? (
+          canClose ? <>
+            <div><h3>ปิด Visit</h3><p>ระบบจะตรึงหลักฐาน Visit, Charge และการรับชำระที่แสดงไว้ในคำสั่งเดียว</p></div>
+            <div className="checkout-action-row"><ActionButton type="button" onClick={onClose} disabled={disabled}>{closePending ? "กำลังปิด Visit…" : "ปิด Visit"}</ActionButton></div>
+          </> : <p className="checkout-readonly-copy">{isDoctor ? "หลักฐานการเงินพร้อมแล้ว แต่สิทธิ์ปิด Visit ไม่พร้อม" : "รับชำระแล้ว รอแพทย์ปิด Visit"}</p>
+        ) : null}
+        {data.visit.status === "CLOSED" ? <div className="checkout-action-row"><p className="checkout-readonly-copy">ปิด Visit แล้ว</p>{canReadOpd ? <Link className="care-button care-button-secondary" to={`/visits/${data.visit.id}/opd-card`}>เปิดบัตร OPD</Link> : null}</div> : null}
         {!(["AWAITING_CHARGE", "AWAITING_PAYMENT", "READY_TO_CLOSE", "CLOSED"] as string[]).includes(data.visit.status) ? <p className="field-hint">ยังไม่ถึงขั้นตอนชำระเงิน</p> : null}
       </div>
     </section>
@@ -297,11 +311,13 @@ export function CheckoutScreen(): ReactElement {
   const approveWaiver = useApproveWaiver();
   const recordCash = useRecordCash();
   const confirmPromptPay = useConfirmPromptPay();
+  const closeVisit = useCloseVisit();
   const finalizeAttempt = useRef<FinalizeChargeAttempt | null>(null);
   const finalizeWaiverAttempt = useRef<SavedAttempt<FinalizeChargeAttempt> | null>(null);
   const approveWaiverAttempt = useRef<SavedAttempt<ApproveFullWaiverAttempt> | null>(null);
   const cashAttempt = useRef<RecordCashAttempt | null>(null);
   const promptPayAttempt = useRef<SavedAttempt<ConfirmPromptPayAttempt> | null>(null);
+  const closeAttempt = useRef<CloseVisitAttempt | null>(null);
   const jobPanelRef = useRef<HTMLElement>(null);
   const waiverOpener = useRef<HTMLElement | null>(null);
   const waiverWasOpen = useRef(false);
@@ -334,6 +350,7 @@ export function CheckoutScreen(): ReactElement {
     approveWaiverAttempt.current = null;
     cashAttempt.current = null;
     promptPayAttempt.current = null;
+    closeAttempt.current = null;
   };
 
   const reload = async () => {
@@ -345,7 +362,7 @@ export function CheckoutScreen(): ReactElement {
     setLocalError("");
   };
 
-  const commandPending = finalize.isPending || approveWaiver.isPending || recordCash.isPending || confirmPromptPay.isPending;
+  const commandPending = finalize.isPending || approveWaiver.isPending || recordCash.isPending || confirmPromptPay.isPending || closeVisit.isPending;
   const stale = Boolean(checkout.error && checkout.data);
   const disabled = commandPending || stale || blocked;
   const commandFailed = (error: unknown) => {
@@ -462,6 +479,17 @@ export function CheckoutScreen(): ReactElement {
     );
   };
 
+  const submitClose = () => {
+    if (disabled || auth.session?.user.role !== "doctor" || !can(data, "CLOSE_VISIT")) return;
+    setCommandError(null);
+    setLocalError("");
+    closeAttempt.current ??= createCloseVisitAttempt(data);
+    closeVisit.mutate(
+      { visitId: data.visit.id, attempt: closeAttempt.current },
+      { onSuccess: () => { closeAttempt.current = null; commandCommitted(); }, onError: commandFailed },
+    );
+  };
+
   return (
     <div className="flow-page checkout-page">
       <PageHeader eyebrow="FINANCE · CHECKOUT" title="ชำระเงิน" description="ตรวจสอบหลักฐานยอดชำระและดำเนินการตามสิทธิ์ที่ระบบอนุญาต" />
@@ -475,12 +503,14 @@ export function CheckoutScreen(): ReactElement {
         finalizePending={finalize.isPending}
         cashPending={recordCash.isPending}
         promptPayPending={confirmPromptPay.isPending}
+        closePending={closeVisit.isPending}
         manualReference={manualReference}
         promptPayError={fieldErrors.promptPay}
         onFinalize={submitFinalize}
         onOpenWaiver={openWaiver}
         onCash={submitCash}
         onPromptPay={submitPromptPay}
+        onClose={submitClose}
         onManualReferenceChange={(value) => { promptPayAttempt.current = null; setManualReference(value); setCommandError(null); setLocalError(""); }}
       />} />
       {waiverMode ? <WaiverDialog

@@ -177,7 +177,7 @@ describe("terminal finance collection", () => {
         adjustmentTotalBaht: -100,
         netDueBaht: 0,
         collectionState: "COLLECTION_NOT_REQUIRED",
-        allowedActions: [],
+        allowedActions: ["CLOSE_VISIT"],
         closeBlockers: [],
         visit: { status: "READY_TO_CLOSE", revision: 9 },
       },
@@ -330,7 +330,7 @@ describe("terminal finance collection", () => {
     expect((confirmed.json() as { data: CheckoutData }).data).toMatchObject({
       collectionState: "PAID_PROMPTPAY",
       netDueBaht: 100,
-      allowedActions: [],
+      allowedActions: ["CLOSE_VISIT"],
       closeBlockers: [],
       visit: { status: "READY_TO_CLOSE", revision: 9 },
     });

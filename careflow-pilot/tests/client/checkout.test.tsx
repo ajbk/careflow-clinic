@@ -52,7 +52,6 @@ const charge = {
   lineCount: 2,
   finalizedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" },
   finalizedAt: "2026-08-09T03:00:00.000Z",
-  contentHash: "a".repeat(64),
 };
 
 const previewCheckout = {
@@ -84,7 +83,8 @@ const paidCheckout = {
   ...awaitingPaymentCheckout,
   visit: { ...awaitingPaymentCheckout.visit, status: "READY_TO_CLOSE", revision: 9 },
   collectionState: "PAID_CASH",
-  allowedActions: [],
+  resolution: { kind: "PAYMENT", paymentId: "payment-42", method: "CASH" },
+  allowedActions: ["CLOSE_VISIT"],
   closeBlockers: [],
 };
 
@@ -105,6 +105,24 @@ const closedCheckout = {
   ...paidCheckout,
   visit: { ...paidCheckout.visit, status: "CLOSED", revision: 10, closedAt: "2026-08-09T04:00:00.000Z" },
   collectionState: "CLOSED",
+  allowedActions: ["READ_OPD"],
+};
+
+const closeResponse = {
+  data: {
+    id: "closure-42",
+    visitId: "visit-42",
+    visitRevision: 9,
+    chargeId: "charge-42",
+    resolution: { kind: "PAYMENT", paymentId: "payment-42" },
+    clinic: { id: "clinic", name: "คลินิกทดสอบ" },
+    patient,
+    doctor: { id: "doctor-1", displayName: "พญ. ทดสอบ" },
+    closedAt: "2026-08-09T04:00:00.000Z",
+    contentHash: "a".repeat(64),
+    visit: { id: "visit-42", status: "CLOSED", revision: 10, arrivedAt: "2026-08-09T01:00:00.000Z", startedAt: "2026-08-09T01:15:00.000Z", closedAt: "2026-08-09T04:00:00.000Z" },
+  },
+  replayed: false,
 };
 
 function session(role: "assistant" | "doctor", permissions: string[]) {
@@ -125,7 +143,7 @@ function session(role: "assistant" | "doctor", permissions: string[]) {
   };
 }
 
-const doctorPermissions = ["finance:read", "finance:finalize-charge", "finance:record-cash", "finance:confirm-promptpay", "finance:waive", "visit:read-queue"];
+const doctorPermissions = ["finance:read", "finance:finalize-charge", "finance:record-cash", "finance:confirm-promptpay", "finance:waive", "visit:read-queue", "visit:close", "opd:read"];
 const assistantPermissions = ["finance:read", "finance:record-cash", "visit:read-queue"];
 const server = setupServer();
 
@@ -425,9 +443,40 @@ describe("Thai checkout workflow", () => {
     expect(bodies).toEqual([{ expectedRevisions: { visit: 8 }, payload: { chargeId: "charge-42", amountBaht: 125, manualReference: "PP-20260809-42" } }]);
   });
 
+  it("lets only a Doctor pin the ready Charge and payment identity to close, then exposes the OPD Card", async () => {
+    const user = userEvent.setup();
+    let command: unknown;
+    let key = "";
+    renderCheckout(paidCheckout);
+    const close = await screen.findByRole("button", { name: "ปิด Visit" });
+    server.use(
+      http.post("/api/visits/visit-42/close", async ({ request }) => {
+        command = await request.json();
+        key = request.headers.get("Idempotency-Key") ?? "";
+        return HttpResponse.json(closeResponse, { status: 201 });
+      }),
+      http.get("/api/checkout/visit-42", () => HttpResponse.json({ data: closedCheckout })),
+    );
+
+    await user.click(close);
+    await waitFor(() => expect(command).toEqual({
+      expectedRevisions: { visit: 9 },
+      payload: { chargeId: "charge-42", resolution: { kind: "PAYMENT", paymentId: "payment-42" } },
+    }));
+    expect(key).toMatch(/\S/);
+    expect(await screen.findByRole("link", { name: "เปิดบัตร OPD" })).toHaveAttribute("href", "/visits/visit-42/opd-card");
+  });
+
+  it("keeps close and OPD controls unavailable to an Assistant even if stale Checkout data names actions", async () => {
+    renderCheckout(paidCheckout, "assistant");
+    expect(await screen.findByText("รับชำระแล้ว รอแพทย์ปิด Visit")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "ปิด Visit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "เปิดบัตร OPD" })).not.toBeInTheDocument();
+  });
+
   it("renders paid, waived, and closed checkout evidence as read-only summaries", async () => {
     renderCheckout(paidCheckout, "doctor");
-    expect(await screen.findByText("หลักฐานการเงินพร้อมแล้ว · การปิด Visit จะเปิดใน Task 5")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "ปิด Visit" })).toBeInTheDocument();
     expect(screen.queryByText("รับชำระแล้ว รอแพทย์ปิด Visit")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /ยืนยันรับเงินสด|ยืนยัน PromptPay|ยืนยันยอดเพื่อรับชำระ/ })).not.toBeInTheDocument();
     cleanup();
@@ -437,7 +486,7 @@ describe("Thai checkout workflow", () => {
     cleanup();
     renderCheckout(closedCheckout);
     expect((await screen.findAllByText("ปิด Visit แล้ว")).length).toBeGreaterThan(0);
-    expect(screen.queryByRole("link", { name: /บัตร OPD/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "เปิดบัตร OPD" })).toHaveAttribute("href", "/visits/visit-42/opd-card");
   });
 
   it("uses Thai presentation labels and truthful role-specific finance copy", async () => {

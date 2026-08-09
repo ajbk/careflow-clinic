@@ -61,6 +61,7 @@ const auditActionPolicyEntries = [
   ["charge.waiver-approved", "required"],
   ["payment.cash-recorded", "optional"],
   ["payment.promptpay-confirmed", "optional"],
+  ["visit.closed", "optional"],
 ] as const;
 
 type AuditActionPolicyEntry = (typeof auditActionPolicyEntries)[number];

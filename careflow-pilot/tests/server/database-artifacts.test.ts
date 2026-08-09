@@ -83,7 +83,7 @@ function copyMigrationsThrough0015(target: string): string {
   return oldPath;
 }
 
-const immutableMigrationHashesThrough0015 = {
+const immutableMigrationHashesThrough0017 = {
   "0000_platform.sql": "77dbb1cce19d455be9bb06d4dc5d64de0425b0435f9c70ac63a413fc4ce8c9e6",
   "0001_patient.sql": "55af6b78670f63296ab2e6da9cce84a04613dfd31e5c3cba8534eb5a52e7d96f",
   "0002_visit_intake.sql": "74ef1bbd67666b7666cf999823a646bf1ba0810a07c4ec35e9026113edaf4c20",
@@ -100,6 +100,28 @@ const immutableMigrationHashesThrough0015 = {
   "0013_stock_movement_source_lot_unique.sql": "55df75b25fedb334628f8215d13375bdb2701d70c844f5ccff10fc59fa4ada2d",
   "0014_inventory_integrity.sql": "d9f3c1612286f53ca0fee1ec2cee954b1d08b128a9ef3153204620d8e6196b03",
   "0015_inventory_adjustment_source_guard.sql": "d3e98f9e0c0bea611a3198a5d892d0fd321ceeee36ec62c901b7f653f64300c2",
+  "0016_finance_pricing_snapshots.sql": "642b751216a26a0ab0736ddcc812dd70177cba69402c5eb674bd1ae296a28d48",
+  "0017_charge_collection_ledger.sql": "a393193c46b255b16e6af37cd6ccf7015083660a9089222ce84cd229690f3d38",
+} as const;
+
+const immutableMigrationSnapshotHashesThrough0017 = {
+  "0000_snapshot.json": "61925e834bd4f002e75d36d2dfe8517c7ac30cfde5f43c1de874ac305559bed6",
+  "0001_snapshot.json": "b8f94f95c24f38b16179369fd1b93475a9c0e925a08b5444f1e70dc7f379322c",
+  "0002_snapshot.json": "b2387cf5b7f9e4334c2d7699004d867f52c13edb0ea21fa6fca5c6c00387269f",
+  "0003_snapshot.json": "d838e51259deaeb5bb50e5b0f95057345826c91bcd7b8edbba7fc072f79cf826",
+  "0004_snapshot.json": "400b542a468b497ce1d02a57acb5140265161188b9c3cfdc8f394701d703cb12",
+  "0006_snapshot.json": "a4526e4ddcd06d0fceeec24acbd87a4c41c562cc590d7196e2df41496bddfc03",
+  "0007_snapshot.json": "83c73558b01f50ef90eae19f48cbee561037683da0579d13b9f612f8575aac30",
+  "0008_snapshot.json": "81e1636fc8edfc816b2159961dd4fe3313520d0d230bfde9d3112b7b384d29dc",
+  "0009_snapshot.json": "0f2e79028134367be74e80f3b736ad837eaa876826b6c7d80a488c3e00148668",
+  "0010_snapshot.json": "0c2ff933793d25a498d592f63d7a6820ef68b2c43ba7ee07a8be3c6043ef2822",
+  "0011_snapshot.json": "2c916efceaeef639b257786a4f1593b8fd1e4a74aed6a030187b912e87690cca",
+  "0012_snapshot.json": "40a9405c868b0970104e28e588de3faa07fb26815007522dbac6f1bd59aefdda",
+  "0013_snapshot.json": "7188c9349aca7de7327c679adc67493445e51ac3e96a43ed707d4f9be916cca0",
+  "0014_snapshot.json": "8e9bb07c6b796746b24f907dab13e5fb4f9704a76ff12257ceceb8cc72640866",
+  "0015_snapshot.json": "a1a5d84d0ec6ae46ebfce19d4752717b4742628148fc27605a23b842c08fbd75",
+  "0016_snapshot.json": "fc1b64e51a5a27bee58879473d5608a6b6471e91ed3654f8669ece2a4af27c79",
+  "0017_snapshot.json": "711d49d079ed9bff7cdb96945769e07be506d7ce5ed8f2bf45b0abe7aee7668d",
 } as const;
 
 function seedPopulated0015PricingEvidence(sqlite: Database.Database): void {
@@ -281,11 +303,12 @@ it("keeps 0014 immutable and upgrades populated inventory rows with the additive
   const journal = JSON.parse(readFileSync(join(process.cwd(), "drizzle", "meta", "_journal.json"), "utf8")) as {
     entries: Array<{ idx: number; tag: string }>;
   };
-  expect(journal.entries).toHaveLength(18);
+  expect(journal.entries).toHaveLength(19);
   expect(journal.entries[14]).toMatchObject({ idx: 14, tag: "0014_inventory_integrity" });
   expect(journal.entries[15]).toMatchObject({ idx: 15, tag: "0015_inventory_adjustment_source_guard" });
   expect(journal.entries[16]).toMatchObject({ idx: 16, tag: "0016_finance_pricing_snapshots" });
   expect(journal.entries[17]).toMatchObject({ idx: 17, tag: "0017_charge_collection_ledger" });
+  expect(journal.entries[18]).toMatchObject({ idx: 18, tag: "0018_visit_closure_integrity" });
 
   const { directory, databasePath } = temporaryDatabase();
   const oldMigrations = copyMigrationsThrough0014(directory);
@@ -320,7 +343,7 @@ it("keeps 0014 immutable and upgrades populated inventory rows with the additive
 
     expect(sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
     expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(18);
+    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(19);
     expect(sqlite.prepare("SELECT id, revision FROM inventory_lots WHERE id = 'upgrade-lot'").get()).toEqual(before.lot);
     expect(
       sqlite
@@ -345,14 +368,17 @@ it("keeps 0014 immutable and upgrades populated inventory rows with the additive
   }
 });
 
-it("upgrades populated 0015 ORDER, NO_MEDICATION, multi-lot DISPENSE, and AWAITING_CHARGE evidence with deterministic price snapshots", () => {
-  for (const [file, expectedHash] of Object.entries(immutableMigrationHashesThrough0015)) {
+it("keeps every 0000–0017 SQL and snapshot artifact immutable while upgrading populated pricing evidence", () => {
+  for (const [file, expectedHash] of Object.entries(immutableMigrationHashesThrough0017)) {
     expect(createHash("sha256").update(readFileSync(join(process.cwd(), "drizzle", file))).digest("hex")).toBe(expectedHash);
+  }
+  for (const [file, expectedHash] of Object.entries(immutableMigrationSnapshotHashesThrough0017)) {
+    expect(createHash("sha256").update(readFileSync(join(process.cwd(), "drizzle", "meta", file))).digest("hex")).toBe(expectedHash);
   }
   const journal = JSON.parse(readFileSync(join(process.cwd(), "drizzle", "meta", "_journal.json"), "utf8")) as {
     entries: Array<{ idx: number; tag: string }>;
   };
-  expect(journal.entries.slice(0, 16).map(({ idx, tag }) => ({ idx, tag }))).toEqual([
+  expect(journal.entries.slice(0, 18).map(({ idx, tag }) => ({ idx, tag }))).toEqual([
     { idx: 0, tag: "0000_platform" },
     { idx: 1, tag: "0001_patient" },
     { idx: 2, tag: "0002_visit_intake" },
@@ -369,6 +395,8 @@ it("upgrades populated 0015 ORDER, NO_MEDICATION, multi-lot DISPENSE, and AWAITI
     { idx: 13, tag: "0013_stock_movement_source_lot_unique" },
     { idx: 14, tag: "0014_inventory_integrity" },
     { idx: 15, tag: "0015_inventory_adjustment_source_guard" },
+    { idx: 16, tag: "0016_finance_pricing_snapshots" },
+    { idx: 17, tag: "0017_charge_collection_ledger" },
   ]);
 
   const { directory, databasePath } = temporaryDatabase();
@@ -403,8 +431,8 @@ it("upgrades populated 0015 ORDER, NO_MEDICATION, multi-lot DISPENSE, and AWAITI
     expect(sqlite.prepare("SELECT hash, created_at FROM __drizzle_migrations ORDER BY id").all().slice(0, 16))
       .toEqual(oldMigrationRecords);
     const migrationCount = sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get();
-    expect(migrationCount).toBe(18);
-    if (migrationCount !== 18) return;
+    expect(migrationCount).toBe(19);
+    if (migrationCount !== 19) return;
     for (const table of sourceTables) {
       expect(Buffer.from(JSON.stringify(sqlite.prepare(`SELECT * FROM ${table} ORDER BY id`).all()))).toEqual(before[table]);
     }
@@ -462,16 +490,37 @@ it("upgrades populated 0015 ORDER, NO_MEDICATION, multi-lot DISPENSE, and AWAITI
   }
 });
 
-it("adds only the immutable 0017 charge-collection ledger artifacts after the frozen migration history", () => {
+it("adds only the additive 0018 immutable Visit Closure artifacts after frozen history", () => {
   const migrationsPath = join(process.cwd(), "drizzle");
-  expect(existsSync(join(migrationsPath, "0017_charge_collection_ledger.sql"))).toBe(true);
-  expect(existsSync(join(migrationsPath, "meta", "0017_snapshot.json"))).toBe(true);
+  expect(existsSync(join(migrationsPath, "0018_visit_closure_integrity.sql"))).toBe(true);
+  expect(existsSync(join(migrationsPath, "meta", "0018_snapshot.json"))).toBe(true);
   const journal = JSON.parse(readFileSync(join(migrationsPath, "meta", "_journal.json"), "utf8")) as {
     entries: Array<{ idx: number; tag: string }>;
   };
-  expect(journal.entries).toHaveLength(18);
+  expect(journal.entries).toHaveLength(19);
   expect(journal.entries[16]).toMatchObject({ idx: 16, tag: "0016_finance_pricing_snapshots" });
   expect(journal.entries[17]).toMatchObject({ idx: 17, tag: "0017_charge_collection_ledger" });
+  expect(journal.entries[18]).toMatchObject({ idx: 18, tag: "0018_visit_closure_integrity" });
+
+  const { databasePath } = temporaryDatabase();
+  const sqlite = new Database(databasePath);
+  try {
+    sqlite.pragma("foreign_keys = ON");
+    migrate(drizzle(sqlite), { migrationsFolder: migrationsPath });
+    expect(sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
+    expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(19);
+    expect(sqlite.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'visit_closures'").pluck().get())
+      .toContain("visit_closures_resolution_shape_check");
+    expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'visit_closures_visit_id_unique'").get())
+      .toEqual({ name: "visit_closures_visit_id_unique" });
+    expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'visit_closures_block_update'").get())
+      .toEqual({ name: "visit_closures_block_update" });
+    expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'visits_closed_transition_guard'").get())
+      .toEqual({ name: "visits_closed_transition_guard" });
+  } finally {
+    sqlite.close();
+  }
 });
 
 describe.each(["-wal", "-shm"])("pre-existing SQLite %s artifact", (suffix) => {

@@ -146,6 +146,8 @@ describe("role permissions", () => {
       "finance:record-cash",
       "finance:confirm-promptpay",
       "finance:waive",
+      "visit:close",
+      "opd:read",
       ],
     });
   });

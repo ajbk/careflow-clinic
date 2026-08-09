@@ -65,6 +65,8 @@ export const permissionSchema = z.enum([
   "finance:record-cash",
   "finance:confirm-promptpay",
   "finance:waive",
+  "visit:close",
+  "opd:read",
 ]);
 
 export const loginBodySchema = z.strictObject({
@@ -215,7 +217,6 @@ export const checkoutChargeSchema = z.strictObject({
   lineCount: z.number().int().min(1).max(21),
   finalizedBy: z.strictObject({ id: financeIdSchema, displayName: financeDisplayNameSchema }),
   finalizedAt: z.string().datetime(),
-  contentHash: financeContentHashSchema,
 });
 export type CheckoutChargeDto = z.infer<typeof checkoutChargeSchema>;
 
@@ -236,6 +237,15 @@ export const checkoutAllowedActionSchema = z.enum([
   "READ_OPD",
 ]);
 export const checkoutCloseBlockerSchema = z.enum(["charge", "collection", "visitState"]);
+
+/** Safe finance identity required for a Doctor to pin an eventual close command. */
+export const financeResolutionSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("PENDING_CHARGE") }),
+  z.strictObject({ kind: z.literal("PENDING_COLLECTION"), chargeId: financeIdSchema, netDueBaht: chargeGrossTotalBahtSchema }),
+  z.strictObject({ kind: z.literal("COLLECTION_NOT_REQUIRED"), adjustmentId: financeIdSchema }),
+  z.strictObject({ kind: z.literal("PAYMENT"), paymentId: financeIdSchema, method: z.enum(["CASH", "PROMPTPAY"]) }),
+]);
+export type FinanceResolution = z.infer<typeof financeResolutionSchema>;
 
 export const checkoutDtoSchema = z.strictObject({
   patient: z.strictObject({
@@ -273,6 +283,8 @@ export const checkoutDtoSchema = z.strictObject({
   adjustmentTotalBaht: z.number().int().safe().min(-100_000_000).max(0),
   netDueBaht: z.number().int().safe().min(0).max(100_000_000),
   collectionState: collectionStateSchema,
+  /** Never clinical: only the immutable financial ID necessary to close a resolved Visit. */
+  resolution: financeResolutionSchema.optional(),
   allowedActions: z.array(checkoutAllowedActionSchema),
   closeBlockers: z.array(checkoutCloseBlockerSchema),
 });
@@ -348,14 +360,6 @@ export const collectionResponseSchema = z.strictObject({
   replayed: z.boolean(),
 });
 export type CollectionResponse = z.infer<typeof collectionResponseSchema>;
-
-export const financeResolutionSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("PENDING_CHARGE") }),
-  z.strictObject({ kind: z.literal("PENDING_COLLECTION"), chargeId: financeIdSchema, netDueBaht: chargeGrossTotalBahtSchema }),
-  z.strictObject({ kind: z.literal("COLLECTION_NOT_REQUIRED"), adjustmentId: financeIdSchema }),
-  z.strictObject({ kind: z.literal("PAYMENT"), paymentId: financeIdSchema, method: z.enum(["CASH", "PROMPTPAY"]) }),
-]);
-export type FinanceResolution = z.infer<typeof financeResolutionSchema>;
 
 export const medicationSearchQuerySchema = z.strictObject({
   q: z.string()
@@ -1328,6 +1332,164 @@ export const finalizeConsultationResponseSchema = z.strictObject({
 });
 export type FinalizeConsultationResponse = z.infer<typeof finalizeConsultationResponseSchema>;
 
+const closurePatientSnapshotSchema = z.strictObject({
+  id: financeIdSchema,
+  hn: z.string().regex(/^DEMO-[0-9]{6}$/),
+  displayName: financeDisplayNameSchema,
+  birthDate: z.iso.date(),
+  sex: z.enum(["female", "male", "unknown"]),
+});
+
+const closureDoctorSnapshotSchema = z.strictObject({
+  id: financeIdSchema,
+  displayName: financeDisplayNameSchema,
+});
+
+export const visitClosureResolutionSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("PAYMENT"),
+    paymentId: financeIdSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("COLLECTION_NOT_REQUIRED"),
+    waiverAdjustmentId: financeIdSchema,
+  }),
+]);
+export type VisitClosureResolution = z.infer<typeof visitClosureResolutionSchema>;
+
+export const closeVisitBodySchema = rejectOwnPrototypeKeys(z.strictObject({
+  expectedRevisions: z.strictObject({
+    visit: z.number().int().safe().min(1),
+  }),
+  payload: z.strictObject({
+    chargeId: financeIdSchema,
+    resolution: visitClosureResolutionSchema,
+  }),
+}));
+export type CloseVisitBody = z.infer<typeof closeVisitBodySchema>;
+
+export const visitClosureSchema = z.strictObject({
+  id: financeIdSchema,
+  visitId: financeIdSchema,
+  visitRevision: z.number().int().safe().min(1),
+  chargeId: financeIdSchema,
+  resolution: visitClosureResolutionSchema,
+  clinic: z.strictObject({
+    id: financeIdSchema,
+    name: z.string().trim().min(1).max(120),
+  }),
+  patient: closurePatientSnapshotSchema,
+  doctor: closureDoctorSnapshotSchema,
+  closedAt: z.string().datetime(),
+  contentHash: financeContentHashSchema,
+  visit: z.strictObject({
+    id: financeIdSchema,
+    status: z.literal("CLOSED"),
+    revision: z.number().int().safe().min(1),
+    arrivedAt: z.string().datetime(),
+    startedAt: z.string().datetime().nullable(),
+    closedAt: z.string().datetime(),
+  }),
+});
+export type VisitClosureDto = z.infer<typeof visitClosureSchema>;
+
+export const closeVisitResponseSchema = z.strictObject({
+  data: visitClosureSchema,
+  replayed: z.boolean(),
+});
+export type CloseVisitResponse = z.infer<typeof closeVisitResponseSchema>;
+
+const opdPaymentResolutionSchema = z.strictObject({
+  kind: z.literal("PAYMENT"),
+  paymentId: financeIdSchema,
+  method: z.enum(["CASH", "PROMPTPAY"]),
+  amountBaht: paymentAmountBahtSchema,
+  manualReference: z.string().trim().min(1).max(100).nullable(),
+  confirmedBy: closureDoctorSnapshotSchema,
+  confirmedAt: z.string().datetime(),
+  contentHash: financeContentHashSchema,
+});
+
+const opdWaiverResolutionSchema = z.strictObject({
+  kind: z.literal("COLLECTION_NOT_REQUIRED"),
+  waiverAdjustmentId: financeIdSchema,
+  amountBaht: z.number().int().safe().min(-100_000_000).max(-1),
+  reason: z.string().trim().min(1).max(500),
+  approvedBy: closureDoctorSnapshotSchema,
+  approvedAt: z.string().datetime(),
+  contentHash: financeContentHashSchema,
+});
+
+const opdMedicationSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("ORDER"),
+    decision: z.strictObject({
+      id: financeIdSchema,
+      version: z.number().int().safe().min(1),
+      signedAt: z.string().datetime(),
+      contentHash: financeContentHashSchema,
+    }),
+    dispense: z.strictObject({
+      id: financeIdSchema,
+      handedOffAt: z.string().datetime(),
+    }),
+    items: z.array(z.strictObject({
+      dispenseLineId: financeIdSchema,
+      orderItemId: financeIdSchema,
+      displayName: financeDescriptionSchema,
+      strengthText: z.string().trim().min(1).max(100),
+      dosageFormText: z.string().trim().min(1).max(100),
+      quantity: z.number().int().safe().min(1).max(999_999),
+      unit: z.string().trim().min(1).max(100),
+      directionsTh: z.string().trim().min(1).max(500),
+      lotNumber: z.string().trim().min(1).max(100),
+      expiryDate: z.iso.date(),
+    })).min(1).max(20),
+  }),
+  z.strictObject({
+    kind: z.literal("NO_MEDICATION"),
+    decision: z.strictObject({
+      id: financeIdSchema,
+      version: z.number().int().safe().min(1),
+      signedAt: z.string().datetime(),
+      contentHash: financeContentHashSchema,
+    }),
+    noMedicationReason: z.string().trim().min(1).max(500),
+    items: z.tuple([]),
+  }),
+]);
+
+export const opdCardSchema = z.strictObject({
+  syntheticOnly: z.literal(true),
+  closure: visitClosureSchema,
+  visit: z.strictObject({
+    id: financeIdSchema,
+    chiefComplaint: z.string().trim().min(1).max(500),
+    arrivedAt: z.string().datetime(),
+    startedAt: z.string().datetime().nullable(),
+    closedAt: z.string().datetime(),
+    vitals: intakeVitalsSchema,
+  }),
+  clinicalNote: signedClinicalNoteSchema,
+  amendments: z.array(clinicalNoteAmendmentSchema).max(100),
+  medication: opdMedicationSchema,
+  charge: z.strictObject({
+    id: financeIdSchema,
+    sourceKind: z.enum(["ORDER", "NO_MEDICATION"]),
+    currency: z.literal("THB"),
+    lines: z.array(checkoutLineSchema).min(1).max(21),
+    grossTotalBaht: chargeGrossTotalBahtSchema,
+    adjustmentTotalBaht: z.number().int().safe().min(-100_000_000).max(0),
+    netDueBaht: z.number().int().safe().min(0).max(100_000_000),
+    resolution: z.discriminatedUnion("kind", [opdPaymentResolutionSchema, opdWaiverResolutionSchema]),
+    contentHash: financeContentHashSchema,
+  }),
+});
+export type OpdCardDto = z.infer<typeof opdCardSchema>;
+
+export const opdCardResponseSchema = z.strictObject({ data: opdCardSchema });
+export type OpdCardResponse = z.infer<typeof opdCardResponseSchema>;
+
 export type Permission = z.infer<typeof permissionSchema>;
 
 export interface IdempotentEnvelope<T> {
@@ -1379,6 +1541,8 @@ export const apiErrorCodeSchema = z.enum([
   "WAIVER_NOT_ALLOWED",
   "PAYMENT_AMOUNT_MISMATCH",
   "PAYMENT_ALREADY_RECORDED",
+  "VISIT_CLOSE_BLOCKED",
+  "OPD_CARD_NOT_READY",
   "RATE_LIMITED",
   "INTERNAL_ERROR",
 ]);

@@ -127,6 +127,13 @@
       "when": 1786264962975,
       "tag": "0017_charge_collection_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1786277883847,
+      "tag": "0018_visit_closure_integrity",
+      "breakpoints": true
     }
   ]
 }

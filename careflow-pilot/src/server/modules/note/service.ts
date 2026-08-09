@@ -301,6 +301,9 @@ export function createNoteService(options: NoteServiceOptions): NoteService {
     },
 
     signAmendment(tx, actor, noteId, expectedAmendmentVersion, content, reason) {
+      if (actor.role !== "doctor") {
+        throw new ApiError({ code: "FORBIDDEN", messageTh: "บัญชีนี้ไม่มีสิทธิ์ดำเนินการ" });
+      }
       const note = tx.select({ id: clinicalNotes.id }).from(clinicalNotes)
         .where(eq(clinicalNotes.id, noteId)).get();
       if (!note) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบบันทึกที่ลงนาม" });

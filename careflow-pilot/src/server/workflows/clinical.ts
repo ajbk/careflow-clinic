@@ -387,7 +387,7 @@ export function createClinicalWorkflow(input: {
     },
 
     amendNote(tx, actor, noteId, body) {
-      if (!hasPermission(actor, "clinical:amend")) {
+      if (actor.role !== "doctor" || !hasPermission(actor, "clinical:amend")) {
         throw new ApiError({ code: "FORBIDDEN", messageTh: "บัญชีนี้ไม่มีสิทธิ์ดำเนินการ" });
       }
       return input.notes.signAmendment(

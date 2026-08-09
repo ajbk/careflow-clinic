@@ -1,4 +1,4 @@
-export { intakeObservations, visits } from "./schema.js";
+export { intakeObservations, visitClosures, visits } from "./schema.js";
 export {
   createVisitService,
   type VisitPatientReader,

@@ -64,6 +64,11 @@ export interface FinanceService {
     command: ConfirmPromptPayCommand,
   ): CheckoutDto;
   readResolution(tx: AppTransaction, visitId: string): FinanceResolution;
+  /** Complete immutable evidence for the caller-owned Visit close transaction. */
+  getCloseEvidence(
+    tx: AppDatabase | AppTransaction,
+    visitId: string,
+  ): FinanceCloseEvidence | null;
   /** Rebuilds a safe idempotency replay from immutable Charge evidence only. */
   rebuildFinalization(tx: AppTransaction, reference: ChargeFinalizeReplayReference): CheckoutDto;
   /** Rebuilds a terminal collection replay from pinned immutable evidence. */
@@ -83,6 +88,8 @@ export interface ChargeFinalizeReplayReference {
   visit: CheckoutDto["visit"];
   /** Optional for safe references written before the exact projection was pinned. */
   projection?: ChargeFinalizeReplayProjection;
+  /** Omitted by pre-close references whose original Checkout response had no resolution field. */
+  responseIncludesResolution?: boolean;
   /** Present only when finalization atomically created a full-waiver resolution. */
   resolution?: Extract<FinanceResolution, { kind: "COLLECTION_NOT_REQUIRED" }>;
 }
@@ -125,6 +132,18 @@ export interface FinanceCollectionReplayReference {
   patient: CheckoutDto["patient"];
   visit: CheckoutDto["visit"];
   projection: ChargeFinalizeReplayProjection;
+  /** Omitted by pre-close references whose original Checkout response had no resolution field. */
+  responseIncludesResolution?: boolean;
+}
+
+export interface FinanceCloseEvidence {
+  charge: typeof financeCharges.$inferSelect;
+  lines: (typeof financeChargeLines.$inferSelect)[];
+  grossTotalBaht: number;
+  adjustmentTotalBaht: number;
+  netDueBaht: number;
+  adjustment: typeof financeChargeAdjustments.$inferSelect | undefined;
+  payment: typeof financePayments.$inferSelect | undefined;
 }
 
 interface CheckoutContext {
@@ -564,6 +583,12 @@ function allowedActions(
     if (hasPermission(actor, "finance:confirm-promptpay")) actions.push("CONFIRM_PROMPTPAY");
     return actions;
   }
+  if (evidence && visit.status === "READY_TO_CLOSE" && hasPermission(actor, "visit:close")) {
+    return ["CLOSE_VISIT"];
+  }
+  if (evidence && visit.status === "CLOSED" && hasPermission(actor, "opd:read")) {
+    return ["READ_OPD"];
+  }
   return [];
 }
 
@@ -577,11 +602,26 @@ function closeBlockers(
   return [];
 }
 
+function resolutionFromEvidence(evidence: PersistedChargeEvidence): FinanceResolution {
+  if (evidence.adjustment) {
+    return { kind: "COLLECTION_NOT_REQUIRED", adjustmentId: evidence.adjustment.id };
+  }
+  if (evidence.payment) {
+    return { kind: "PAYMENT", paymentId: evidence.payment.id, method: evidence.payment.method };
+  }
+  return {
+    kind: "PENDING_COLLECTION",
+    chargeId: evidence.charge.id,
+    netDueBaht: evidence.netDueBaht,
+  };
+}
+
 function checkoutFromEvidence(
   actor: Actor,
   context: CheckoutContext,
   evidence: PersistedChargeEvidence,
   pinnedProjection?: ChargeFinalizeReplayProjection,
+  includeResolution = true,
 ): CheckoutDto {
   const projection = pinnedProjection ?? {
     adjustmentTotalBaht: evidence.adjustmentTotalBaht,
@@ -623,13 +663,13 @@ function checkoutFromEvidence(
         displayName: evidence.charge.finalizedByDisplayName,
       },
       finalizedAt: evidence.charge.finalizedAt,
-      contentHash: evidence.charge.contentHash,
     },
     lines: evidence.lines.map(persistedLineToCheckoutLine),
     grossTotalBaht: evidence.grossTotalBaht,
     adjustmentTotalBaht: projection.adjustmentTotalBaht,
     netDueBaht: projection.netDueBaht,
     collectionState: projection.collectionState,
+    ...(includeResolution ? { resolution: resolutionFromEvidence(evidence) } : {}),
     allowedActions: projection.allowedActions,
     closeBlockers: projection.closeBlockers,
   };
@@ -649,6 +689,7 @@ function replayCheckoutFromEvidence(
       patient: reference.patient,
       visit: reference.visit,
       projection: reference.projection,
+      responseIncludesResolution: reference.responseIncludesResolution,
     });
   }
   const evidence = readChargeEvidence(tx, { chargeId: reference.chargeId }, "CHARGE_ONLY");
@@ -670,6 +711,7 @@ function replayCheckoutFromEvidence(
     { clinicId: evidence.charge.clinicId, patient: reference.patient, visit: reference.visit },
     evidence,
     projection,
+    reference.responseIncludesResolution === true,
   );
 }
 
@@ -745,11 +787,15 @@ function replayCollectionFromEvidence(
   ) {
     throw new Error("Idempotency collection resolution does not match immutable evidence");
   }
+  const validTerminalActions = reference.projection.allowedActions.length === 0 || (
+    reference.projection.allowedActions.length === 1 &&
+    reference.projection.allowedActions[0] === "CLOSE_VISIT"
+  );
   if (
     reference.projection.adjustmentTotalBaht !== evidence.adjustmentTotalBaht ||
     reference.projection.netDueBaht !== evidence.netDueBaht ||
     reference.projection.collectionState !== expectedCollectionState ||
-    reference.projection.allowedActions.length !== 0 ||
+    !validTerminalActions ||
     reference.projection.closeBlockers.length !== 0
   ) {
     throw new Error("Idempotency collection projection does not match immutable evidence");
@@ -759,6 +805,7 @@ function replayCollectionFromEvidence(
     { clinicId: evidence.charge.clinicId, patient: reference.patient, visit: reference.visit },
     evidence,
     reference.projection,
+    reference.responseIncludesResolution === true,
   );
 }
 
@@ -824,6 +871,7 @@ export function createFinanceService(input: FinanceServiceOptions): FinanceServi
       adjustmentTotalBaht: 0,
       netDueBaht: quote.grossTotalBaht,
       collectionState: "PENDING_CHARGE",
+      resolution: { kind: "PENDING_CHARGE" },
       allowedActions: allowedActions(actor, context.visit, undefined),
       closeBlockers: ["charge"],
     };
@@ -1042,6 +1090,10 @@ export function createFinanceService(input: FinanceServiceOptions): FinanceServi
         chargeId: evidence.charge.id,
         netDueBaht: evidence.netDueBaht,
       };
+    },
+
+    getCloseEvidence(tx, visitId) {
+      return readChargeEvidence(tx, { visitId }) ?? null;
     },
 
     rebuildFinalization(tx, reference) {

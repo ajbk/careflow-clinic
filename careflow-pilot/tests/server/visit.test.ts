@@ -84,6 +84,81 @@ async function submitIntake(
   });
 }
 
+async function closeNoMedicationVisit(
+  test: Awaited<ReturnType<typeof fixture>>,
+  visitId: string,
+  key: string,
+): Promise<void> {
+  const started = await test.app.inject({
+    method: "POST",
+    url: `/api/visits/${visitId}/start-consultation`,
+    headers: { cookie: test.doctorCookie, "idempotency-key": `${key}-start` },
+    payload: { expectedRevisions: { visit: 1 }, payload: {} },
+  });
+  expect(started.statusCode).toBe(200);
+
+  const draft = await test.app.inject({
+    method: "POST",
+    url: `/api/visits/${visitId}/consultation-draft`,
+    headers: { cookie: test.doctorCookie, "idempotency-key": `${key}-draft` },
+    payload: {
+      expectedRevisions: { visit: 2, noteDraft: 0, medicationDraft: 0 },
+      payload: {
+        note: {
+          subjective: "ปิด Visit เพื่อทดสอบ",
+          objective: "ผลตรวจเพื่อทดสอบ",
+          assessment: "ประเมินเพื่อทดสอบ",
+          plan: "แผนเพื่อทดสอบ",
+          diagnoses: ["การวินิจฉัยเพื่อทดสอบ"],
+        },
+        medicationDecision: { kind: "NO_MEDICATION", noMedicationReason: "ไม่มีข้อบ่งใช้ยา" },
+      },
+    },
+  });
+  expect(draft.statusCode).toBe(200);
+
+  const finalized = await test.app.inject({
+    method: "POST",
+    url: `/api/visits/${visitId}/finalize-consultation`,
+    headers: { cookie: test.doctorCookie, "idempotency-key": `${key}-finalize` },
+    payload: { expectedRevisions: { visit: 2, patient: 1, noteDraft: 1, medicationDraft: 1 }, payload: {} },
+  });
+  expect(finalized.statusCode).toBe(200);
+
+  const charge = await test.app.inject({
+    method: "POST",
+    url: `/api/checkout/${visitId}/charge-finalizations`,
+    headers: { cookie: test.doctorCookie, "idempotency-key": `${key}-charge` },
+    payload: {
+      expectedRevisions: { visit: 3, clinicPricing: 1 },
+      payload: { settlementIntent: "FULL_WAIVER", waiverReason: "ปิด Visit เพื่อทดสอบ" },
+    },
+  });
+  expect(charge.statusCode).toBe(201);
+  if (charge.statusCode !== 201) return;
+  const checkout = charge.json().data as {
+    charge: { id: string } | null;
+    resolution?: { kind: string; adjustmentId?: string };
+    visit: { revision: number };
+  };
+  if (!checkout.charge || checkout.resolution?.kind !== "COLLECTION_NOT_REQUIRED" || !checkout.resolution.adjustmentId) {
+    throw new Error("Unable to obtain a Closure-valid waiver fixture");
+  }
+  const closed = await test.app.inject({
+    method: "POST",
+    url: `/api/visits/${visitId}/close`,
+    headers: { cookie: test.doctorCookie, "idempotency-key": `${key}-close` },
+    payload: {
+      expectedRevisions: { visit: checkout.visit.revision },
+      payload: {
+        chargeId: checkout.charge.id,
+        resolution: { kind: "COLLECTION_NOT_REQUIRED", waiverAdjustmentId: checkout.resolution.adjustmentId },
+      },
+    },
+  });
+  expect(closed.statusCode).toBe(201);
+}
+
 describe("shared Intake, Queue, and consultation workflow", () => {
   it("creates one Visit, Observation, and Audit atomically", async () => {
     const test = await fixture();
@@ -421,9 +496,7 @@ describe("shared Intake, Queue, and consultation workflow", () => {
     expect(duplicate.json().error.code).toBe("ACTIVE_VISIT_EXISTS");
 
     const firstVisitId = first.json().data.visit.id as string;
-    test.database.sqlite
-      .prepare("UPDATE visits SET status = 'CLOSED', closed_at = ? WHERE id = ?")
-      .run("2026-08-03T00:01:00.000Z", firstVisitId);
+    await closeNoMedicationVisit(test, firstVisitId, "active-index-close");
     const replacement = await submitIntake(test.app, test.assistantCookie, patientId, "active-index-replacement");
     expect(replacement.statusCode).toBe(201);
     expect(test.database.db.select().from(visits).all()).toHaveLength(2);
@@ -542,7 +615,7 @@ describe("shared Intake, Queue, and consultation workflow", () => {
 
   it("counts each committed pending state and excludes closed Visits from Dashboard", async () => {
     const test = await fixture();
-    const statuses = ["WAITING", "CONSULTING", "AWAITING_ORDER_REVISION", "AWAITING_PREPARATION", "PREPARING", "AWAITING_RELEASE", "AWAITING_HANDOFF", "AWAITING_CHARGE", "AWAITING_PAYMENT", "READY_TO_CLOSE", "CLOSED"];
+    const statuses = ["WAITING", "CONSULTING", "AWAITING_ORDER_REVISION", "AWAITING_PREPARATION", "PREPARING", "AWAITING_RELEASE", "AWAITING_HANDOFF", "AWAITING_CHARGE", "AWAITING_PAYMENT", "READY_TO_CLOSE"];
     for (const [index, status] of statuses.entries()) {
       const patient = await createPatient(test.app, test.assistantCookie, `dashboard-state-patient-${status}`);
       const created = await submitIntake(
@@ -552,6 +625,11 @@ describe("shared Intake, Queue, and consultation workflow", () => {
         status, `2026-08-03T0${index}:00:00.000Z`, created.json().data.visit.id,
       );
     }
+    const closedPatient = await createPatient(test.app, test.assistantCookie, "dashboard-state-patient-CLOSED");
+    const closed = await submitIntake(
+      test.app, test.assistantCookie, closedPatient.json().data.id, "dashboard-state-visit-CLOSED",
+    );
+    await closeNoMedicationVisit(test, closed.json().data.visit.id, "dashboard-state-close");
     const dashboard = await test.app.inject({
       method: "GET", url: "/api/dashboard/today", headers: { cookie: test.assistantCookie },
     });
@@ -573,7 +651,7 @@ describe("shared Intake, Queue, and consultation workflow", () => {
     const closedVisitId = closedVisit.json().data.visit.id as string;
     test.database.sqlite.prepare("UPDATE visits SET status = 'AWAITING_PAYMENT', revision = 8 WHERE id = ?").run(paymentVisitId);
     test.database.sqlite.prepare("UPDATE visits SET status = 'READY_TO_CLOSE', revision = 9 WHERE id = ?").run(readyVisitId);
-    test.database.sqlite.prepare("UPDATE visits SET status = 'CLOSED', revision = 10 WHERE id = ?").run(closedVisitId);
+    await closeNoMedicationVisit(test, closedVisitId, "finance-queue-close");
 
     const doctorQueue = await test.app.inject({ method: "GET", url: "/api/queue", headers: { cookie: test.doctorCookie } });
     expect(doctorQueue.statusCode).toBe(200);

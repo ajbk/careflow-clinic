@@ -26,6 +26,8 @@ import {
 import { createNoteService } from "./modules/note/index.js";
 import { createClinicalWorkflow } from "./workflows/clinical.js";
 import { registerClinicalRoutes } from "./workflows/clinical-routes.js";
+import { createVisitCompletionWorkflow } from "./workflows/visit-completion.js";
+import { registerVisitCompletionRoutes } from "./workflows/visit-completion-routes.js";
 import { isApiPath, registerClientAssets } from "./static.js";
 
 export interface BuildAppOptions {
@@ -40,6 +42,8 @@ export interface BuildAppOptions {
   serveStatic?: boolean;
   /** Override the configured client dist root for an injectable test fixture. */
   clientAssetsRoot?: string;
+  /** Test-only seam used to prove a close transaction rolls back as one unit. */
+  beforeVisitCloseTransition?: () => void;
 }
 
 function zodFieldErrors(error: ZodError): Record<string, string> {
@@ -142,6 +146,18 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     clock: options.clock,
   });
   registerClinicalRoutes({ app, database: options.db, clinical: clinicalWorkflow });
+  const visitCompletion = createVisitCompletionWorkflow({
+    database: options.db,
+    visits: visitService,
+    finance: financeService,
+    notes: noteService,
+    medications: medicationService,
+    fulfillment: fulfillmentService,
+    clock: options.clock,
+    idFactory: options.idFactory,
+    beforeVisitCloseTransition: options.beforeVisitCloseTransition,
+  });
+  registerVisitCompletionRoutes({ app, database: options.db, completion: visitCompletion });
 
   const requestStartedAt = new WeakMap<object, number>();
   app.addHook("onRequest", async (request) => {

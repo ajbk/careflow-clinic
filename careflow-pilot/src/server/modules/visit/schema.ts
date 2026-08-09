@@ -10,6 +10,11 @@ import {
 } from "drizzle-orm/sqlite-core";
 import { patients } from "../patient/index.js";
 import { clinicConfig, staffAccounts } from "../platform/index.js";
+import {
+  financeChargeAdjustments,
+  financeCharges,
+  financePayments,
+} from "../finance/schema.js";
 import { visitStatuses } from "../../../shared/contracts.js";
 
 export const visits = sqliteTable(
@@ -104,5 +109,59 @@ export const intakeObservations = sqliteTable(
       "intake_blood_pressure_relationship_check",
       sql`${table.systolicMmhg} IS NULL OR ${table.diastolicMmhg} IS NULL OR ${table.systolicMmhg} >= ${table.diastolicMmhg}`,
     ),
+  ],
+);
+
+const closureHashCheck = (column: ReturnType<typeof text>) =>
+  sql`length(${column}) = 64 AND ${column} NOT GLOB '*[^0-9a-f]*'`;
+
+/** Immutable proof that a Doctor closed one fully resolved Visit. */
+export const visitClosures = sqliteTable(
+  "visit_closures",
+  {
+    id: text("id").primaryKey(),
+    clinicId: text("clinic_id")
+      .notNull()
+      .references(() => clinicConfig.id),
+    visitId: text("visit_id")
+      .notNull()
+      .unique()
+      .references(() => visits.id),
+    /** The READY_TO_CLOSE revision validated before the one CLOSED transition. */
+    visitRevision: integer("visit_revision").notNull(),
+    chargeId: text("charge_id")
+      .notNull()
+      .unique()
+      .references(() => financeCharges.id),
+    paymentId: text("payment_id").references(() => financePayments.id),
+    waiverAdjustmentId: text("waiver_adjustment_id").references(() => financeChargeAdjustments.id),
+    clinicNameSnapshot: text("clinic_name_snapshot").notNull(),
+    patientIdSnapshot: text("patient_id_snapshot").notNull(),
+    patientHnSnapshot: text("patient_hn_snapshot").notNull(),
+    patientDisplayNameSnapshot: text("patient_display_name_snapshot").notNull(),
+    patientBirthDateSnapshot: text("patient_birth_date_snapshot").notNull(),
+    patientSexSnapshot: text("patient_sex_snapshot", { enum: ["female", "male", "unknown"] }).notNull(),
+    doctorIdSnapshot: text("doctor_id_snapshot")
+      .notNull()
+      .references(() => staffAccounts.id),
+    doctorDisplayNameSnapshot: text("doctor_display_name_snapshot").notNull(),
+    closedAt: text("closed_at").notNull(),
+    contentHash: text("content_hash").notNull(),
+  },
+  (table) => [
+    check("visit_closures_visit_revision_check", sql`${table.visitRevision} >= 1`),
+    check(
+      "visit_closures_resolution_shape_check",
+      sql`(${table.paymentId} IS NOT NULL AND ${table.waiverAdjustmentId} IS NULL) OR (${table.paymentId} IS NULL AND ${table.waiverAdjustmentId} IS NOT NULL)`,
+    ),
+    check("visit_closures_clinic_name_snapshot_check", sql`length(trim(${table.clinicNameSnapshot})) BETWEEN 1 AND 120`),
+    check("visit_closures_patient_id_snapshot_check", sql`length(trim(${table.patientIdSnapshot})) BETWEEN 1 AND 120`),
+    check("visit_closures_patient_hn_snapshot_check", sql`${table.patientHnSnapshot} GLOB 'DEMO-[0-9][0-9][0-9][0-9][0-9][0-9]'`),
+    check("visit_closures_patient_name_snapshot_check", sql`length(trim(${table.patientDisplayNameSnapshot})) BETWEEN 1 AND 200`),
+    check("visit_closures_patient_birth_date_snapshot_check", sql`${table.patientBirthDateSnapshot} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'`),
+    check("visit_closures_patient_sex_snapshot_check", sql`${table.patientSexSnapshot} IN ('female', 'male', 'unknown')`),
+    check("visit_closures_doctor_display_name_snapshot_check", sql`length(trim(${table.doctorDisplayNameSnapshot})) BETWEEN 1 AND 200`),
+    check("visit_closures_content_hash_check", closureHashCheck(table.contentHash)),
+    index("visit_closures_clinic_closed_at_index").on(table.clinicId, table.closedAt),
   ],
 );
