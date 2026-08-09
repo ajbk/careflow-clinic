@@ -289,7 +289,7 @@ test("an active reservation is released by a real ORDER revision and cannot use 
     await assistant.goto(`${server.baseURL}/dispensing/${patient.visitId}`);
     await assistant.getByRole("button", { name: "เริ่มเตรียมยา" }).click();
     const active = (await (await assistant.request.get(`${server.baseURL}/api/dispensing/${patient.visitId}`)).json()).data as {
-      visit: { revision: number }; patient: { revision: number }; medicationDecision: { version: number; items: Array<{ id: string; revision: number; quantity: number; directionsTh: string }> }; label: { id: string }; reservation: { id: string };
+      visit: { revision: number }; patient: { revision: number }; medicationDecision: { version: number }; label: { id: string; items: Array<{ medicationId: string; medicationRevision: number; quantity: number; directionsThSnapshot: string }> }; reservation: { id: string };
     };
     const revised = await doctor.request.post(`${server.baseURL}/api/visits/${patient.visitId}/medication-decision-revisions`, {
       headers: { "idempotency-key": "active-reservation-order-revision" },
@@ -297,7 +297,7 @@ test("an active reservation is released by a real ORDER revision and cannot use 
         expectedRevisions: { visit: active.visit.revision, patient: active.patient.revision, medicationDecision: active.medicationDecision.version },
         payload: {
           revisionReason: "แก้ไขคำสั่งยาในขณะที่กำลังจัดยา",
-          decision: { kind: "ORDER", items: active.medicationDecision.items.map((item) => ({ medicationId: item.id, medicationRevision: item.revision, quantity: item.quantity, directionsTh: item.directionsTh })) },
+          decision: { kind: "ORDER", items: active.label.items.map((item) => ({ medicationId: item.medicationId, medicationRevision: item.medicationRevision, quantity: item.quantity, directionsTh: item.directionsThSnapshot })) },
         },
       },
     });

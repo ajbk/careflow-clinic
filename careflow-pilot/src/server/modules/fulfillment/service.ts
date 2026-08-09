@@ -333,7 +333,6 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
         eq(inventoryReservations.status, "ACTIVE"),
       )).get();
       if (!reservation) invalidState("รายการจองยาที่เกี่ยวข้องไม่พร้อมยกเลิก");
-      const allocations = tx.select().from(inventoryReservationAllocations).where(eq(inventoryReservationAllocations.reservationId, prep.reservationId)).all();
       invalidate(tx, actor, visitId, "ABANDON", reason.trim(), undefined, true);
       const released = input.inventory.releaseActiveReservation(tx, actor, visitId, reason.trim());
       if (!released || released.id !== reservation.id) invalidState("รายการจองยาที่เกี่ยวข้องถูกเปลี่ยนแปลงแล้ว");
