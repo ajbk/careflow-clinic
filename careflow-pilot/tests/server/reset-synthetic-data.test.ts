@@ -505,6 +505,9 @@ describe("guarded synthetic reset", () => {
         SELECT count(*) FROM sqlite_master
         WHERE type = 'trigger' AND name LIKE '%_protected_insert_conflict_guard'
       `).pluck().get()).toBe(46);
+      expect(database.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'visits_closed_insert_guard'",
+      ).get()).toEqual({ name: "visits_closed_insert_guard" });
       const medicationBeforeReplace = Buffer.from(JSON.stringify(database.prepare(
         "SELECT * FROM medications WHERE id = 'DEMO-MED-001'",
       ).get()));

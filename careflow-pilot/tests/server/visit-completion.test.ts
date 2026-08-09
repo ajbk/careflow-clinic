@@ -131,6 +131,16 @@ async function close(test: CompletionFixture): Promise<{ closureId: string; cont
     },
   });
   expect(firstClose.statusCode).toBe(201);
+  expect(test.database.sqlite.prepare(
+    "SELECT status, revision, closed_at FROM visits WHERE id = 'completion-visit'",
+  ).get()).toEqual({
+    status: "CLOSED",
+    revision: 10,
+    closed_at: NOW,
+  });
+  expect(test.database.sqlite.prepare(
+    "SELECT count(*) FROM visit_closures WHERE visit_id = 'completion-visit'",
+  ).pluck().get()).toBe(1);
   const data = (firstClose.json() as { data: { id: string; contentHash: string } }).data;
   return { closureId: data.id, contentHash: data.contentHash };
 }

@@ -36,7 +36,7 @@ describe("SQLite boundary", () => {
     ).toBe("careflow-pilot");
     expect(
       handle.sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get(),
-    ).toBe(22);
+    ).toBe(23);
     expect(handle.sqlite.prepare(`
       SELECT count(*) FROM sqlite_master
       WHERE type = 'trigger' AND name LIKE '%_protected_insert_conflict_guard'
@@ -45,11 +45,13 @@ describe("SQLite boundary", () => {
       SELECT name FROM sqlite_master
       WHERE type = 'trigger' AND name IN (
         'inventory_reservations_closed_id_conflict_guard',
-        'inventory_reservation_allocations_closed_id_conflict_guard'
+        'inventory_reservation_allocations_closed_id_conflict_guard',
+        'visits_closed_insert_guard'
       ) ORDER BY name
     `).all()).toEqual([
       { name: "inventory_reservation_allocations_closed_id_conflict_guard" },
       { name: "inventory_reservations_closed_id_conflict_guard" },
+      { name: "visits_closed_insert_guard" },
     ]);
     expect(
       handle.sqlite

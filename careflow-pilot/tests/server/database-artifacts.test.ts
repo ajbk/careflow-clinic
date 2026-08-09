@@ -119,7 +119,19 @@ function copyMigrationsThrough0020(target: string): string {
   return oldPath;
 }
 
-const immutableMigrationHashesThrough0020 = {
+function copyMigrationsThrough0021(target: string): string {
+  const source = join(process.cwd(), "drizzle");
+  const oldPath = join(target, "drizzle-0021");
+  cpSync(source, oldPath, { recursive: true });
+  rmSync(join(oldPath, "0022_closed_visit_insert_guard.sql"), { force: true });
+  const journalPath = join(oldPath, "meta", "_journal.json");
+  const journal = JSON.parse(readFileSync(journalPath, "utf8")) as { entries: Array<{ idx: number }> };
+  journal.entries = journal.entries.filter((entry) => entry.idx < 22);
+  writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+  return oldPath;
+}
+
+const immutableMigrationHashesThrough0021 = {
   "0000_platform.sql": "77dbb1cce19d455be9bb06d4dc5d64de0425b0435f9c70ac63a413fc4ce8c9e6",
   "0001_patient.sql": "55af6b78670f63296ab2e6da9cce84a04613dfd31e5c3cba8534eb5a52e7d96f",
   "0002_visit_intake.sql": "74ef1bbd67666b7666cf999823a646bf1ba0810a07c4ec35e9026113edaf4c20",
@@ -141,9 +153,10 @@ const immutableMigrationHashesThrough0020 = {
   "0018_visit_closure_integrity.sql": "68059f8e06e2051415c632c68efdc3b77aa1ec58beda227d73d32387f8c0ee0a",
   "0019_post_close_reservation_guards.sql": "31c6be4917adbe0d0758ff615ecdbde680649137ae9da5031b9f16c330d0f5e1",
   "0020_post_close_replace_guards.sql": "d346745b4810751cbc8306ddcf424f61932e144f9e4576139ac3dd0ddb106128",
+  "0021_protected_insert_conflict_guards.sql": "96155e3424b40627db36eb2b6bb280c4d87e1382af48581280065a4782c69395",
 } as const;
 
-const immutableMigrationSnapshotHashesThrough0020 = {
+const immutableMigrationSnapshotHashesThrough0021 = {
   "0000_snapshot.json": "61925e834bd4f002e75d36d2dfe8517c7ac30cfde5f43c1de874ac305559bed6",
   "0001_snapshot.json": "b8f94f95c24f38b16179369fd1b93475a9c0e925a08b5444f1e70dc7f379322c",
   "0002_snapshot.json": "b2387cf5b7f9e4334c2d7699004d867f52c13edb0ea21fa6fca5c6c00387269f",
@@ -164,6 +177,7 @@ const immutableMigrationSnapshotHashesThrough0020 = {
   "0018_snapshot.json": "dc4d4dcb7b4f0c8c69880961aaa970d3e6080670c3581a0d960018a0a0612003",
   "0019_snapshot.json": "35e76769c409004c834576039582ddebc134b688c5848a13fd44a9d5b245e19b",
   "0020_snapshot.json": "0751a33f012a9fb417ed1f51127fb19a03dae4979ef4272dd527b7ff8a09064d",
+  "0021_snapshot.json": "53f896f144497ea735c9bd510d1fa97447323094909545a15f3bab106307a600",
 } as const;
 
 const operationalConflictTables = new Set(["clinic_counters", "sessions"]);
@@ -413,9 +427,9 @@ it("inventories every protected SQLite PK/UNIQUE key and installs one systematic
   }
 });
 
-it("upgrades a fresh 21-migration predecessor to 22 with identity, schema, FK, and trigger health intact", () => {
+it("upgrades a fresh 22-migration predecessor to 23 with identity, schema, FK, and trigger health intact", () => {
   const migrationsPath = join(process.cwd(), "drizzle");
-  const snapshot0020 = JSON.parse(readFileSync(join(migrationsPath, "meta", "0020_snapshot.json"), "utf8")) as {
+  const snapshot0021 = JSON.parse(readFileSync(join(migrationsPath, "meta", "0021_snapshot.json"), "utf8")) as {
     id: string;
     version: string;
     dialect: string;
@@ -425,25 +439,28 @@ it("upgrades a fresh 21-migration predecessor to 22 with identity, schema, FK, a
     _meta: unknown;
     internal: unknown;
   };
-  const snapshot0021 = JSON.parse(readFileSync(join(migrationsPath, "meta", "0021_snapshot.json"), "utf8")) as
-    typeof snapshot0020 & { prevId: string };
-  expect(snapshot0021.prevId).toBe(snapshot0020.id);
+  const snapshot0022 = JSON.parse(readFileSync(join(migrationsPath, "meta", "0022_snapshot.json"), "utf8")) as
+    typeof snapshot0021 & { prevId: string };
+  expect(snapshot0022.prevId).toBe(snapshot0021.id);
   for (const key of ["version", "dialect", "tables", "views", "enums", "_meta", "internal"] as const) {
-    expect(snapshot0021[key]).toEqual(snapshot0020[key]);
+    expect(snapshot0022[key]).toEqual(snapshot0021[key]);
   }
 
   const { directory, databasePath } = temporaryDatabase();
-  const migrationsThrough0020 = copyMigrationsThrough0020(directory);
+  const migrationsThrough0021 = copyMigrationsThrough0021(directory);
   const sqlite = new Database(databasePath);
   try {
     sqlite.pragma("foreign_keys = ON");
     const db = drizzle(sqlite);
-    migrate(db, { migrationsFolder: migrationsThrough0020 });
-    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(21);
+    migrate(db, { migrationsFolder: migrationsThrough0021 });
+    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(22);
     expect(sqlite.prepare(`
       SELECT count(*) FROM sqlite_master
       WHERE type = 'trigger' AND name LIKE '%_protected_insert_conflict_guard'
-    `).pluck().get()).toBe(0);
+    `).pluck().get()).toBe(46);
+    expect(sqlite.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'visits_closed_insert_guard'",
+    ).get()).toBeUndefined();
     const oldMigrationRows = sqlite.prepare(
       "SELECT hash, created_at FROM __drizzle_migrations ORDER BY created_at, id",
     ).all();
@@ -455,10 +472,10 @@ it("upgrades a fresh 21-migration predecessor to 22 with identity, schema, FK, a
 
     migrate(db, { migrationsFolder: migrationsPath });
 
-    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(22);
+    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(23);
     expect(sqlite.prepare(
       "SELECT hash, created_at FROM __drizzle_migrations ORDER BY created_at, id",
-    ).all().slice(0, 21)).toEqual(oldMigrationRows);
+    ).all().slice(0, 22)).toEqual(oldMigrationRows);
     expect(sqlite.prepare(`
       SELECT type, name, tbl_name, sql FROM sqlite_master
       WHERE type IN ('table', 'index') AND name NOT LIKE 'sqlite_%'
@@ -468,6 +485,110 @@ it("upgrades a fresh 21-migration predecessor to 22 with identity, schema, FK, a
       SELECT count(*) FROM sqlite_master
       WHERE type = 'trigger' AND name LIKE '%_protected_insert_conflict_guard'
     `).pluck().get()).toBe(46);
+    expect(sqlite.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'visits_closed_insert_guard'",
+    ).get()).toEqual({ name: "visits_closed_insert_guard" });
+    expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  } finally {
+    sqlite.close();
+  }
+});
+
+function seedOpenConsultingVisitForClosedInsertGuard(sqlite: Database.Database): void {
+  const now = "2026-08-10T00:00:00.000Z";
+  sqlite.exec(`
+    INSERT INTO staff_accounts (
+      id, clinic_id, username, display_name, role, password_hash, must_change_password,
+      active, revision, last_password_changed_at, created_at, updated_at
+    ) VALUES (
+      'closed-insert-doctor', 'clinic', 'closed-insert-doctor', 'แพทย์ทดสอบ Closed Insert',
+      'doctor', 'hash', 0, 1, 1, '${now}', '${now}', '${now}'
+    );
+    INSERT INTO patients (
+      id, clinic_id, hn, display_name, phone, birth_date, sex, revision, created_at, updated_at
+    ) VALUES (
+      'closed-insert-patient', 'clinic', 'DEMO-000087', 'ผู้ป่วยทดสอบ 000087',
+      '0000000087', '1990-01-01', 'unknown', 1, '${now}', '${now}'
+    );
+    INSERT INTO visits (
+      id, clinic_id, patient_id, status, chief_complaint, revision,
+      arrived_at, started_at, closed_at, created_by
+    ) VALUES (
+      'closed-insert-visit', 'clinic', 'closed-insert-patient', 'CONSULTING',
+      'ทดสอบห้าม INSERT เป็น CLOSED', 2, '${now}', '${now}', NULL, 'closed-insert-doctor'
+    );
+    INSERT INTO intake_observations (
+      id, visit_id, weight_kg, recorded_by, recorded_at
+    ) VALUES (
+      'closed-insert-intake', 'closed-insert-visit', 60, 'closed-insert-doctor', '${now}'
+    );
+  `);
+}
+
+function closedInsertGuardSourceBytes(sqlite: Database.Database): Buffer {
+  return Buffer.from(JSON.stringify({
+    visit: sqlite.prepare("SELECT * FROM visits WHERE id = 'closed-insert-visit'").get(),
+    intake: sqlite.prepare("SELECT * FROM intake_observations WHERE id = 'closed-insert-intake'").get(),
+  }));
+}
+
+describe.each(["REPLACE", "INSERT OR REPLACE"] as const)(
+  "CLOSED Visit insertion under %s with recursive triggers disabled",
+  (insertVerb) => {
+    it("rejects replacing a real open Visit PK with CLOSED without a Closure", () => {
+      const { databasePath } = temporaryDatabase();
+      const sqlite = new Database(databasePath);
+      try {
+        sqlite.pragma("foreign_keys = ON");
+        migrate(drizzle(sqlite), { migrationsFolder: join(process.cwd(), "drizzle") });
+        seedOpenConsultingVisitForClosedInsertGuard(sqlite);
+        sqlite.pragma("recursive_triggers = OFF");
+        expect(sqlite.pragma("recursive_triggers", { simple: true })).toBe(0);
+        const before = closedInsertGuardSourceBytes(sqlite);
+
+        expect(() => sqlite.prepare(`
+          ${insertVerb} INTO visits (
+            id, clinic_id, patient_id, status, chief_complaint, revision,
+            arrived_at, started_at, closed_at, created_by
+          ) VALUES (
+            'closed-insert-visit', 'clinic', 'closed-insert-patient', 'CLOSED',
+            'ห้ามข้าม Closure', 3, '2026-08-10T00:00:00.000Z',
+            '2026-08-10T00:00:00.000Z', '2026-08-10T00:05:00.000Z', 'closed-insert-doctor'
+          )
+        `).run()).toThrow("visits cannot be inserted CLOSED");
+        expect(closedInsertGuardSourceBytes(sqlite)).toEqual(before);
+        expect(sqlite.prepare("SELECT count(*) FROM visit_closures").pluck().get()).toBe(0);
+        expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+      } finally {
+        sqlite.close();
+      }
+    });
+  },
+);
+
+it("rejects a first nonconflicting Visit INSERT already marked CLOSED", () => {
+  const { databasePath } = temporaryDatabase();
+  const sqlite = new Database(databasePath);
+  try {
+    sqlite.pragma("foreign_keys = ON");
+    migrate(drizzle(sqlite), { migrationsFolder: join(process.cwd(), "drizzle") });
+    seedOpenConsultingVisitForClosedInsertGuard(sqlite);
+    sqlite.pragma("recursive_triggers = OFF");
+    expect(sqlite.pragma("recursive_triggers", { simple: true })).toBe(0);
+    const before = closedInsertGuardSourceBytes(sqlite);
+
+    expect(() => sqlite.prepare(`
+      INSERT INTO visits (
+        id, clinic_id, patient_id, status, chief_complaint, revision,
+        arrived_at, started_at, closed_at, created_by
+      ) VALUES (
+        'first-closed-insert-visit', 'clinic', 'closed-insert-patient', 'CLOSED',
+        'ห้ามสร้าง Visit ปิดโดยไม่มี Closure', 1, '2026-08-10T00:00:00.000Z',
+        '2026-08-10T00:00:00.000Z', '2026-08-10T00:05:00.000Z', 'closed-insert-doctor'
+      )
+    `).run()).toThrow("visits cannot be inserted CLOSED");
+    expect(closedInsertGuardSourceBytes(sqlite)).toEqual(before);
+    expect(sqlite.prepare("SELECT count(*) FROM visit_closures").pluck().get()).toBe(0);
     expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   } finally {
     sqlite.close();
@@ -899,6 +1020,7 @@ describe.each(["REPLACE", "INSERT OR REPLACE"] as const)(
       const { directory, databasePath } = temporaryDatabase();
       const migrationsThrough0015 = copyMigrationsThrough0015(directory);
       const migrationsThrough0020 = copyMigrationsThrough0020(directory);
+      const migrationsThrough0021 = copyMigrationsThrough0021(directory);
       const sqlite = new Database(databasePath);
       try {
         sqlite.pragma("foreign_keys = ON");
@@ -907,14 +1029,15 @@ describe.each(["REPLACE", "INSERT OR REPLACE"] as const)(
         seedPopulated0015PricingEvidence(sqlite);
         migrate(db, { migrationsFolder: migrationsThrough0020 });
         seedCompleteProtectedEvidenceAndClosePricingVisit(sqlite);
+        migrate(db, { migrationsFolder: migrationsThrough0021 });
         const oldMigrationRows = sqlite.prepare(
           "SELECT hash, created_at FROM __drizzle_migrations ORDER BY id",
         ).all();
         migrate(db, { migrationsFolder: join(process.cwd(), "drizzle") });
         sqlite.pragma("recursive_triggers = OFF");
         expect(sqlite.pragma("recursive_triggers", { simple: true })).toBe(0);
-        expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(22);
-        expect(sqlite.prepare("SELECT hash, created_at FROM __drizzle_migrations ORDER BY id").all().slice(0, 21))
+        expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(23);
+        expect(sqlite.prepare("SELECT hash, created_at FROM __drizzle_migrations ORDER BY id").all().slice(0, 22))
           .toEqual(oldMigrationRows);
         sqlite.prepare(
           "INSERT INTO __drizzle_migrations (id, hash, created_at) VALUES (999, 'protected-explicit-migration-id', 9999999999999)",
@@ -932,7 +1055,9 @@ describe.each(["REPLACE", "INSERT OR REPLACE"] as const)(
           expect(
             () => statement.run(...columns.map((column) => row[column])),
             `${table} same-PK replacement`,
-          ).toThrow(`${table} insert conflicts with protected evidence`);
+          ).toThrow(table === "visits"
+            ? /visits (?:cannot be inserted CLOSED|insert conflicts with protected evidence)/
+            : `${table} insert conflicts with protected evidence`);
           expect(
             Buffer.from(JSON.stringify(selectedProtectedRow(sqlite, table))),
             `${table} same-PK byte stability`,
@@ -997,7 +1122,7 @@ describe.each(["REPLACE", "INSERT OR REPLACE"] as const)(
 describe.each(["REPLACE", "INSERT OR REPLACE"] as const)(
   "0021 valid open-Visit writes under %s with recursive triggers disabled",
   (insertVerb) => {
-    it("allows both open-only partial conflicts and all eight mutable classes before Closure", () => {
+    it("allows open-only partial and same-PK Visit replacement plus all eight mutable classes before Closure", () => {
       const { databasePath } = temporaryDatabase();
       const sqlite = new Database(databasePath);
       const now = "2026-08-10T00:00:00.000Z";
@@ -1036,6 +1161,23 @@ describe.each(["REPLACE", "INSERT OR REPLACE"] as const)(
         `).run();
         expect(sqlite.prepare("SELECT id FROM visits WHERE patient_id = 'open-guard-patient'").pluck().get())
           .toBe("open-guard-visit");
+        sqlite.prepare(`
+          ${insertVerb} INTO visits (
+            id, clinic_id, patient_id, status, chief_complaint, revision,
+            arrived_at, started_at, closed_at, created_by
+          ) VALUES (
+            'open-guard-visit', 'clinic', 'open-guard-patient', 'AWAITING_PREPARATION',
+            'ทดสอบ Guard ก่อนปิด รุ่นที่สอง', 2, '${now}', '${now}', NULL, 'open-guard-doctor'
+          )
+        `).run();
+        expect(sqlite.prepare(
+          "SELECT status, chief_complaint, revision, closed_at FROM visits WHERE id = 'open-guard-visit'",
+        ).get()).toEqual({
+          status: "AWAITING_PREPARATION",
+          chief_complaint: "ทดสอบ Guard ก่อนปิด รุ่นที่สอง",
+          revision: 2,
+          closed_at: null,
+        });
 
         sqlite.exec(`
           INSERT INTO intake_observations (
@@ -1374,7 +1516,7 @@ it("keeps 0014 immutable and upgrades populated inventory rows with the additive
   const journal = JSON.parse(readFileSync(join(process.cwd(), "drizzle", "meta", "_journal.json"), "utf8")) as {
     entries: Array<{ idx: number; tag: string }>;
   };
-  expect(journal.entries).toHaveLength(22);
+  expect(journal.entries).toHaveLength(23);
   expect(journal.entries[14]).toMatchObject({ idx: 14, tag: "0014_inventory_integrity" });
   expect(journal.entries[15]).toMatchObject({ idx: 15, tag: "0015_inventory_adjustment_source_guard" });
   expect(journal.entries[16]).toMatchObject({ idx: 16, tag: "0016_finance_pricing_snapshots" });
@@ -1383,6 +1525,7 @@ it("keeps 0014 immutable and upgrades populated inventory rows with the additive
   expect(journal.entries[19]).toMatchObject({ idx: 19, tag: "0019_post_close_reservation_guards" });
   expect(journal.entries[20]).toMatchObject({ idx: 20, tag: "0020_post_close_replace_guards" });
   expect(journal.entries[21]).toMatchObject({ idx: 21, tag: "0021_protected_insert_conflict_guards" });
+  expect(journal.entries[22]).toMatchObject({ idx: 22, tag: "0022_closed_visit_insert_guard" });
 
   const { directory, databasePath } = temporaryDatabase();
   const oldMigrations = copyMigrationsThrough0014(directory);
@@ -1417,7 +1560,7 @@ it("keeps 0014 immutable and upgrades populated inventory rows with the additive
 
     expect(sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
     expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(22);
+    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(23);
     expect(sqlite.prepare("SELECT id, revision FROM inventory_lots WHERE id = 'upgrade-lot'").get()).toEqual(before.lot);
     expect(
       sqlite
@@ -1442,11 +1585,11 @@ it("keeps 0014 immutable and upgrades populated inventory rows with the additive
   }
 });
 
-it("keeps every 0000–0020 SQL and snapshot identity immutable while upgrading populated evidence through additive 0021", () => {
-  for (const [file, expectedHash] of Object.entries(immutableMigrationHashesThrough0020)) {
+it("keeps every 0000–0021 SQL and snapshot identity immutable while upgrading populated evidence through additive 0022", () => {
+  for (const [file, expectedHash] of Object.entries(immutableMigrationHashesThrough0021)) {
     expect(createHash("sha256").update(readFileSync(join(process.cwd(), "drizzle", file))).digest("hex")).toBe(expectedHash);
   }
-  for (const [file, expectedHash] of Object.entries(immutableMigrationSnapshotHashesThrough0020)) {
+  for (const [file, expectedHash] of Object.entries(immutableMigrationSnapshotHashesThrough0021)) {
     expect(createHash("sha256").update(readFileSync(join(process.cwd(), "drizzle", "meta", file))).digest("hex")).toBe(expectedHash);
   }
   const journal = JSON.parse(readFileSync(join(process.cwd(), "drizzle", "meta", "_journal.json"), "utf8")) as {
@@ -1475,17 +1618,21 @@ it("keeps every 0000–0020 SQL and snapshot identity immutable while upgrading 
     { idx: 19, tag: "0019_post_close_reservation_guards" },
     { idx: 20, tag: "0020_post_close_replace_guards" },
     { idx: 21, tag: "0021_protected_insert_conflict_guards" },
+    { idx: 22, tag: "0022_closed_visit_insert_guard" },
   ]);
 
   const { directory, databasePath } = temporaryDatabase();
   const oldMigrations = copyMigrationsThrough0015(directory);
+  const migrationsThrough0021 = copyMigrationsThrough0021(directory);
   const sqlite = new Database(databasePath);
   try {
     sqlite.pragma("foreign_keys = ON");
     const db = drizzle(sqlite);
     migrate(db, { migrationsFolder: oldMigrations });
     seedPopulated0015PricingEvidence(sqlite);
+    migrate(db, { migrationsFolder: migrationsThrough0021 });
     const oldMigrationRecords = sqlite.prepare("SELECT hash, created_at FROM __drizzle_migrations ORDER BY id").all();
+    expect(oldMigrationRecords).toHaveLength(22);
     const sourceTables = [
       "patients",
       "visits",
@@ -1506,11 +1653,11 @@ it("keeps every 0000–0020 SQL and snapshot identity immutable while upgrading 
 
     expect(sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
     expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    expect(sqlite.prepare("SELECT hash, created_at FROM __drizzle_migrations ORDER BY id").all().slice(0, 16))
+    expect(sqlite.prepare("SELECT hash, created_at FROM __drizzle_migrations ORDER BY id").all().slice(0, 22))
       .toEqual(oldMigrationRecords);
     const migrationCount = sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get();
-    expect(migrationCount).toBe(22);
-    if (migrationCount !== 22) return;
+    expect(migrationCount).toBe(23);
+    if (migrationCount !== 23) return;
     for (const table of sourceTables) {
       expect(Buffer.from(JSON.stringify(sqlite.prepare(`SELECT * FROM ${table} ORDER BY id`).all()))).toEqual(before[table]);
     }
@@ -1575,13 +1722,14 @@ it("retains the additive 0018 immutable Visit Closure artifacts in current histo
   const journal = JSON.parse(readFileSync(join(migrationsPath, "meta", "_journal.json"), "utf8")) as {
     entries: Array<{ idx: number; tag: string }>;
   };
-  expect(journal.entries).toHaveLength(22);
+  expect(journal.entries).toHaveLength(23);
   expect(journal.entries[16]).toMatchObject({ idx: 16, tag: "0016_finance_pricing_snapshots" });
   expect(journal.entries[17]).toMatchObject({ idx: 17, tag: "0017_charge_collection_ledger" });
   expect(journal.entries[18]).toMatchObject({ idx: 18, tag: "0018_visit_closure_integrity" });
   expect(journal.entries[19]).toMatchObject({ idx: 19, tag: "0019_post_close_reservation_guards" });
   expect(journal.entries[20]).toMatchObject({ idx: 20, tag: "0020_post_close_replace_guards" });
   expect(journal.entries[21]).toMatchObject({ idx: 21, tag: "0021_protected_insert_conflict_guards" });
+  expect(journal.entries[22]).toMatchObject({ idx: 22, tag: "0022_closed_visit_insert_guard" });
 
   const { databasePath } = temporaryDatabase();
   const sqlite = new Database(databasePath);
@@ -1590,7 +1738,7 @@ it("retains the additive 0018 immutable Visit Closure artifacts in current histo
     migrate(drizzle(sqlite), { migrationsFolder: migrationsPath });
     expect(sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
     expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(22);
+    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(23);
     expect(sqlite.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'visit_closures'").pluck().get())
       .toContain("visit_closures_resolution_shape_check");
     expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'visit_closures_visit_id_unique'").get())
@@ -1604,7 +1752,7 @@ it("retains the additive 0018 immutable Visit Closure artifacts in current histo
   }
 });
 
-it("keeps 0018–0020 immutable while upgrading populated Closure evidence through additive 0021 guards", () => {
+it("keeps 0018–0021 immutable while upgrading populated Closure evidence through additive 0022", () => {
   const migrationsPath = join(process.cwd(), "drizzle");
   expect(createHash("sha256").update(readFileSync(join(migrationsPath, "0018_visit_closure_integrity.sql"))).digest("hex"))
     .toBe("68059f8e06e2051415c632c68efdc3b77aa1ec58beda227d73d32387f8c0ee0a");
@@ -1664,7 +1812,7 @@ it("keeps 0018–0020 immutable while upgrading populated Closure evidence throu
 
     expect(sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
     expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(22);
+    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(23);
     expect(sqlite.prepare("SELECT hash, created_at FROM __drizzle_migrations ORDER BY id").all().slice(0, 19))
       .toEqual(oldMigrationRecords);
     expect(sqlite.prepare("SELECT * FROM visits WHERE id = 'closure-upgrade-visit'").get()).toEqual(before.visit);
