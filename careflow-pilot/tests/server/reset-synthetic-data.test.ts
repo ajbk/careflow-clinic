@@ -346,12 +346,16 @@ describe("guarded synthetic reset", () => {
         WHERE type = 'trigger' AND name IN (
           'inventory_reservations_after_closure_block_insert',
           'inventory_reservations_after_closure_block_delete',
-          'inventory_reservation_allocations_after_closure_block_insert'
+          'inventory_reservation_allocations_after_closure_block_insert',
+          'inventory_reservations_closed_id_conflict_guard',
+          'inventory_reservation_allocations_closed_id_conflict_guard'
         ) ORDER BY name
       `).all()).toEqual([
         { name: "inventory_reservation_allocations_after_closure_block_insert" },
+        { name: "inventory_reservation_allocations_closed_id_conflict_guard" },
         { name: "inventory_reservations_after_closure_block_delete" },
         { name: "inventory_reservations_after_closure_block_insert" },
+        { name: "inventory_reservations_closed_id_conflict_guard" },
       ]);
     } finally {
       database.close();
