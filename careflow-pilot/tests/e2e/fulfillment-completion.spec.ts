@@ -275,3 +275,72 @@ test("an active reservation is invalidated by a real allergy revision and blocks
     expect(Number((server.database.sqlite.prepare("SELECT count(*) AS count FROM fulfillment_artifact_invalidations WHERE visit_id = ?").get(patient.visitId) as { count: number }).count)).toBeGreaterThan(0);
   } finally { await assistantContext.close(); await doctorContext.close(); await server.close(); }
 });
+
+test("an active reservation is released by a real ORDER revision and cannot use its old label", async ({ browser }) => {
+  const server = await startPilotServer();
+  const assistantContext = await browser.newContext(); const doctorContext = await browser.newContext();
+  const assistant = await assistantContext.newPage(); const doctor = await doctorContext.newPage();
+  try {
+    await loginAndAcknowledge(assistant, server.baseURL, "assistant");
+    await loginAndAcknowledge(doctor, server.baseURL, "doctor");
+    await receiveLot(assistant, { key: "order-invalidation-stock", lotNumber: "ORDER-INVALIDATION", expiryDate: "2032-12-31", quantity: 2 });
+    const patient = await createQueuedPatient(assistant, "ทดสอบแก้ไขคำสั่งยาระหว่างจัดยา");
+    await reviewAllergy(assistant); await queueDoctorIntoConsultation(doctor, patient.hn); await signOrder(doctor, 1);
+    await assistant.goto(`${server.baseURL}/dispensing/${patient.visitId}`);
+    await assistant.getByRole("button", { name: "เริ่มเตรียมยา" }).click();
+    const active = (await (await assistant.request.get(`${server.baseURL}/api/dispensing/${patient.visitId}`)).json()).data as {
+      visit: { revision: number }; patient: { revision: number }; medicationDecision: { version: number; items: Array<{ id: string; revision: number; quantity: number; directionsTh: string }> }; label: { id: string }; reservation: { id: string };
+    };
+    const revised = await doctor.request.post(`${server.baseURL}/api/visits/${patient.visitId}/medication-decision-revisions`, {
+      headers: { "idempotency-key": "active-reservation-order-revision" },
+      data: {
+        expectedRevisions: { visit: active.visit.revision, patient: active.patient.revision, medicationDecision: active.medicationDecision.version },
+        payload: {
+          revisionReason: "แก้ไขคำสั่งยาในขณะที่กำลังจัดยา",
+          decision: { kind: "ORDER", items: active.medicationDecision.items.map((item) => ({ medicationId: item.id, medicationRevision: item.revision, quantity: item.quantity, directionsTh: item.directionsTh })) },
+        },
+      },
+    });
+    expect(revised.status()).toBe(201);
+    const revision = (await revised.json()).data as { visit: { status: string; revision: number }; medicationDecision: { version: number } };
+    expect(revision.visit.status).toBe("AWAITING_PREPARATION");
+    expect(server.database.sqlite.prepare("SELECT status FROM inventory_reservations WHERE id = ?").get(active.reservation.id)).toEqual({ status: "RELEASED" });
+    const printEventsBefore = Number((server.database.sqlite.prepare("SELECT count(*) AS count FROM fulfillment_label_print_events").get() as { count: number }).count);
+    const oldPrint = await assistant.request.post(`${server.baseURL}/api/dispensing/${patient.visitId}/labels/${active.label.id}/print-events`, {
+      headers: { "idempotency-key": "active-reservation-old-order-print" },
+      data: { expectedRevisions: { visit: revision.visit.revision }, payload: { rendererVersion: "e2e", decisionVersion: active.medicationDecision.version } },
+    });
+    expect(oldPrint.status()).toBe(409);
+    expect((await oldPrint.json()).error.code).toBe("ARTIFACT_STALE");
+    expect(Number((server.database.sqlite.prepare("SELECT count(*) AS count FROM fulfillment_label_print_events").get() as { count: number }).count)).toBe(printEventsBefore);
+  } finally { await assistantContext.close(); await doctorContext.close(); await server.close(); }
+});
+
+test("two browser sessions cannot reserve the final lot twice or create negative stock", async ({ browser }) => {
+  const server = await startPilotServer();
+  const assistantContext = await browser.newContext(); const doctorContext = await browser.newContext();
+  const assistant = await assistantContext.newPage(); const doctor = await doctorContext.newPage();
+  try {
+    await loginAndAcknowledge(assistant, server.baseURL, "assistant");
+    await loginAndAcknowledge(doctor, server.baseURL, "doctor");
+    const lastLot = await receiveLot(assistant, { key: "last-stock-race", lotNumber: "LAST-STOCK-RACE", expiryDate: "2032-12-31", quantity: 1 });
+    const patient = await createQueuedPatient(assistant, "ทดสอบแข่งกันจองยาเม็ดสุดท้าย");
+    await reviewAllergy(assistant); await queueDoctorIntoConsultation(doctor, patient.hn); await signOrder(doctor, 1);
+    const pickList = (await (await assistant.request.get(`${server.baseURL}/api/dispensing/${patient.visitId}`)).json()).data as { visit: { revision: number }; medicationDecision: { version: number }; label: { id: string } };
+    const body = { expectedRevisions: { visit: pickList.visit.revision, medicationDecision: pickList.medicationDecision.version }, payload: { labelVersionId: pickList.label.id } };
+    const [first, second] = await Promise.all([
+      assistant.request.post(`${server.baseURL}/api/dispensing/${patient.visitId}/reservations`, { headers: { "idempotency-key": "last-stock-race-assistant" }, data: body }),
+      doctor.request.post(`${server.baseURL}/api/dispensing/${patient.visitId}/reservations`, { headers: { "idempotency-key": "last-stock-race-doctor" }, data: body }),
+    ]);
+    const responses = [first, second];
+    expect(responses.filter((response) => response.status() === 201)).toHaveLength(1);
+    expect(responses.filter((response) => response.status() === 409)).toHaveLength(1);
+    const losing = responses.find((response) => response.status() === 409);
+    expect((await losing!.json()).error.code).toBe("REVISION_CONFLICT");
+    expect(server.database.sqlite.prepare("SELECT count(*) AS count FROM inventory_reservations WHERE visit_id = ? AND status = 'ACTIVE'").get(patient.visitId)).toEqual({ count: 1 });
+    expect(server.database.sqlite.prepare("SELECT count(*) AS count FROM inventory_reservation_allocations WHERE lot_id = ?").get(lastLot.lot.id)).toEqual({ count: 1 });
+    const stock = server.database.sqlite.prepare("SELECT SUM(quantity_delta) AS onHand FROM inventory_stock_movements WHERE lot_id = ?").get(lastLot.lot.id) as { onHand: number };
+    expect(stock.onHand).toBe(1);
+    expect(stock.onHand).toBeGreaterThanOrEqual(0);
+  } finally { await assistantContext.close(); await doctorContext.close(); await server.close(); }
+});
