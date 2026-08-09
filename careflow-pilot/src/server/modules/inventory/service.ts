@@ -6,6 +6,7 @@ import type {
   InventoryReservationAllocationDto,
   InventoryReservationDto,
   InventoryLotDto,
+  InventoryLotBalanceDto,
   InventoryReceiptDto,
   InventorySummaryDto,
   MedicationDto,
@@ -25,6 +26,8 @@ import { staffAccounts } from "../platform/schema.js";
 import { visits } from "../visit/schema.js";
 import {
   inventoryLots,
+  inventoryAdjustments,
+  inventoryLotStatusEvents,
   inventoryReceiptLines,
   inventoryReceipts,
   inventoryReservationAllocations,
@@ -45,6 +48,17 @@ export interface InventoryService {
   ): InventoryReceiptDto;
   getReceipt(id: string): InventoryReceiptDto;
   getPickList(visitId: string): InventoryPickListDto;
+  getMedicationLots(medicationId: string): InventoryLotBalanceDto[];
+  adjustLot(
+    tx: AuditedTransaction,
+    actor: Actor,
+    input: { lotId: string; expectedRevision: number; correctsMovementId: string; quantityDelta: number; reason: string },
+  ): InventoryLotBalanceDto;
+  changeLotStatus(
+    tx: AuditedTransaction,
+    actor: Actor,
+    input: { lotId: string; expectedRevision: number; nextStatus: "AVAILABLE" | "QUARANTINED"; reason: string },
+  ): InventoryLotBalanceDto;
   reserveForVisit(
     tx: AppTransaction,
     actor: Actor,
@@ -227,6 +241,7 @@ function toLotDto(input: {
     id: input.lot.id,
     medicationId: input.lot.medicationId,
     medicationRevision: input.lot.medicationRevision,
+    revision: input.lot.revision,
     displayNameSnapshot: input.lot.displayNameSnapshot,
     strengthSnapshot: input.lot.strengthSnapshot,
     dosageFormSnapshot: input.lot.dosageFormSnapshot,
@@ -238,6 +253,19 @@ function toLotDto(input: {
     createdAt: input.lot.createdAt,
     createdBy: input.createdBy,
   };
+}
+
+function toLotBalanceDto(
+  tx: InventoryTransaction,
+  balance: LotBalance,
+): InventoryLotBalanceDto {
+  const createdBy = tx.select({ id: staffAccounts.id, displayName: staffAccounts.displayName })
+    .from(staffAccounts).where(eq(staffAccounts.id, balance.lot.createdBy)).get();
+  if (!createdBy) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่พบผู้สร้างล็อตยา" });
+  const latestMovement = tx.select({ id: inventoryStockMovements.id }).from(inventoryStockMovements)
+    .where(eq(inventoryStockMovements.lotId, balance.lot.id))
+    .orderBy(desc(inventoryStockMovements.occurredAt), desc(inventoryStockMovements.id)).get();
+  return { ...toLotDto({ lot: balance.lot, createdBy }), onHand: balance.onHand, reserved: balance.reserved, available: balance.available, latestMovementId: latestMovement?.id ?? null };
 }
 
 function receiptFromTransaction(
@@ -489,6 +517,81 @@ export function createInventoryService(input: InventoryServiceOptions): Inventor
       return readInventory(input.database.db, clinicDate(clock()));
     },
 
+    getMedicationLots(medicationId) {
+      return readLotBalances(input.database.db)
+        .filter((balance) => balance.lot.medicationId === medicationId)
+        .sort((left, right) => left.lot.expiryDate.localeCompare(right.lot.expiryDate) || left.lot.id.localeCompare(right.lot.id))
+        .map((balance) => toLotBalanceDto(input.database.db, balance));
+    },
+
+    adjustLot(tx, actor, command) {
+      const reason = assertReason(command.reason);
+      const lot = tx.select().from(inventoryLots).where(and(
+        eq(inventoryLots.id, command.lotId), eq(inventoryLots.clinicId, "clinic"),
+      )).get();
+      if (!lot) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบล็อตยา" });
+      assertExpectedRevision(lot.revision, command.expectedRevision, "lot");
+      const corrected = tx.select().from(inventoryStockMovements).where(and(
+        eq(inventoryStockMovements.id, command.correctsMovementId),
+        eq(inventoryStockMovements.lotId, lot.id),
+        eq(inventoryStockMovements.clinicId, "clinic"),
+      )).get();
+      if (!corrected) throw new ApiError({ code: "VALIDATION_FAILED", messageTh: "รายการอ้างอิงไม่อยู่ในล็อตยานี้", fieldErrors: { "payload.correctsMovementId": "ต้องอ้างอิงการเคลื่อนไหวของล็อตเดียวกัน" } });
+      const balance = readLotBalances(tx).find((candidate) => candidate.lot.id === lot.id);
+      if (!balance) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่สามารถคำนวณยอดล็อตยา" });
+      if (balance.onHand + command.quantityDelta < balance.reserved) {
+        throw new ApiError({ code: "INVALID_STATE", messageTh: "ยอดหลังปรับต้องไม่ต่ำกว่ายอดที่จองไว้" });
+      }
+      const occurredAt = clock().toISOString();
+      const adjustmentId = nextInventoryId();
+      const movementId = nextInventoryId();
+      tx.insert(inventoryAdjustments).values({
+        id: adjustmentId, clinicId: "clinic", lotId: lot.id, correctsMovementId: corrected.id,
+        quantityDelta: command.quantityDelta, reason, occurredAt, actorId: actor.id,
+      }).run();
+      tx.insert(inventoryStockMovements).values({
+        id: movementId, clinicId: "clinic", lotId: lot.id, movementType: "ADJUSTMENT", quantityDelta: command.quantityDelta,
+        sourceType: "ADJUSTMENT", sourceId: adjustmentId, reason, occurredAt, actorId: actor.id,
+      }).run();
+      const changed = tx.update(inventoryLots).set({ revision: lot.revision + 1 }).where(and(
+        eq(inventoryLots.id, lot.id), eq(inventoryLots.revision, command.expectedRevision),
+      )).run();
+      if (changed.changes !== 1) throw new ApiError({ code: "REVISION_CONFLICT", messageTh: "ล็อตยามีการเปลี่ยนแปลง กรุณาโหลดข้อมูลล่าสุด", currentRevisions: { lot: lot.revision } });
+      const updated = readLotBalances(tx).find((candidate) => candidate.lot.id === lot.id);
+      if (!updated) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่สามารถอ่านล็อตยาที่ปรับแล้ว" });
+      return toLotBalanceDto(tx, updated);
+    },
+
+    changeLotStatus(tx, actor, command) {
+      const reason = assertReason(command.reason);
+      const lot = tx.select().from(inventoryLots).where(and(
+        eq(inventoryLots.id, command.lotId), eq(inventoryLots.clinicId, "clinic"),
+      )).get();
+      if (!lot) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบล็อตยา" });
+      assertExpectedRevision(lot.revision, command.expectedRevision, "lot");
+      if (lot.status === command.nextStatus) throw new ApiError({ code: "INVALID_STATE", messageTh: "ล็อตยาอยู่ในสถานะนี้แล้ว" });
+      const balance = readLotBalances(tx).find((candidate) => candidate.lot.id === lot.id);
+      if (!balance) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่สามารถคำนวณยอดล็อตยา" });
+      if (command.nextStatus === "QUARANTINED" && balance.reserved > 0) {
+        throw new ApiError({ code: "INVALID_STATE", messageTh: "ไม่สามารถกักกันล็อตที่มีรายการจองกำลังใช้งาน" });
+      }
+      if (command.nextStatus === "AVAILABLE" && lot.expiryDate <= clinicDate(clock())) {
+        throw new ApiError({ code: "INVALID_STATE", messageTh: "ไม่สามารถปลดกักกันล็อตยาที่หมดอายุแล้ว" });
+      }
+      const occurredAt = clock().toISOString();
+      tx.insert(inventoryLotStatusEvents).values({
+        id: nextInventoryId(), clinicId: "clinic", lotId: lot.id, previousStatus: lot.status,
+        nextStatus: command.nextStatus, reason, occurredAt, actorId: actor.id,
+      }).run();
+      const changed = tx.update(inventoryLots).set({ status: command.nextStatus, revision: lot.revision + 1 }).where(and(
+        eq(inventoryLots.id, lot.id), eq(inventoryLots.revision, command.expectedRevision), eq(inventoryLots.status, lot.status),
+      )).run();
+      if (changed.changes !== 1) throw new ApiError({ code: "REVISION_CONFLICT", messageTh: "ล็อตยามีการเปลี่ยนแปลง กรุณาโหลดข้อมูลล่าสุด", currentRevisions: { lot: lot.revision } });
+      const updated = readLotBalances(tx).find((candidate) => candidate.lot.id === lot.id);
+      if (!updated) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่สามารถอ่านล็อตยาที่ปรับแล้ว" });
+      return toLotBalanceDto(tx, updated);
+    },
+
     searchMedicationCatalog(query) {
       return medicationService.searchMedications(query);
     },
@@ -673,6 +776,11 @@ export function createInventoryService(input: InventoryServiceOptions): Inventor
         unitSnapshot: allocation.orderItem.unitSnapshot,
         allocatedAt: now,
       }; })).run();
+      for (const lotId of new Set(allocations.map((allocation) => allocation.lot.id))) {
+        const changedLot = tx.update(inventoryLots).set({ revision: sql`${inventoryLots.revision} + 1` })
+          .where(eq(inventoryLots.id, lotId)).run();
+        if (changedLot.changes !== 1) throw reservationError("ล็อตยาถูกเปลี่ยนแปลงแล้ว");
+      }
       const changed = tx.update(visits)
         .set({ status: "PREPARING", revision: visit.revision + 1 })
         .where(and(
@@ -713,6 +821,13 @@ export function createInventoryService(input: InventoryServiceOptions): Inventor
         .set({ status: "RELEASED", releasedAt, releasedBy: actor.id, releaseReason })
         .where(and(eq(inventoryReservations.id, reservation.id), eq(inventoryReservations.status, "ACTIVE"))).run();
       if (changedReservation.changes !== 1) throw reservationError("รายการจองยาถูกเปลี่ยนแปลงแล้ว");
+      const allocationRows = tx.select({ lotId: inventoryReservationAllocations.lotId })
+        .from(inventoryReservationAllocations).where(eq(inventoryReservationAllocations.reservationId, reservation.id)).all();
+      for (const lotId of new Set(allocationRows.map((allocation) => allocation.lotId))) {
+        const changedLot = tx.update(inventoryLots).set({ revision: sql`${inventoryLots.revision} + 1` })
+          .where(eq(inventoryLots.id, lotId)).run();
+        if (changedLot.changes !== 1) throw reservationError("ล็อตยาถูกเปลี่ยนแปลงแล้ว");
+      }
       const changedVisit = tx.update(visits)
         .set({ status: "AWAITING_PREPARATION", revision: visit.revision + 1 })
         .where(and(
@@ -745,6 +860,13 @@ export function createInventoryService(input: InventoryServiceOptions): Inventor
         .set({ status: "RELEASED", releasedAt, releasedBy: actor.id, releaseReason })
         .where(and(eq(inventoryReservations.id, reservation.id), eq(inventoryReservations.status, "ACTIVE"))).run();
       if (changed.changes !== 1) throw reservationError("รายการจองยาถูกเปลี่ยนแปลงแล้ว");
+      const allocationRows = tx.select({ lotId: inventoryReservationAllocations.lotId })
+        .from(inventoryReservationAllocations).where(eq(inventoryReservationAllocations.reservationId, reservation.id)).all();
+      for (const lotId of new Set(allocationRows.map((allocation) => allocation.lotId))) {
+        const changedLot = tx.update(inventoryLots).set({ revision: sql`${inventoryLots.revision} + 1` })
+          .where(eq(inventoryLots.id, lotId)).run();
+        if (changedLot.changes !== 1) throw reservationError("ล็อตยาถูกเปลี่ยนแปลงแล้ว");
+      }
       const released = tx.select().from(inventoryReservations).where(eq(inventoryReservations.id, reservation.id)).get();
       if (!released) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ยกเลิกรายการจองไม่สำเร็จ" });
       return readReservation(tx, released);

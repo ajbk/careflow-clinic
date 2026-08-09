@@ -334,3 +334,161 @@ describe("inventory receiving API", () => {
     })).statusCode).toBe(422);
   });
 });
+
+describe("inventory integrity API", () => {
+  async function receivedLot() {
+    const fixture = await inventoryApiFixture();
+    const receipt = await fixture.app.inject({
+      method: "POST",
+      url: "/api/inventory/receipts",
+      headers: { cookie: fixture.assistantCookie, "idempotency-key": "inventory-integrity-receipt-001" },
+      payload: receiptCommand({ lotNumber: "INTEGRITY-LOT-001", quantity: 12 }),
+    });
+    expect(receipt.statusCode).toBe(201);
+    return { fixture, lot: receipt.json().data.lot as { id: string; revision: number } };
+  }
+
+  it("lists a medication's immutable lot balance and revision for inventory actions", async () => {
+    const { fixture, lot } = await receivedLot();
+
+    const response = await fixture.app.inject({
+      method: "GET",
+      url: "/api/inventory/medications/DEMO-MED-001/lots",
+      headers: { cookie: fixture.assistantCookie },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toEqual([expect.objectContaining({
+      id: lot.id,
+      status: "AVAILABLE",
+      revision: lot.revision,
+      onHand: 12,
+      reserved: 0,
+      available: 12,
+    })]);
+  });
+
+  it("allows assistant quarantine but reserves unquarantine and adjustments for doctors", async () => {
+    const { fixture, lot } = await receivedLot();
+    const assistantQuarantine = await fixture.app.inject({
+      method: "POST",
+      url: `/api/inventory/lots/${lot.id}/quarantine`,
+      headers: { cookie: fixture.assistantCookie, "idempotency-key": "inventory-quarantine-assistant-001" },
+      payload: { expectedRevisions: { lot: lot.revision }, payload: { reason: "พบกล่องฉีกขาด" } },
+    });
+    expect(assistantQuarantine.statusCode).toBe(201);
+    expect(assistantQuarantine.json()).toMatchObject({ replayed: false, data: { status: "QUARANTINED", revision: lot.revision + 1 } });
+
+    const assistantUnquarantine = await fixture.app.inject({
+      method: "POST",
+      url: `/api/inventory/lots/${lot.id}/unquarantine`,
+      headers: { cookie: fixture.assistantCookie, "idempotency-key": "inventory-unquarantine-assistant-001" },
+      payload: { expectedRevisions: { lot: lot.revision + 1 }, payload: { reason: "ตรวจแล้ว" } },
+    });
+    expect(assistantUnquarantine.statusCode).toBe(403);
+
+    const assistantAdjustment = await fixture.app.inject({
+      method: "POST",
+      url: `/api/inventory/lots/${lot.id}/adjustments`,
+      headers: { cookie: fixture.assistantCookie, "idempotency-key": "inventory-adjustment-assistant-001" },
+      payload: { expectedRevisions: { lot: lot.revision + 1 }, payload: { correctsMovementId: "missing", quantityDelta: -1, reason: "นับจริง" } },
+    });
+    expect(assistantAdjustment.statusCode).toBe(403);
+  });
+
+  it("strictly validates integrity commands and prevents a stale or negative adjustment", async () => {
+    const { fixture, lot } = await receivedLot();
+    const doctorHeaders = { cookie: fixture.doctorCookie, "idempotency-key": "inventory-integrity-validation-001" };
+
+    const unknown = await fixture.app.inject({
+      method: "POST", url: `/api/inventory/lots/${lot.id}/quarantine`, headers: doctorHeaders,
+      payload: { expectedRevisions: { lot: lot.revision }, payload: { reason: "ตรวจสอบ", unexpected: true } },
+    });
+    expect(unknown.statusCode).toBe(422);
+    const missingReason = await fixture.app.inject({
+      method: "POST", url: `/api/inventory/lots/${lot.id}/quarantine`,
+      headers: { ...doctorHeaders, "idempotency-key": "inventory-integrity-validation-002" },
+      payload: { expectedRevisions: { lot: lot.revision }, payload: { reason: "" } },
+    });
+    expect(missingReason.statusCode).toBe(422);
+
+    const movementId = fixture.database.sqlite.prepare("SELECT id FROM inventory_stock_movements WHERE lot_id = ?").pluck().get(lot.id) as string;
+    const stale = await fixture.app.inject({
+      method: "POST", url: `/api/inventory/lots/${lot.id}/adjustments`,
+      headers: { ...doctorHeaders, "idempotency-key": "inventory-integrity-validation-003" },
+      payload: { expectedRevisions: { lot: lot.revision + 1 }, payload: { correctsMovementId: movementId, quantityDelta: -1, reason: "นับจริง" } },
+    });
+    expect(stale.statusCode).toBe(409);
+
+    const negative = await fixture.app.inject({
+      method: "POST", url: `/api/inventory/lots/${lot.id}/adjustments`,
+      headers: { ...doctorHeaders, "idempotency-key": "inventory-integrity-validation-004" },
+      payload: { expectedRevisions: { lot: lot.revision }, payload: { correctsMovementId: movementId, quantityDelta: -13, reason: "นับจริง" } },
+    });
+    expect(negative.statusCode).toBe(409);
+  });
+
+  it("records a source-linked append-only adjustment and status event exactly once", async () => {
+    const { fixture, lot } = await receivedLot();
+    const movementId = fixture.database.sqlite.prepare("SELECT id FROM inventory_stock_movements WHERE lot_id = ?").pluck().get(lot.id) as string;
+    const adjustmentHeaders = { cookie: fixture.doctorCookie, "idempotency-key": "inventory-adjustment-happy-001" };
+    const adjustmentPayload = { expectedRevisions: { lot: lot.revision }, payload: { correctsMovementId: movementId, quantityDelta: -2, reason: "นับจริงหลังตรวจชั้นยา" } };
+    const first = await fixture.app.inject({ method: "POST", url: `/api/inventory/lots/${lot.id}/adjustments`, headers: adjustmentHeaders, payload: adjustmentPayload });
+    expect(first.statusCode).toBe(201);
+    expect(first.json()).toMatchObject({ replayed: false, data: { onHand: 10, reserved: 0, available: 10, revision: lot.revision + 1 } });
+    expect(fixture.database.sqlite.prepare("SELECT movement_type, source_type, quantity_delta FROM inventory_stock_movements WHERE lot_id = ? AND movement_type = 'ADJUSTMENT'").get(lot.id)).toEqual({ movement_type: "ADJUSTMENT", source_type: "ADJUSTMENT", quantity_delta: -2 });
+    expect(() => fixture.database.sqlite.prepare("UPDATE inventory_adjustments SET reason = 'แก้' WHERE lot_id = ?").run(lot.id)).toThrow(/append-only/);
+    const replay = await fixture.app.inject({ method: "POST", url: `/api/inventory/lots/${lot.id}/adjustments`, headers: adjustmentHeaders, payload: adjustmentPayload });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toMatchObject({ replayed: true, data: { onHand: 10, revision: lot.revision + 1 } });
+
+    const quarantine = await fixture.app.inject({
+      method: "POST", url: `/api/inventory/lots/${lot.id}/quarantine`,
+      headers: { cookie: fixture.doctorCookie, "idempotency-key": "inventory-status-event-001" },
+      payload: { expectedRevisions: { lot: lot.revision + 1 }, payload: { reason: "รอตรวจสอบซ้ำ" } },
+    });
+    expect(quarantine.statusCode).toBe(201);
+    expect(fixture.database.sqlite.prepare("SELECT previous_status, next_status, reason FROM inventory_lot_status_events WHERE lot_id = ?").get(lot.id)).toEqual({ previous_status: "AVAILABLE", next_status: "QUARANTINED", reason: "รอตรวจสอบซ้ำ" });
+    expect(() => fixture.database.sqlite.prepare("DELETE FROM inventory_lot_status_events WHERE lot_id = ?").run(lot.id)).toThrow(/append-only/);
+  });
+
+  it("blocks quarantine while a lot is actively reserved and blocks expired unquarantine", async () => {
+    const { fixture, lot } = await receivedLot();
+    const now = "2026-08-03T00:00:00.000Z";
+    fixture.database.sqlite.exec(`
+      INSERT INTO patients (id, clinic_id, hn, display_name, phone, birth_date, sex, revision, created_at, updated_at)
+      VALUES ('integrity-patient', 'clinic', 'DEMO-000099', 'ผู้ป่วยทดสอบ 000099', '0000000099', '1990-01-01', 'unknown', 1, '${now}', '${now}');
+      INSERT INTO visits (id, clinic_id, patient_id, status, chief_complaint, revision, arrived_at, created_by)
+      VALUES ('integrity-visit', 'clinic', 'integrity-patient', 'PREPARING', 'ทดสอบ', 1, '${now}', '${fixture.doctor.actor.id}');
+      INSERT INTO medication_decisions (id, visit_id, version, kind, signed_by, signed_at, content_hash, signed_by_display_name)
+      VALUES ('integrity-decision', 'integrity-visit', 1, 'ORDER', '${fixture.doctor.actor.id}', '${now}', '${"a".repeat(64)}', 'พญ. คลังทดสอบ');
+      INSERT INTO medication_order_items (id, medication_decision_id, position, medication_id, medication_revision, display_name_snapshot, strength_snapshot, dosage_form_snapshot, unit_snapshot, quantity, directions_th)
+      VALUES ('integrity-order-item', 'integrity-decision', 0, 'DEMO-MED-001', 1, 'ยา integrity', '500 mg', 'เม็ด', 'เม็ด', 1, 'ทดสอบ');
+      INSERT INTO inventory_reservations (id, clinic_id, visit_id, medication_decision_id, medication_decision_version, status, created_at, created_by)
+      VALUES ('integrity-reservation', 'clinic', 'integrity-visit', 'integrity-decision', 1, 'ACTIVE', '${now}', '${fixture.assistant.actor.id}');
+      INSERT INTO inventory_reservation_allocations (id, reservation_id, medication_order_item_id, lot_id, position, quantity, medication_id, lot_number_snapshot, expiry_date_snapshot, unit_snapshot, allocated_at)
+      VALUES ('integrity-allocation', 'integrity-reservation', 'integrity-order-item', '${lot.id}', 0, 1, 'DEMO-MED-001', 'INTEGRITY-LOT-001', '2027-08-31', 'เม็ด', '${now}');
+    `);
+    const activeReservation = await fixture.app.inject({
+      method: "POST", url: `/api/inventory/lots/${lot.id}/quarantine`,
+      headers: { cookie: fixture.doctorCookie, "idempotency-key": "inventory-reserved-quarantine-001" },
+      payload: { expectedRevisions: { lot: lot.revision }, payload: { reason: "ต้องกักกัน" } },
+    });
+    expect(activeReservation.statusCode).toBe(409);
+
+    fixture.database.sqlite.prepare("UPDATE inventory_reservations SET status = 'RELEASED', released_at = ?, released_by = ?, release_reason = ? WHERE id = 'integrity-reservation'").run(now, fixture.assistant.actor.id, "ยกเลิกเพื่อทดสอบ");
+    const quarantined = await fixture.app.inject({
+      method: "POST", url: `/api/inventory/lots/${lot.id}/quarantine`,
+      headers: { cookie: fixture.doctorCookie, "idempotency-key": "inventory-expired-quarantine-001" },
+      payload: { expectedRevisions: { lot: lot.revision }, payload: { reason: "ตรวจหมดอายุ" } },
+    });
+    expect(quarantined.statusCode).toBe(201);
+    fixture.database.sqlite.prepare("UPDATE inventory_lots SET expiry_date = '2026-08-03' WHERE id = ?").run(lot.id);
+    const expiredUnquarantine = await fixture.app.inject({
+      method: "POST", url: `/api/inventory/lots/${lot.id}/unquarantine`,
+      headers: { cookie: fixture.doctorCookie, "idempotency-key": "inventory-expired-unquarantine-001" },
+      payload: { expectedRevisions: { lot: lot.revision + 1 }, payload: { reason: "ตรวจซ้ำ" } },
+    });
+    expect(expiredUnquarantine.statusCode).toBe(409);
+  });
+});

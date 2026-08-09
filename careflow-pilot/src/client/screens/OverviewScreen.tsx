@@ -55,13 +55,16 @@ const pendingMetrics = [
   { key: "consulting", label: "กำลังตรวจ", detail: "อยู่ในห้องตรวจ" },
   { key: "awaitingOrderRevision", label: "รอทบทวนคำสั่งยา", detail: "รอแพทย์ทบทวน" },
   { key: "awaitingPreparation", label: "รอจัดยา", detail: "รอขั้นตอนจัดยา" },
+  { key: "preparing", label: "กำลังจัดยา", detail: "กำลังตรวจและเตรียมยา" },
+  { key: "awaitingRelease", label: "รอแพทย์ปล่อยยา", detail: "รอแพทย์ตรวจทาน" },
+  { key: "awaitingHandoff", label: "รอส่งมอบยา", detail: "พร้อมส่งมอบแก่ผู้ป่วย" },
   { key: "awaitingCharge", label: "รอคิดเงิน", detail: "รอขั้นตอนคิดเงิน" },
 ] as const;
 
 function queueStatus(status: string): { label: string; tone: "waiting" | "active" } {
   if (status === "CONSULTING") return { label: "กำลังตรวจ", tone: "active" };
   return {
-    label: ({ WAITING: "รอพบแพทย์", AWAITING_ORDER_REVISION: "รอทบทวนคำสั่งยา", AWAITING_PREPARATION: "รอจัดยา", AWAITING_CHARGE: "รอคิดเงิน" } as Record<string, string>)[status] ?? status,
+    label: ({ WAITING: "รอพบแพทย์", AWAITING_ORDER_REVISION: "รอทบทวนคำสั่งยา", AWAITING_PREPARATION: "รอจัดยา", PREPARING: "กำลังจัดยา", AWAITING_RELEASE: "รอแพทย์ปล่อยยา", AWAITING_HANDOFF: "รอส่งมอบยา", AWAITING_CHARGE: "รอคิดเงิน" } as Record<string, string>)[status] ?? status,
     tone: "waiting",
   };
 }

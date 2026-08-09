@@ -53,6 +53,9 @@ const auditActionPolicyEntries = [
   ["medication.release-created", "optional"],
   ["dispense.handoff-confirmed", "optional"],
   ["inventory.stock-dispensed", "optional"],
+  ["inventory.lot-adjusted", "required"],
+  ["inventory.lot-quarantined", "required"],
+  ["inventory.lot-unquarantined", "required"],
   ["visit.handoff-confirmed", "optional"],
 ] as const;
 

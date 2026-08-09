@@ -9,6 +9,7 @@ export const queryKeys = {
   medicationSearch: (q: string) => ["medications", q] as const,
   inventory: ["inventory"] as const,
   inventoryMedicationSearch: (q: string) => ["inventory-medications", q] as const,
+  inventoryLots: (medicationId: string) => ["inventory-lots", medicationId] as const,
   visit: (id: string) => ["visit", id] as const,
   dispensing: (id: string) => ["dispensing", id] as const,
   label: (id: string) => ["dispensing", id, "label"] as const,

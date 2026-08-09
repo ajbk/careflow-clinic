@@ -99,6 +99,13 @@
       "when": 1786234980764,
       "tag": "0013_stock_movement_source_lot_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1786236341304,
+      "tag": "0014_inventory_integrity",
+      "breakpoints": true
     }
   ]
 }

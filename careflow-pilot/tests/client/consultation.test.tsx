@@ -27,7 +27,7 @@ beforeEach(() => server.resetHandlers(
   http.get("/api/auth/session", () => HttpResponse.json(doctorSession)),
   http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: workspace })),
   http.get("/api/queue", () => HttpResponse.json({ data: [] })),
-  http.get("/api/dashboard/today", () => HttpResponse.json({ data: { waiting: 0, consulting: 1, updatedAt: "2026-08-03T01:00:00.000Z" } })),
+  http.get("/api/dashboard/today", () => HttpResponse.json({ data: { waiting: 0, consulting: 1, awaitingOrderRevision: 0, awaitingPreparation: 0, preparing: 0, awaitingRelease: 0, awaitingHandoff: 0, awaitingCharge: 0, updatedAt: "2026-08-03T01:00:00.000Z" } })),
 ));
 afterEach(() => { cleanup(); vi.restoreAllMocks(); server.resetHandlers(); });
 afterAll(() => server.close());

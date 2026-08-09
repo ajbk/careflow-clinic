@@ -401,14 +401,14 @@ describe("authenticated fulfillment reservation routes", () => {
       const mismatch = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/handoff", headers: { cookie: test.assistantCookie, "idempotency-key": `handoff-mismatch-${field}` }, payload: { expectedRevisions: { visit: 6 }, payload: { ...handoffPayload, [field]: value } } });
       expect(mismatch.statusCode).toBe(409);
     }
-    expect(test.database.sqlite.prepare("SELECT revision FROM inventory_lots WHERE id = 'lot-route-001'").get()).toEqual({ revision: 1 });
+    expect(test.database.sqlite.prepare("SELECT revision FROM inventory_lots WHERE id = 'lot-route-001'").get()).toEqual({ revision: 2 });
     test.database.sqlite.prepare("UPDATE inventory_lots SET expiry_date = '2026-08-02' WHERE id = 'lot-route-001'").run();
     const expired = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/handoff", headers: { cookie: test.assistantCookie, "idempotency-key": "handoff-expired" }, payload: { expectedRevisions: { visit: 6 }, payload: { ...handoffPayload } } });
     expect(expired.statusCode).toBe(409);
     expect(countRows(test, "SELECT count(*) AS count FROM fulfillment_dispenses")).toBe(0);
     expect(countRows(test, "SELECT count(*) AS count FROM inventory_stock_movements")).toBe(1);
     expect(test.database.sqlite.prepare("SELECT status FROM inventory_reservations WHERE id = ?").get(started.reservation.id)).toEqual({ status: "ACTIVE" });
-    expect(test.database.sqlite.prepare("SELECT revision FROM inventory_lots WHERE id = 'lot-route-001'").get()).toEqual({ revision: 1 });
+    expect(test.database.sqlite.prepare("SELECT revision FROM inventory_lots WHERE id = 'lot-route-001'").get()).toEqual({ revision: 2 });
     test.database.sqlite.prepare("UPDATE inventory_lots SET expiry_date = '2026-08-10' WHERE id = 'lot-route-001'").run();
     test.database.sqlite.prepare("UPDATE inventory_lots SET status = 'QUARANTINED' WHERE id = 'lot-route-001'").run();
     const staleHandoff = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/handoff", headers: { cookie: test.assistantCookie, "idempotency-key": "handoff-stale" }, payload: { expectedRevisions: { visit: 6 }, payload: { ...handoffPayload, decisionVersion: 2 } } });
@@ -425,7 +425,7 @@ describe("authenticated fulfillment reservation routes", () => {
     expect(handoff.json().data).toMatchObject({ visit: { status: "AWAITING_CHARGE", revision: 7 }, dispense: { reservationId: started.reservation.id, lines: [{ allocationId: allocation.id, lotId: "lot-route-001", quantity: 3 }] } });
     expect(test.database.sqlite.prepare("SELECT status FROM inventory_reservations WHERE id = ?").get(started.reservation.id)).toEqual({ status: "CONSUMED" });
     expect(test.database.sqlite.prepare("SELECT sum(quantity_delta) AS quantity FROM inventory_stock_movements WHERE lot_id = 'lot-route-001'").get()).toEqual({ quantity: 2 });
-    expect(test.database.sqlite.prepare("SELECT revision FROM inventory_lots WHERE id = 'lot-route-001'").get()).toEqual({ revision: 2 });
+    expect(test.database.sqlite.prepare("SELECT revision FROM inventory_lots WHERE id = 'lot-route-001'").get()).toEqual({ revision: 3 });
     const handoffAudits = test.database.db.select().from(auditEvents).all();
     expect(handoffAudits.filter((event) => event.action === "fulfillment.handed-off")).toHaveLength(0);
     for (const action of ["inventory.stock-dispensed", "dispense.handoff-confirmed", "visit.handoff-confirmed"]) {
@@ -484,7 +484,7 @@ describe("authenticated fulfillment reservation routes", () => {
     expect(release.statusCode).toBe(201);
     const handoff = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/handoff", headers: { cookie: test.assistantCookie, "idempotency-key": "multi-handoff" }, payload: { expectedRevisions: { visit: 6 }, payload: { decisionId: started.medicationDecision.id, decisionVersion: 1, labelVersionId: started.label.id, releaseId: release.json().data.release.id, reservationId: started.reservation.id } } });
     expect(handoff.statusCode).toBe(201);
-    expect(test.database.sqlite.prepare("SELECT revision FROM inventory_lots WHERE id IN ('lot-route-001', 'lot-route-002') ORDER BY id").all()).toEqual([{ revision: 2 }, { revision: 2 }]);
+    expect(test.database.sqlite.prepare("SELECT revision FROM inventory_lots WHERE id IN ('lot-route-001', 'lot-route-002') ORDER BY id").all()).toEqual([{ revision: 3 }, { revision: 3 }]);
     expect(test.database.sqlite.prepare("SELECT lot_id, quantity_delta FROM inventory_stock_movements WHERE movement_type = 'DISPENSE' ORDER BY lot_id").all()).toEqual([{ lot_id: "lot-route-001", quantity_delta: -3 }, { lot_id: "lot-route-002", quantity_delta: -2 }]);
     expect(test.database.db.select().from(auditEvents).all().filter((event) => event.action === "inventory.stock-dispensed")).toHaveLength(2);
   });
@@ -524,7 +524,7 @@ describe("authenticated fulfillment reservation routes", () => {
     expect(countRows(test, "SELECT count(*) AS count FROM inventory_stock_movements WHERE lot_id = 'lot-route-001'")).toBe(2);
     expect(test.database.sqlite.prepare("SELECT sum(quantity_delta) AS quantity FROM inventory_stock_movements WHERE lot_id = 'lot-route-001'").get()).toEqual({ quantity: 1 });
     expect(test.database.sqlite.prepare("SELECT status FROM inventory_reservations WHERE id = ?").get(started.reservation.id)).toEqual({ status: "ACTIVE" });
-    expect(test.database.sqlite.prepare("SELECT revision FROM inventory_lots WHERE id = 'lot-route-001'").get()).toEqual({ revision: 1 });
+    expect(test.database.sqlite.prepare("SELECT revision FROM inventory_lots WHERE id = 'lot-route-001'").get()).toEqual({ revision: 2 });
     expect(test.database.db.select().from(auditEvents).all().filter((event) => event.action === "inventory.stock-dispensed")).toHaveLength(0);
   });
 
@@ -559,7 +559,7 @@ describe("authenticated fulfillment reservation routes", () => {
     expect(release.statusCode).toBe(201);
     const handoff = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/handoff", headers: { cookie: test.assistantCookie, "idempotency-key": "shared-handoff" }, payload: { expectedRevisions: { visit: 6 }, payload: { decisionId: started.medicationDecision.id, decisionVersion: 1, labelVersionId: started.label.id, releaseId: release.json().data.release.id, reservationId: started.reservation.id } } });
     expect(handoff.statusCode).toBe(201);
-    expect(test.database.sqlite.prepare("SELECT revision FROM inventory_lots WHERE id = 'lot-route-001'").get()).toEqual({ revision: 2 });
+    expect(test.database.sqlite.prepare("SELECT revision FROM inventory_lots WHERE id = 'lot-route-001'").get()).toEqual({ revision: 3 });
     expect(test.database.sqlite.prepare("SELECT count(*) AS count, sum(quantity_delta) AS total FROM inventory_stock_movements WHERE lot_id = 'lot-route-001' AND movement_type = 'DISPENSE'").get()).toEqual({ count: 2, total: -4 });
     expect(test.database.db.select().from(auditEvents).all().filter((event) => event.action === "inventory.stock-dispensed")).toHaveLength(2);
   });

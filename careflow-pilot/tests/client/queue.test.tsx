@@ -151,7 +151,7 @@ beforeEach(() => {
   server.resetHandlers(
     http.get("/api/auth/session", () => HttpResponse.json(session("doctor"))),
     http.get("/api/queue", () => HttpResponse.json({ data: [waitingItem] })),
-    http.get("/api/dashboard/today", () => HttpResponse.json({ data: { waiting: 1, consulting: 0, awaitingOrderRevision: 0, awaitingPreparation: 0, awaitingCharge: 0, updatedAt: "2026-08-03T01:00:00.000Z" } })),
+    http.get("/api/dashboard/today", () => HttpResponse.json({ data: { waiting: 1, consulting: 0, awaitingOrderRevision: 0, awaitingPreparation: 0, preparing: 0, awaitingRelease: 0, awaitingHandoff: 0, awaitingCharge: 0, updatedAt: "2026-08-03T01:00:00.000Z" } })),
     http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: workspace })),
   );
 });

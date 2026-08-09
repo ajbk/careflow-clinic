@@ -17,6 +17,9 @@ const queueGroups = [
   { status: "CONSULTING", title: "กำลังตรวจ", detail: "อยู่ในห้องตรวจ", tone: "active" as const },
   { status: "AWAITING_ORDER_REVISION", title: "รอทบทวนคำสั่งยา", detail: "รอแพทย์ทบทวนคำสั่งยา", tone: "waiting" as const },
   { status: "AWAITING_PREPARATION", title: "รอจัดยา", detail: "รอขั้นตอนจัดยา", tone: "waiting" as const },
+  { status: "PREPARING", title: "กำลังจัดยา", detail: "กำลังตรวจและเตรียมยา", tone: "active" as const },
+  { status: "AWAITING_RELEASE", title: "รอแพทย์ปล่อยยา", detail: "รอแพทย์ตรวจทาน", tone: "waiting" as const },
+  { status: "AWAITING_HANDOFF", title: "รอส่งมอบยา", detail: "พร้อมส่งมอบแก่ผู้ป่วย", tone: "active" as const },
   { status: "AWAITING_CHARGE", title: "รอคิดเงิน", detail: "รอขั้นตอนคิดเงิน", tone: "waiting" as const },
 ] as const;
 

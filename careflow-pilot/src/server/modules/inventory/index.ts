@@ -1,5 +1,7 @@
 export {
   inventoryLots,
+  inventoryAdjustments,
+  inventoryLotStatusEvents,
   inventoryReceiptLines,
   inventoryReceipts,
   inventoryReservationAllocations,

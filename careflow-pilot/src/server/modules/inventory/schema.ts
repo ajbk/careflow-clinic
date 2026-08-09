@@ -77,9 +77,9 @@ export const inventoryStockMovements = sqliteTable(
     id: text("id").primaryKey(),
     clinicId: text("clinic_id").notNull().references(() => clinicConfig.id),
     lotId: text("lot_id").notNull().references(() => inventoryLots.id),
-    movementType: text("movement_type", { enum: ["RECEIPT", "DISPENSE"] }).notNull(),
+    movementType: text("movement_type", { enum: ["RECEIPT", "DISPENSE", "ADJUSTMENT"] }).notNull(),
     quantityDelta: integer("quantity_delta").notNull(),
-    sourceType: text("source_type", { enum: ["RECEIPT", "DISPENSE"] }).notNull(),
+    sourceType: text("source_type", { enum: ["RECEIPT", "DISPENSE", "ADJUSTMENT"] }).notNull(),
     // Polymorphic source validated by database triggers. A static FK here would
     // incorrectly force DISPENSE movements to reference receipts.
     sourceId: text("source_id").notNull(),
@@ -89,11 +89,50 @@ export const inventoryStockMovements = sqliteTable(
   },
   (table) => [
     uniqueIndex("inventory_stock_movements_source_lot_unique").on(table.sourceType, table.sourceId, table.lotId),
-    check("inventory_stock_movements_movement_type_check", sql`${table.movementType} IN ('RECEIPT', 'DISPENSE')`),
+    check("inventory_stock_movements_movement_type_check", sql`${table.movementType} IN ('RECEIPT', 'DISPENSE', 'ADJUSTMENT')`),
     check("inventory_stock_movements_quantity_delta_check", sql`${table.quantityDelta} BETWEEN -999999 AND 999999 AND ${table.quantityDelta} <> 0`),
-    check("inventory_stock_movements_source_type_check", sql`${table.sourceType} IN ('RECEIPT', 'DISPENSE')`),
-    check("inventory_stock_movements_shape_check", sql`(${table.movementType} = 'RECEIPT' AND ${table.sourceType} = 'RECEIPT' AND ${table.quantityDelta} > 0) OR (${table.movementType} = 'DISPENSE' AND ${table.sourceType} = 'DISPENSE' AND ${table.quantityDelta} < 0)`),
+    check("inventory_stock_movements_source_type_check", sql`${table.sourceType} IN ('RECEIPT', 'DISPENSE', 'ADJUSTMENT')`),
+    check("inventory_stock_movements_shape_check", sql`(${table.movementType} = 'RECEIPT' AND ${table.sourceType} = 'RECEIPT' AND ${table.quantityDelta} > 0) OR (${table.movementType} = 'DISPENSE' AND ${table.sourceType} = 'DISPENSE' AND ${table.quantityDelta} < 0) OR (${table.movementType} = 'ADJUSTMENT' AND ${table.sourceType} = 'ADJUSTMENT')`),
     check("inventory_stock_movements_reason_check", sql`length(${table.reason}) <= 500`),
+  ],
+);
+
+export const inventoryAdjustments = sqliteTable(
+  "inventory_adjustments",
+  {
+    id: text("id").primaryKey(),
+    clinicId: text("clinic_id").notNull().references(() => clinicConfig.id),
+    lotId: text("lot_id").notNull().references(() => inventoryLots.id),
+    correctsMovementId: text("corrects_movement_id").notNull().references(() => inventoryStockMovements.id),
+    quantityDelta: integer("quantity_delta").notNull(),
+    reason: text("reason").notNull(),
+    occurredAt: text("occurred_at").notNull(),
+    actorId: text("actor_id").notNull().references(() => staffAccounts.id),
+  },
+  (table) => [
+    check("inventory_adjustments_quantity_delta_check", sql`${table.quantityDelta} BETWEEN -999999 AND 999999 AND ${table.quantityDelta} <> 0`),
+    check("inventory_adjustments_reason_check", sql`length(trim(${table.reason})) BETWEEN 1 AND 500`),
+  ],
+);
+
+export const inventoryLotStatusEvents = sqliteTable(
+  "inventory_lot_status_events",
+  {
+    id: text("id").primaryKey(),
+    clinicId: text("clinic_id").notNull().references(() => clinicConfig.id),
+    lotId: text("lot_id").notNull().references(() => inventoryLots.id),
+    previousStatus: text("previous_status", { enum: ["AVAILABLE", "QUARANTINED"] }).notNull(),
+    nextStatus: text("next_status", { enum: ["AVAILABLE", "QUARANTINED"] }).notNull(),
+    reason: text("reason").notNull(),
+    occurredAt: text("occurred_at").notNull(),
+    actorId: text("actor_id").notNull().references(() => staffAccounts.id),
+  },
+  (table) => [
+    index("inventory_lot_status_events_lot_occurred_index").on(table.lotId, table.occurredAt),
+    check("inventory_lot_status_events_previous_status_check", sql`${table.previousStatus} IN ('AVAILABLE', 'QUARANTINED')`),
+    check("inventory_lot_status_events_next_status_check", sql`${table.nextStatus} IN ('AVAILABLE', 'QUARANTINED')`),
+    check("inventory_lot_status_events_transition_check", sql`${table.previousStatus} <> ${table.nextStatus}`),
+    check("inventory_lot_status_events_reason_check", sql`length(trim(${table.reason})) BETWEEN 1 AND 500`),
   ],
 );
 

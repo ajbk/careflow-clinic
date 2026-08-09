@@ -100,6 +100,7 @@ describe("role permissions", () => {
       "inventory:read",
       "inventory:receive",
       "inventory:reserve",
+      "inventory:quarantine",
       "fulfillment:read",
       "fulfillment:prepare",
       "label:print",

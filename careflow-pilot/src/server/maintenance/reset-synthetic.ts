@@ -53,6 +53,8 @@ const expectedTables = new Set([
   "idempotency_records",
   "intake_observations",
   "inventory_lots",
+  "inventory_adjustments",
+  "inventory_lot_status_events",
   "inventory_receipt_lines",
   "inventory_receipts",
   "inventory_reservation_allocations",
@@ -96,6 +98,8 @@ const appendOnlyTables = [
   "inventory_receipts",
   "inventory_receipt_lines",
   "inventory_stock_movements",
+  "inventory_adjustments",
+  "inventory_lot_status_events",
   "inventory_reservation_allocations",
   "fulfillment_label_items",
   "fulfillment_label_print_events",
@@ -109,7 +113,7 @@ const appendOnlyTables = [
 ] as const;
 
 function appendOnlyTriggerSql(table: (typeof appendOnlyTables)[number], operation: "update" | "delete"): string {
-  const indent = table === "inventory_reservation_allocations" || table === "inventory_stock_movements" || table.startsWith("fulfillment_") ? "  " : "\t";
+  const indent = table === "inventory_reservation_allocations" || table === "inventory_stock_movements" || table === "inventory_adjustments" || table === "inventory_lot_status_events" || table.startsWith("fulfillment_") ? "  " : "\t";
   return `CREATE TRIGGER \`${table}_block_${operation}\`
 BEFORE ${operation.toUpperCase()} ON \`${table}\`
 BEGIN
@@ -287,6 +291,8 @@ function verifyReset(sqlite: Database.Database): void {
     ["clinical_notes", "count(*)"],
     ["intake_observations", "count(*)"],
     ["inventory_stock_movements", "count(*)"],
+    ["inventory_adjustments", "count(*)"],
+    ["inventory_lot_status_events", "count(*)"],
     ["fulfillment_dispense_lines", "count(*)"],
     ["fulfillment_dispenses", "count(*)"],
     ["fulfillment_releases", "count(*)"],
@@ -405,6 +411,8 @@ export function runResetSyntheticData(deps: ResetSyntheticDependencies): number 
     sqlite.exec("DELETE FROM fulfillment_label_print_events;");
     sqlite.exec("DELETE FROM fulfillment_label_items;");
     sqlite.exec("DELETE FROM fulfillment_label_versions;");
+    sqlite.exec("DELETE FROM inventory_adjustments;");
+    sqlite.exec("DELETE FROM inventory_lot_status_events;");
     sqlite.exec("DELETE FROM inventory_stock_movements;");
     sqlite.exec("DELETE FROM inventory_reservation_allocations;");
     sqlite.exec("DELETE FROM inventory_reservations;");

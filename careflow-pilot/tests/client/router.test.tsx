@@ -30,7 +30,7 @@ function renderRoleApp(path: string, role: "assistant" | "doctor") {
     if (requestPath === "/api/auth/session") return new Response(JSON.stringify(completeSession(role)), { status: 200 });
     if (requestPath === "/api/queue") return new Response(JSON.stringify({ data: [] }), { status: 200 });
     if (requestPath === "/api/dashboard/today") {
-      return new Response(JSON.stringify({ data: { waiting: 0, consulting: 0, awaitingOrderRevision: 0, awaitingPreparation: 0, awaitingCharge: 0, updatedAt: "2026-08-03T01:00:00.000Z" } }), { status: 200 });
+      return new Response(JSON.stringify({ data: { waiting: 0, consulting: 0, awaitingOrderRevision: 0, awaitingPreparation: 0, preparing: 0, awaitingRelease: 0, awaitingHandoff: 0, awaitingCharge: 0, updatedAt: "2026-08-03T01:00:00.000Z" } }), { status: 200 });
     }
     throw new Error(`Unexpected request: ${requestPath}`);
   }));

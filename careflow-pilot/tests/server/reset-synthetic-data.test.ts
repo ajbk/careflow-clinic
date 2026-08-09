@@ -201,6 +201,8 @@ describe("guarded synthetic reset", () => {
         "medication_order_items",
         "medication_decisions",
         "inventory_stock_movements",
+        "inventory_adjustments",
+        "inventory_lot_status_events",
         "inventory_receipt_lines",
         "inventory_receipts",
         "inventory_reservation_allocations",

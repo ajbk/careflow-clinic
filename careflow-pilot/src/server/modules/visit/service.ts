@@ -48,7 +48,7 @@ export interface VisitService {
   listQueue(actor: Actor): QueueItemDto[];
   getDashboardToday(): {
     waiting: number; consulting: number; awaitingOrderRevision: number;
-    awaitingPreparation: number; awaitingCharge: number; updatedAt: string;
+    awaitingPreparation: number; preparing: number; awaitingRelease: number; awaitingHandoff: number; awaitingCharge: number; updatedAt: string;
   };
   getVisitSummary(visitId: string): VisitSummaryDto | null;
   getWorkspaceBase(visitId: string): VisitWorkspaceBaseDto;
@@ -108,7 +108,7 @@ export interface VisitService {
 type VisitRow = typeof visits.$inferSelect;
 type IntakeRow = typeof intakeObservations.$inferSelect;
 
-const pendingStatuses = ["WAITING", "CONSULTING", "AWAITING_ORDER_REVISION", "AWAITING_PREPARATION", "AWAITING_CHARGE"] as const;
+const pendingStatuses = ["WAITING", "CONSULTING", "AWAITING_ORDER_REVISION", "AWAITING_PREPARATION", "PREPARING", "AWAITING_RELEASE", "AWAITING_HANDOFF", "AWAITING_CHARGE"] as const;
 
 function isPendingStatus(status: string): status is (typeof pendingStatuses)[number] {
   return (pendingStatuses as readonly string[]).includes(status);
@@ -314,7 +314,7 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
         .select()
         .from(visits)
         .where(and(eq(visits.clinicId, "clinic"), inArray(visits.status, pendingStatuses)))
-        .orderBy(sql`CASE ${visits.status} WHEN 'WAITING' THEN 0 WHEN 'CONSULTING' THEN 1 WHEN 'AWAITING_ORDER_REVISION' THEN 2 WHEN 'AWAITING_PREPARATION' THEN 3 ELSE 4 END`, asc(visits.arrivedAt), asc(visits.id))
+        .orderBy(sql`CASE ${visits.status} WHEN 'WAITING' THEN 0 WHEN 'CONSULTING' THEN 1 WHEN 'AWAITING_ORDER_REVISION' THEN 2 WHEN 'AWAITING_PREPARATION' THEN 3 WHEN 'PREPARING' THEN 4 WHEN 'AWAITING_RELEASE' THEN 5 WHEN 'AWAITING_HANDOFF' THEN 6 ELSE 7 END`, asc(visits.arrivedAt), asc(visits.id))
         .all();
       const patientMap = input.patients.getPatientsByIds(rows.map((row) => row.patientId));
       const allergyMap = input.patients.getAllergyAssessments(rows.map((row) => row.patientId));
@@ -345,6 +345,9 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
         consulting: rows.filter((row) => row.status === "CONSULTING").length,
         awaitingOrderRevision: rows.filter((row) => row.status === "AWAITING_ORDER_REVISION").length,
         awaitingPreparation: rows.filter((row) => row.status === "AWAITING_PREPARATION").length,
+        preparing: rows.filter((row) => row.status === "PREPARING").length,
+        awaitingRelease: rows.filter((row) => row.status === "AWAITING_RELEASE").length,
+        awaitingHandoff: rows.filter((row) => row.status === "AWAITING_HANDOFF").length,
         awaitingCharge: rows.filter((row) => row.status === "AWAITING_CHARGE").length,
         updatedAt: now.toISOString(),
       };

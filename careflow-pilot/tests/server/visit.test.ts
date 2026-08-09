@@ -529,6 +529,9 @@ describe("shared Intake, Queue, and consultation workflow", () => {
         consulting: 1,
         awaitingOrderRevision: 0,
         awaitingPreparation: 0,
+        preparing: 0,
+        awaitingRelease: 0,
+        awaitingHandoff: 0,
         awaitingCharge: 0,
         updatedAt: "2026-08-03T00:00:00.000Z",
       },
@@ -537,7 +540,7 @@ describe("shared Intake, Queue, and consultation workflow", () => {
 
   it("counts each committed pending state and excludes closed Visits from Dashboard", async () => {
     const test = await fixture();
-    const statuses = ["WAITING", "CONSULTING", "AWAITING_ORDER_REVISION", "AWAITING_PREPARATION", "AWAITING_CHARGE", "CLOSED"];
+    const statuses = ["WAITING", "CONSULTING", "AWAITING_ORDER_REVISION", "AWAITING_PREPARATION", "PREPARING", "AWAITING_RELEASE", "AWAITING_HANDOFF", "AWAITING_CHARGE", "CLOSED"];
     for (const [index, status] of statuses.entries()) {
       const patient = await createPatient(test.app, test.assistantCookie, `dashboard-state-patient-${status}`);
       const created = await submitIntake(
@@ -551,7 +554,7 @@ describe("shared Intake, Queue, and consultation workflow", () => {
       method: "GET", url: "/api/dashboard/today", headers: { cookie: test.assistantCookie },
     });
     expect(dashboard.json().data).toMatchObject({
-      waiting: 1, consulting: 1, awaitingOrderRevision: 1, awaitingPreparation: 1, awaitingCharge: 1,
+      waiting: 1, consulting: 1, awaitingOrderRevision: 1, awaitingPreparation: 1, preparing: 1, awaitingRelease: 1, awaitingHandoff: 1, awaitingCharge: 1,
     });
   });
 

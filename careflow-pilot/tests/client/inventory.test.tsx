@@ -27,8 +27,8 @@ function session(role: "assistant" | "doctor") {
       user: { id: `${role}-1`, username: role, displayName: role === "assistant" ? "ผู้ช่วยทดสอบ" : "พญ. ทดสอบ", role },
       clinic: { id: "clinic", name: "คลินิกทดสอบ" },
       permissions: role === "assistant"
-        ? ["patient:read", "visit:read-queue", "visit:submit-intake", "inventory:read", "inventory:receive"]
-        : ["patient:read", "visit:read-queue", "visit:start-consultation", "inventory:read"],
+        ? ["patient:read", "visit:read-queue", "visit:submit-intake", "inventory:read", "inventory:receive", "inventory:quarantine"]
+        : ["patient:read", "visit:read-queue", "visit:start-consultation", "inventory:read", "inventory:quarantine", "inventory:release-quarantine", "inventory:adjust"],
       pilotAcknowledgedAt: "2026-08-03T00:00:00.000Z",
       mustChangePassword: false,
       idleExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
@@ -59,6 +59,13 @@ beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 beforeEach(() => server.resetHandlers(
   http.get("/api/inventory", () => HttpResponse.json({ data: inventory })),
   http.get("/api/inventory/medications", () => HttpResponse.json({ data: [medications.paracetamol] })),
+  http.get("/api/inventory/medications/DEMO-MED-001/lots", () => HttpResponse.json({ data: [{
+    id: "lot-001", medicationId: "DEMO-MED-001", medicationRevision: 1, revision: 3,
+    displayNameSnapshot: "พาราเซตามอล", strengthSnapshot: "500 mg", dosageFormSnapshot: "เม็ด", unitSnapshot: "เม็ด",
+    lotNumber: "LOT-001", expiryDate: "2026-10-01", supplierName: "ผู้จำหน่าย", status: "AVAILABLE",
+    createdAt: "2026-08-03T00:00:00.000Z", createdBy: { id: "assistant-1", displayName: "ผู้ช่วยทดสอบ" },
+    onHand: 8, reserved: 0, available: 8, latestMovementId: "movement-001",
+  }] })),
 ));
 afterEach(() => { cleanup(); server.resetHandlers(); });
 afterAll(() => server.close());
@@ -85,6 +92,19 @@ describe("Inventory screens", () => {
     renderInventory("/inventory", "doctor");
     await screen.findAllByText("พาราเซตามอล");
     expect(screen.queryByRole("link", { name: /รับยาเข้าคลัง|บันทึกรับยาใหม่/ })).not.toBeInTheDocument();
+  });
+
+  it("shows role-specific lot safety controls after selecting an inventory row", async () => {
+    const user = userEvent.setup();
+    renderInventory("/inventory", "assistant");
+    await user.click(await screen.findByRole("button", { name: /พาราเซตามอล/ }));
+    expect(await screen.findByRole("button", { name: "กักกันล็อต" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "บันทึกการปรับ" })).not.toBeInTheDocument();
+    cleanup();
+    renderInventory("/inventory", "doctor");
+    await user.click(await screen.findByRole("button", { name: /พาราเซตามอล/ }));
+    expect(await screen.findByRole("button", { name: "กักกันล็อต" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "บันทึกการปรับ" })).toBeInTheDocument();
   });
 
   it.each([

@@ -175,6 +175,7 @@ export const inventoryLotSchema = z.strictObject({
   id: z.string().min(1),
   medicationId: z.string().regex(/^DEMO-MED-\d{3}$/),
   medicationRevision: z.number().int().min(1),
+  revision: z.number().int().min(1),
   displayNameSnapshot: z.string().min(1).max(200),
   strengthSnapshot: z.string().min(1).max(100),
   dosageFormSnapshot: z.string().min(1).max(100),
@@ -187,6 +188,19 @@ export const inventoryLotSchema = z.strictObject({
   createdBy: z.strictObject({ id: z.string().min(1), displayName: z.string().min(1) }),
 });
 export type InventoryLotDto = z.infer<typeof inventoryLotSchema>;
+
+export const inventoryLotBalanceSchema = inventoryLotSchema.extend({
+  onHand: z.number().int().min(0),
+  reserved: z.number().int().min(0),
+  available: z.number().int().min(0),
+  latestMovementId: z.string().min(1).nullable(),
+});
+export type InventoryLotBalanceDto = z.infer<typeof inventoryLotBalanceSchema>;
+
+export const inventoryLotsResponseSchema = z.strictObject({
+  data: z.array(inventoryLotBalanceSchema),
+});
+export type InventoryLotsResponse = z.infer<typeof inventoryLotsResponseSchema>;
 
 export const inventorySummarySchema = z.strictObject({
   medication: medicationSchema,
@@ -246,6 +260,31 @@ export const receiveInventoryResponseSchema = z.strictObject({
   replayed: z.boolean(),
 });
 export type ReceiveInventoryResponse = z.infer<typeof receiveInventoryResponseSchema>;
+
+const inventoryIntegrityReasonSchema = z.string().trim().min(1).max(500);
+const inventoryLotExpectedRevisionSchema = z.strictObject({ lot: z.number().int().min(1) });
+
+export const quarantineInventoryLotBodySchema = rejectOwnPrototypeKeys(z.strictObject({
+  expectedRevisions: inventoryLotExpectedRevisionSchema,
+  payload: z.strictObject({ reason: inventoryIntegrityReasonSchema }),
+}));
+export type QuarantineInventoryLotBody = z.infer<typeof quarantineInventoryLotBodySchema>;
+
+export const adjustInventoryLotBodySchema = rejectOwnPrototypeKeys(z.strictObject({
+  expectedRevisions: inventoryLotExpectedRevisionSchema,
+  payload: z.strictObject({
+    correctsMovementId: z.string().trim().min(1).max(120),
+    quantityDelta: z.number().int().min(-999_999).max(999_999).refine((value) => value !== 0, "จำนวนที่ปรับต้องไม่เป็นศูนย์"),
+    reason: inventoryIntegrityReasonSchema,
+  }),
+}));
+export type AdjustInventoryLotBody = z.infer<typeof adjustInventoryLotBodySchema>;
+
+export const inventoryLotCommandResponseSchema = z.strictObject({
+  data: inventoryLotBalanceSchema,
+  replayed: z.boolean(),
+});
+export type InventoryLotCommandResponse = z.infer<typeof inventoryLotCommandResponseSchema>;
 
 export const inventoryReservationStatusSchema = z.enum(["ACTIVE", "RELEASED", "CONSUMED"]);
 export type InventoryReservationStatus = z.infer<typeof inventoryReservationStatusSchema>;
@@ -506,6 +545,9 @@ export const dashboardTodayResponseSchema = z.strictObject({
     consulting: z.number().int().min(0),
     awaitingOrderRevision: z.number().int().min(0),
     awaitingPreparation: z.number().int().min(0),
+    preparing: z.number().int().min(0),
+    awaitingRelease: z.number().int().min(0),
+    awaitingHandoff: z.number().int().min(0),
     awaitingCharge: z.number().int().min(0),
     updatedAt: z.string().datetime(),
   }),
