@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
+import { ApiError } from "../../src/server/errors.js";
+import { apiErrorCodeSchema } from "../../src/shared/contracts.js";
 import * as auditModule from "../../src/server/modules/platform/audit.js";
 import * as platform from "../../src/server/modules/platform/index.js";
 import {
@@ -87,6 +89,13 @@ function appendTestAudit(
     metadata: { source: "platform-test" },
   });
 }
+
+describe("stable API conflict codes", () => {
+  it.each(["LOT_RESERVED", "STOCK_WOULD_BE_NEGATIVE"] as const)("keeps %s in the shared contract with HTTP 409", (code) => {
+    expect(apiErrorCodeSchema.parse(code)).toBe(code);
+    expect(new ApiError({ code, messageTh: "ทดสอบ" })).toMatchObject({ code, statusCode: 409 });
+  });
+});
 
 describe("role permissions", () => {
   it("assigns clinical and inventory permissions only to the roles authorized to perform them", () => {

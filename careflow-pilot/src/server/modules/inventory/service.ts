@@ -561,7 +561,7 @@ export function createInventoryService(input: InventoryServiceOptions): Inventor
       const balance = readLotBalances(tx).find((candidate) => candidate.lot.id === lot.id);
       if (!balance) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่สามารถคำนวณยอดล็อตยา" });
       if (balance.onHand + command.quantityDelta < balance.reserved) {
-        throw new ApiError({ code: "INVALID_STATE", messageTh: "ยอดหลังปรับต้องไม่ต่ำกว่ายอดที่จองไว้" });
+        throw new ApiError({ code: "STOCK_WOULD_BE_NEGATIVE", messageTh: "ยอดหลังปรับต้องไม่ต่ำกว่ายอดที่จองไว้" });
       }
       const occurredAt = clock().toISOString();
       const adjustmentId = nextInventoryId();
@@ -594,7 +594,7 @@ export function createInventoryService(input: InventoryServiceOptions): Inventor
       const balance = readLotBalances(tx).find((candidate) => candidate.lot.id === lot.id);
       if (!balance) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่สามารถคำนวณยอดล็อตยา" });
       if (command.nextStatus === "QUARANTINED" && balance.reserved > 0) {
-        throw new ApiError({ code: "INVALID_STATE", messageTh: "ไม่สามารถกักกันล็อตที่มีรายการจองกำลังใช้งาน" });
+        throw new ApiError({ code: "LOT_RESERVED", messageTh: "ไม่สามารถกักกันล็อตที่มีรายการจองกำลังใช้งาน" });
       }
       if (command.nextStatus === "AVAILABLE" && lot.expiryDate <= clinicDate(clock())) {
         throw new ApiError({ code: "INVALID_STATE", messageTh: "ไม่สามารถปลดกักกันล็อตยาที่หมดอายุแล้ว" });

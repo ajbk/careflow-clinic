@@ -445,6 +445,7 @@ describe("inventory integrity API", () => {
       payload: { expectedRevisions: { lot: lot.revision }, payload: { correctsMovementId: movementId, quantityDelta: -13, reason: "นับจริง" } },
     });
     expect(negative.statusCode).toBe(409);
+    expect(negative.json().error.code).toBe("STOCK_WOULD_BE_NEGATIVE");
   });
 
   it("records a source-linked append-only adjustment and status event exactly once", async () => {
@@ -498,6 +499,7 @@ describe("inventory integrity API", () => {
       payload: { expectedRevisions: { lot: lot.revision }, payload: { reason: "ต้องกักกัน" } },
     });
     expect(activeReservation.statusCode).toBe(409);
+    expect(activeReservation.json().error.code).toBe("LOT_RESERVED");
 
     fixture.database.sqlite.prepare("UPDATE inventory_reservations SET status = 'RELEASED', released_at = ?, released_by = ?, release_reason = ? WHERE id = 'integrity-reservation'").run(now, fixture.assistant.actor.id, "ยกเลิกเพื่อทดสอบ");
     const quarantined = await fixture.app.inject({
@@ -513,5 +515,6 @@ describe("inventory integrity API", () => {
       payload: { expectedRevisions: { lot: lot.revision + 1 }, payload: { reason: "ตรวจซ้ำ" } },
     });
     expect(expiredUnquarantine.statusCode).toBe(409);
+    expect(expiredUnquarantine.json().error.code).toBe("INVALID_STATE");
   });
 });
