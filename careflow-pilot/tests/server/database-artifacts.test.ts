@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   cpSync,
@@ -54,6 +55,18 @@ function copyMigrationsThrough0010(target: string): string {
   const journalPath = join(oldPath, "meta", "_journal.json");
   const journal = JSON.parse(readFileSync(journalPath, "utf8")) as { entries: Array<{ idx: number }> };
   journal.entries = journal.entries.filter((entry) => entry.idx < 11);
+  writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+  return oldPath;
+}
+
+function copyMigrationsThrough0014(target: string): string {
+  const source = join(process.cwd(), "drizzle");
+  const oldPath = join(target, "drizzle-0014");
+  cpSync(source, oldPath, { recursive: true });
+  rmSync(join(oldPath, "0015_inventory_adjustment_source_guard.sql"), { force: true });
+  const journalPath = join(oldPath, "meta", "_journal.json");
+  const journal = JSON.parse(readFileSync(journalPath, "utf8")) as { entries: Array<{ idx: number }> };
+  journal.entries = journal.entries.filter((entry) => entry.idx < 15);
   writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
   return oldPath;
 }
@@ -151,6 +164,76 @@ it("migrates a populated 0010 ledger to DISPENSE support without disabling forei
     expect(() => sqlite.prepare("UPDATE inventory_lots SET revision = 0 WHERE id = 'upgrade-lot'").run()).toThrow(/revision must be positive/i);
     expect(() => sqlite.prepare("UPDATE inventory_stock_movements SET quantity_delta = 4 WHERE id = 'upgrade-movement'").run()).toThrow(/append-only/i);
     expect(() => sqlite.prepare("INSERT INTO inventory_stock_movements (id, clinic_id, lot_id, movement_type, quantity_delta, source_type, source_id, reason, occurred_at, actor_id) VALUES ('duplicate-movement', 'clinic', 'upgrade-lot', 'RECEIPT', 5, 'RECEIPT', 'upgrade-receipt', 'duplicate', '2026-08-09T00:00:00.000Z', 'upgrade-doctor')").run()).toThrow(/unique/i);
+  } finally {
+    sqlite.close();
+  }
+});
+
+it("keeps 0014 immutable and upgrades populated inventory rows with the additive 0015 correction guard", () => {
+  const migrationPath = join(process.cwd(), "drizzle", "0014_inventory_integrity.sql");
+  expect(createHash("sha256").update(readFileSync(migrationPath)).digest("hex")).toBe(
+    "d9f3c1612286f53ca0fee1ec2cee954b1d08b128a9ef3153204620d8e6196b03",
+  );
+  const journal = JSON.parse(readFileSync(join(process.cwd(), "drizzle", "meta", "_journal.json"), "utf8")) as {
+    entries: Array<{ idx: number; tag: string }>;
+  };
+  expect(journal.entries).toHaveLength(16);
+  expect(journal.entries[14]).toMatchObject({ idx: 14, tag: "0014_inventory_integrity" });
+  expect(journal.entries[15]).toMatchObject({ idx: 15, tag: "0015_inventory_adjustment_source_guard" });
+
+  const { directory, databasePath } = temporaryDatabase();
+  const oldMigrations = copyMigrationsThrough0014(directory);
+  const sqlite = new Database(databasePath);
+  try {
+    sqlite.pragma("foreign_keys = ON");
+    const db = drizzle(sqlite);
+    migrate(db, { migrationsFolder: oldMigrations });
+    seedPopulated0008Database(sqlite);
+    sqlite.exec(`
+      INSERT INTO inventory_lots (id, clinic_id, medication_id, medication_revision, display_name_snapshot, strength_snapshot, dosage_form_snapshot, unit_snapshot, lot_number, expiry_date, supplier_name, status, created_at, created_by)
+      VALUES ('upgrade-other-lot', 'clinic', 'DEMO-MED-001', 1, '[DEMO] ยาทดสอบชนิด A', '500 หน่วยทดสอบ', 'เม็ดทดสอบ', 'เม็ด', 'UPGRADE-OTHER-LOT', '2027-01-31', 'ผู้ขายทดสอบ', 'AVAILABLE', '2026-08-09T00:00:00.000Z', 'upgrade-doctor');
+      INSERT INTO inventory_receipts (id, clinic_id, supplier_name, note, received_at, received_by)
+      VALUES ('upgrade-other-receipt', 'clinic', 'ผู้ขายทดสอบ', 'อัปเกรดล็อตที่สอง', '2026-08-09T00:00:00.000Z', 'upgrade-doctor');
+      INSERT INTO inventory_receipt_lines (id, receipt_id, lot_id, quantity, unit_snapshot)
+      VALUES ('upgrade-other-receipt-line', 'upgrade-other-receipt', 'upgrade-other-lot', 2, 'เม็ด');
+      INSERT INTO inventory_stock_movements (id, clinic_id, lot_id, movement_type, quantity_delta, source_type, source_id, reason, occurred_at, actor_id)
+      VALUES ('upgrade-other-movement', 'clinic', 'upgrade-other-lot', 'RECEIPT', 2, 'RECEIPT', 'upgrade-other-receipt', 'อัปเกรดล็อตที่สอง', '2026-08-09T00:00:00.000Z', 'upgrade-doctor');
+    `);
+    const before = {
+      lot: sqlite.prepare("SELECT id, revision FROM inventory_lots WHERE id = 'upgrade-lot'").get(),
+      movement: sqlite
+        .prepare("SELECT id, lot_id, quantity_delta, source_type, source_id FROM inventory_stock_movements WHERE id = 'upgrade-movement'")
+        .get(),
+      trigger: sqlite
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'inventory_adjustments_correction_source_guard'")
+        .get(),
+    };
+    expect(before.trigger).toBeUndefined();
+
+    migrate(db, { migrationsFolder: join(process.cwd(), "drizzle") });
+
+    expect(sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
+    expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(16);
+    expect(sqlite.prepare("SELECT id, revision FROM inventory_lots WHERE id = 'upgrade-lot'").get()).toEqual(before.lot);
+    expect(
+      sqlite
+        .prepare("SELECT id, lot_id, quantity_delta, source_type, source_id FROM inventory_stock_movements WHERE id = 'upgrade-movement'")
+        .get(),
+    ).toEqual(before.movement);
+    expect(
+      sqlite
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'inventory_adjustments_correction_source_guard'")
+        .get(),
+    ).toEqual({ name: "inventory_adjustments_correction_source_guard" });
+    expect(() =>
+      sqlite
+        .prepare(`
+          INSERT INTO inventory_adjustments (id, clinic_id, lot_id, corrects_movement_id, quantity_delta, reason, occurred_at, actor_id)
+          VALUES ('upgrade-invalid-cross-lot-adjustment', 'clinic', 'upgrade-lot', 'upgrade-other-movement', 1, 'ข้ามล็อต', '2026-08-09T00:00:00.000Z', 'upgrade-doctor')
+        `)
+        .run(),
+    ).toThrow(/correction|invalid/i);
   } finally {
     sqlite.close();
   }
