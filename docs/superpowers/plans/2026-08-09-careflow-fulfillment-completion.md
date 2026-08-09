@@ -156,6 +156,7 @@
 - Modify: careflow-pilot/src/server/modules/platform/audit.ts, permissions.ts
 - Modify: careflow-pilot/src/server/modules/visit/service.ts and workflows/clinical.ts
 - Create: careflow-pilot/drizzle/0011_dispense_ledger.sql and matching metadata
+- Create: careflow-pilot/drizzle/0012_inventory_revision.sql and 0013_stock_movement_source_lot_unique.sql with matching metadata (follow-up hardening)
 - Modify: careflow-pilot/src/client/features/dispensing.ts, screens/DispensingScreen.tsx, shared/contracts.ts
 - Test: careflow-pilot/tests/server/fulfillment-completion.test.ts, fulfillment-routes.test.ts, clinical-workflow.test.ts, tests/client/dispensing.test.tsx
 
@@ -182,7 +183,7 @@
 - Modify: careflow-pilot/src/server/modules/inventory/schema.ts, service.ts, routes.ts, index.ts
 - Modify: careflow-pilot/src/server/modules/platform/permissions.ts, audit.ts
 - Modify: careflow-pilot/src/server/modules/visit/service.ts
-- Create: careflow-pilot/drizzle/0012_inventory_integrity.sql and matching metadata
+- Create: careflow-pilot/drizzle/0014_inventory_integrity.sql and matching metadata
 - Modify: careflow-pilot/src/client/features/inventory.ts, screens/InventoryScreen.tsx, screens/QueueScreen.tsx, screens/OverviewScreen.tsx
 - Modify: careflow-pilot/src/client/styles/globals.css
 - Test: careflow-pilot/tests/server/inventory.test.ts, fulfillment-completion.test.ts, reset-synthetic-data.test.ts, tests/client/inventory.test.tsx, queue.test.tsx
@@ -195,7 +196,7 @@
 - Adjustment accepts only an existing corrects_movement_id, non-zero quantity_delta, and required reason. Server generates new Adjustment/Movement IDs.
 
 - [ ] **Step 1: Write RED inventory integrity tests.** Cover Doctor-only adjustment/unquarantine, Assistant/Doctor quarantine, required reasons, unknown fields, stale lot revision, active reservation quarantine block, expired unquarantine block, append-only status events, adjustment source validation, and no-negative/no-below-reserved outcomes.
-- [ ] **Step 2: Run RED.** Run npm run test:server -- tests/server/inventory.test.ts tests/server/fulfillment-completion.test.ts. Expected failures are missing schema, routes, permissions, and aggregate revision behavior.
+- [ ] **Step 2: Run RED.** Run npm run test:server -- tests/server/inventory.test.ts tests/server/fulfillment-completion.test.ts. Expected failures are missing schema, routes, permissions, and aggregate revision behavior. Start from the completed 0013 ledger boundary and create migration 0014 for inventory-integrity changes.
 - [ ] **Step 3: Implement inventory commands.** Add lot revision, adjustment/status-event tables, source triggers, derived balances, and immediate command services. Quarantine changes only current lot status and event; it never mutates movement totals or active reservations.
 - [ ] **Step 4: Implement role-aware API.** Check permission before reading lot detail, strict-parse reason/delta/revision, execute idempotently, return 201 first/200 replay, and append audit metadata with lot, movement, source, delta, old/new status, and reason.
 - [ ] **Step 5: Add operational UI.** Reuse the Inventory cards and existing form controls. Show lot totals/status/revision, Assistant/Doctor quarantine action, Doctor unquarantine/adjustment actions, and preserved drafts/errors. Update Queue and Overview labels/counts for PREPARING, AWAITING_RELEASE, and AWAITING_HANDOFF.
@@ -217,7 +218,7 @@
 - [ ] **Step 4: Run complete verification fresh.** From careflow-pilot run npm test, npm run lint, npm run typecheck, npm run build, npm run test:e2e, and git diff --check. Record exact pass counts, build result, migration upgrade result, and any non-blocking bundle warnings.
 - [ ] **Step 5: Review requirements line by line.** Confirm PRD criteria for ORDER/NO_MEDICATION, invalidation, barcode/manual evidence, FEFO/race/rollback, idempotency, restart, role denial, audit, print size, and adjustment/quarantine are each covered by a named test or persisted evidence.
 - [ ] **Step 6: Request a final GPT-5.6 Sol Max read-only review.** Give the reviewer the spec, plan, implementation reports, full diff, migration upgrade evidence, and fresh verification output. Fix every Critical/Important finding through a focused RED→GREEN loop and scoped re-review.
-- [ ] **Step 7: Update the ledger and commit documentation.** Record the complete path, routes, migrations 0009–0012, permissions, audit actions, pass counts, and deferred Milestone 4 boundary. Commit documentation/test evidence with test: cover fulfillment completion pilot flow.
+- [ ] **Step 7: Update the ledger and commit documentation.** Record the complete path, routes, migrations 0009–0014, permissions, audit actions, pass counts, and deferred Milestone 4 boundary. Commit documentation/test evidence with test: cover fulfillment completion pilot flow.
 - [ ] **Step 8: Stop for user acceptance.** Report what is implemented, what was verified, the final Sol Max verdict, and that Finance & Close remains the next milestone. Do not start Milestone 4 without a new user request.
 
 ## Execution and review protocol
