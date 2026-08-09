@@ -107,6 +107,10 @@ describe("clinical evidence schema", () => {
       "clinical_note_draft_diagnoses",
       "clinical_note_drafts",
       "clinical_notes",
+      "finance_charge_adjustments",
+      "finance_charge_lines",
+      "finance_charges",
+      "finance_payments",
       "fulfillment_artifact_invalidations",
       "fulfillment_dispense_lines",
       "fulfillment_dispense_price_snapshots",
@@ -335,6 +339,24 @@ describe("clinical evidence schema", () => {
       }
     }
     expect(indexNames(value)).toContain("clinical_note_drafts_visit_id_unique");
+  });
+
+  it("creates the append-only finance ledger tables without a stored gross aggregate", () => {
+    const value = database();
+    const ledgerTables = [
+      "finance_charges",
+      "finance_charge_lines",
+      "finance_charge_adjustments",
+      "finance_payments",
+    ];
+    expect(applicationTables(value)).toEqual(expect.arrayContaining(ledgerTables));
+    if (!ledgerTables.every((table) => applicationTables(value).includes(table))) return;
+
+    expect(tableSql(value, "finance_charges")).toContain("`visit_id` text NOT NULL");
+    expect(tableSql(value, "finance_charges")).not.toContain("gross_total_baht");
+    expect(tableSql(value, "finance_charge_lines")).toContain("`line_total_baht` integer NOT NULL");
+    expect(tableSql(value, "finance_charge_adjustments")).toContain("`amount_baht` integer NOT NULL");
+    expect(tableSql(value, "finance_payments")).toContain("`amount_baht` integer NOT NULL");
   });
 
   it("blocks direct updates and deletes on every signed or historical clinical record while drafts remain editable", () => {

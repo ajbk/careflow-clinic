@@ -18,6 +18,11 @@ import { createVisitService, registerVisitRoutes } from "./modules/visit/index.j
 import { createMedicationService, registerMedicationRoutes } from "./modules/medication/index.js";
 import { createInventoryService, registerInventoryRoutes } from "./modules/inventory/index.js";
 import { createFulfillmentService, registerFulfillmentRoutes } from "./modules/fulfillment/index.js";
+import {
+  createFinanceService,
+  deriveChargeQuote,
+  registerFinanceRoutes,
+} from "./modules/finance/index.js";
 import { createNoteService } from "./modules/note/index.js";
 import { createClinicalWorkflow } from "./workflows/clinical.js";
 import { registerClinicalRoutes } from "./workflows/clinical-routes.js";
@@ -119,6 +124,13 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   registerInventoryRoutes({ app, database: options.db, inventory: inventoryService });
   const fulfillmentService = createFulfillmentService({ database: options.db, inventory: inventoryService, clock: options.clock, idFactory: options.idFactory });
   registerFulfillmentRoutes({ app, database: options.db, fulfillment: fulfillmentService, clock: options.clock });
+  const financeService = createFinanceService({
+    database: options.db,
+    pricing: { deriveChargeQuote },
+    clock: options.clock,
+    idFactory: options.idFactory,
+  });
+  registerFinanceRoutes({ app, database: options.db, finance: financeService });
   const noteService = createNoteService({ database: options.db, clock: options.clock });
   const clinicalWorkflow = createClinicalWorkflow({
     patients: patientService,

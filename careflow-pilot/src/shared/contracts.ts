@@ -60,6 +60,8 @@ export const permissionSchema = z.enum([
   "inventory:quarantine",
   "inventory:release-quarantine",
   "inventory:adjust",
+  "finance:read",
+  "finance:finalize-charge",
 ]);
 
 export const loginBodySchema = z.strictObject({
@@ -159,6 +161,143 @@ export const priceSnapshotSchema = z.strictObject({
   sourceMedicationRevision: z.number().int().safe().min(1),
 });
 export type PriceSnapshot = z.infer<typeof priceSnapshotSchema>;
+
+const financeIdSchema = z.string().trim().min(1).max(120);
+const financeDisplayNameSchema = z.string().trim().min(1).max(200);
+const financeDescriptionSchema = z.string().trim().min(1).max(200);
+const financeContentHashSchema = z.string().regex(/^[0-9a-f]{64}$/);
+export const chargeGrossTotalBahtSchema = z.number().int().safe().min(1).max(100_000_000);
+
+export const checkoutLineSchema = z.strictObject({
+  id: financeIdSchema.nullable(),
+  position: z.number().int().min(0).max(20),
+  lineType: z.enum(["CONSULTATION", "MEDICATION"]),
+  descriptionSnapshot: financeDescriptionSchema,
+  quantity: z.number().int().min(1).max(999_999),
+  unitPriceBaht: unitPriceBahtSchema,
+  lineTotalBaht: z.number().int().safe().min(0).max(100_000_000),
+  medicationOrderItemId: financeIdSchema.nullable(),
+  fulfillmentDispenseLineId: financeIdSchema.nullable(),
+}).superRefine((line, context) => {
+  if (line.lineTotalBaht !== line.quantity * line.unitPriceBaht) {
+    context.addIssue({ code: "custom", path: ["lineTotalBaht"], message: "ยอดรวมรายการต้องเท่ากับจำนวนคูณราคาต่อหน่วย" });
+  }
+  if (
+    (line.lineType === "CONSULTATION" && (
+      line.position !== 0 ||
+      line.quantity !== 1 ||
+      line.medicationOrderItemId !== null ||
+      line.fulfillmentDispenseLineId !== null
+    )) ||
+    (line.lineType === "MEDICATION" && (
+      line.position < 1 ||
+      line.medicationOrderItemId === null ||
+      line.fulfillmentDispenseLineId === null
+    ))
+  ) {
+    context.addIssue({ code: "custom", path: ["lineType"], message: "หลักฐานรายการคิดเงินไม่สอดคล้องกัน" });
+  }
+});
+export type CheckoutLineDto = z.infer<typeof checkoutLineSchema>;
+
+export const checkoutChargeSchema = z.strictObject({
+  id: financeIdSchema,
+  sourceKind: z.enum(["ORDER", "NO_MEDICATION"]),
+  medicationDecisionId: financeIdSchema,
+  medicationDecisionVersion: z.number().int().min(1),
+  fulfillmentDispenseId: financeIdSchema.nullable(),
+  clinicPricingRevision: z.number().int().min(1),
+  consultationFeeBahtSnapshot: consultationFeeBahtSchema,
+  currency: z.literal("THB"),
+  lineCount: z.number().int().min(1).max(21),
+  finalizedBy: z.strictObject({ id: financeIdSchema, displayName: financeDisplayNameSchema }),
+  finalizedAt: z.string().datetime(),
+  contentHash: financeContentHashSchema,
+});
+export type CheckoutChargeDto = z.infer<typeof checkoutChargeSchema>;
+
+export const collectionStateSchema = z.enum([
+  "PENDING_CHARGE",
+  "AWAITING_COLLECTION",
+  "PAID_CASH",
+  "PAID_PROMPTPAY",
+  "COLLECTION_NOT_REQUIRED",
+  "CLOSED",
+]);
+export const checkoutAllowedActionSchema = z.enum([
+  "FINALIZE_CHARGE",
+  "APPROVE_FULL_WAIVER",
+  "RECORD_CASH",
+  "CONFIRM_PROMPTPAY",
+  "CLOSE_VISIT",
+  "READ_OPD",
+]);
+export const checkoutCloseBlockerSchema = z.enum(["charge", "collection", "visitState"]);
+
+export const checkoutDtoSchema = z.strictObject({
+  patient: z.strictObject({
+    id: financeIdSchema,
+    hn: z.string().regex(/^DEMO-[0-9]{6}$/),
+    displayName: financeDisplayNameSchema,
+    birthDate: z.iso.date(),
+    sex: z.enum(["female", "male", "unknown"]),
+  }),
+  visit: z.strictObject({
+    id: financeIdSchema,
+    status: z.enum([
+      "WAITING",
+      "CONSULTING",
+      "AWAITING_PREPARATION",
+      "PREPARING",
+      "AWAITING_RELEASE",
+      "AWAITING_HANDOFF",
+      "AWAITING_ORDER_REVISION",
+      "AWAITING_CHARGE",
+      "AWAITING_PAYMENT",
+      "READY_TO_CLOSE",
+      "CLOSED",
+    ]),
+    revision: z.number().int().min(1),
+    arrivedAt: z.string().datetime(),
+    startedAt: z.string().datetime().nullable(),
+    closedAt: z.string().datetime().nullable(),
+  }),
+  sourceKind: z.enum(["ORDER", "NO_MEDICATION"]),
+  charge: checkoutChargeSchema.nullable(),
+  lines: z.array(checkoutLineSchema).min(1).max(21),
+  grossTotalBaht: chargeGrossTotalBahtSchema,
+  adjustmentTotalBaht: z.number().int().safe().min(-100_000_000).max(0),
+  netDueBaht: z.number().int().safe().min(0).max(100_000_000),
+  collectionState: collectionStateSchema,
+  allowedActions: z.array(checkoutAllowedActionSchema),
+  closeBlockers: z.array(checkoutCloseBlockerSchema),
+});
+export type CheckoutDto = z.infer<typeof checkoutDtoSchema>;
+
+export const finalizeChargeBodySchema = rejectOwnPrototypeKeys(
+  z.strictObject({
+    expectedRevisions: z.strictObject({
+      visit: z.number().int().min(1),
+      clinicPricing: z.number().int().min(1),
+    }),
+    payload: z.strictObject({ settlementIntent: z.literal("COLLECT") }),
+  }),
+);
+export type FinalizeChargeBody = z.infer<typeof finalizeChargeBodySchema>;
+
+export const finalizeChargeResponseSchema = z.strictObject({
+  data: checkoutDtoSchema,
+  replayed: z.boolean(),
+});
+export type FinalizeChargeResponse = z.infer<typeof finalizeChargeResponseSchema>;
+
+export const financeResolutionSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("PENDING_CHARGE") }),
+  z.strictObject({ kind: z.literal("PENDING_COLLECTION"), chargeId: financeIdSchema, netDueBaht: chargeGrossTotalBahtSchema }),
+  z.strictObject({ kind: z.literal("COLLECTION_NOT_REQUIRED"), adjustmentId: financeIdSchema }),
+  z.strictObject({ kind: z.literal("PAYMENT"), paymentId: financeIdSchema, method: z.enum(["CASH", "PROMPTPAY"]) }),
+]);
+export type FinanceResolution = z.infer<typeof financeResolutionSchema>;
 
 export const medicationSearchQuerySchema = z.strictObject({
   q: z.string()
@@ -1173,6 +1312,10 @@ export const apiErrorCodeSchema = z.enum([
   "IDEMPOTENCY_CONFLICT",
   "ACTIVE_VISIT_EXISTS",
   "SYNTHETIC_ID_EXHAUSTED",
+  "FINANCE_NOT_READY",
+  "CHARGE_SOURCE_INCOMPLETE",
+  "PRICE_SNAPSHOT_MISSING",
+  "CHARGE_ALREADY_FINALIZED",
   "RATE_LIMITED",
   "INTERNAL_ERROR",
 ]);

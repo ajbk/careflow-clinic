@@ -281,10 +281,11 @@ it("keeps 0014 immutable and upgrades populated inventory rows with the additive
   const journal = JSON.parse(readFileSync(join(process.cwd(), "drizzle", "meta", "_journal.json"), "utf8")) as {
     entries: Array<{ idx: number; tag: string }>;
   };
-  expect(journal.entries).toHaveLength(17);
+  expect(journal.entries).toHaveLength(18);
   expect(journal.entries[14]).toMatchObject({ idx: 14, tag: "0014_inventory_integrity" });
   expect(journal.entries[15]).toMatchObject({ idx: 15, tag: "0015_inventory_adjustment_source_guard" });
   expect(journal.entries[16]).toMatchObject({ idx: 16, tag: "0016_finance_pricing_snapshots" });
+  expect(journal.entries[17]).toMatchObject({ idx: 17, tag: "0017_charge_collection_ledger" });
 
   const { directory, databasePath } = temporaryDatabase();
   const oldMigrations = copyMigrationsThrough0014(directory);
@@ -319,7 +320,7 @@ it("keeps 0014 immutable and upgrades populated inventory rows with the additive
 
     expect(sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
     expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(17);
+    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(18);
     expect(sqlite.prepare("SELECT id, revision FROM inventory_lots WHERE id = 'upgrade-lot'").get()).toEqual(before.lot);
     expect(
       sqlite
@@ -401,7 +402,9 @@ it("upgrades populated 0015 ORDER, NO_MEDICATION, multi-lot DISPENSE, and AWAITI
     expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(sqlite.prepare("SELECT hash, created_at FROM __drizzle_migrations ORDER BY id").all().slice(0, 16))
       .toEqual(oldMigrationRecords);
-    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(17);
+    const migrationCount = sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get();
+    expect(migrationCount).toBe(18);
+    if (migrationCount !== 18) return;
     for (const table of sourceTables) {
       expect(Buffer.from(JSON.stringify(sqlite.prepare(`SELECT * FROM ${table} ORDER BY id`).all()))).toEqual(before[table]);
     }
@@ -450,9 +453,25 @@ it("upgrades populated 0015 ORDER, NO_MEDICATION, multi-lot DISPENSE, and AWAITI
       INNER JOIN medication_order_items AS item ON item.id = snapshot.medication_order_item_id
       WHERE item.medication_decision_id = 'pricing-upgrade-decision-no-med'
     `).pluck().get()).toBe(0);
+    expect(sqlite.prepare("SELECT count(*) FROM finance_charges").pluck().get()).toBe(0);
+    expect(sqlite.prepare("SELECT count(*) FROM finance_charge_lines").pluck().get()).toBe(0);
+    expect(sqlite.prepare("SELECT count(*) FROM finance_charge_adjustments").pluck().get()).toBe(0);
+    expect(sqlite.prepare("SELECT count(*) FROM finance_payments").pluck().get()).toBe(0);
   } finally {
     sqlite.close();
   }
+});
+
+it("adds only the immutable 0017 charge-collection ledger artifacts after the frozen migration history", () => {
+  const migrationsPath = join(process.cwd(), "drizzle");
+  expect(existsSync(join(migrationsPath, "0017_charge_collection_ledger.sql"))).toBe(true);
+  expect(existsSync(join(migrationsPath, "meta", "0017_snapshot.json"))).toBe(true);
+  const journal = JSON.parse(readFileSync(join(migrationsPath, "meta", "_journal.json"), "utf8")) as {
+    entries: Array<{ idx: number; tag: string }>;
+  };
+  expect(journal.entries).toHaveLength(18);
+  expect(journal.entries[16]).toMatchObject({ idx: 16, tag: "0016_finance_pricing_snapshots" });
+  expect(journal.entries[17]).toMatchObject({ idx: 17, tag: "0017_charge_collection_ledger" });
 });
 
 describe.each(["-wal", "-shm"])("pre-existing SQLite %s artifact", (suffix) => {

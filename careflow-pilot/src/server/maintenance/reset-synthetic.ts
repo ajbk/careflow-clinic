@@ -28,6 +28,8 @@ const syntheticAuditPredicate = [
   "action LIKE 'preparation.%'",
   "action LIKE 'fulfillment.%'",
   "action LIKE 'dispense.%'",
+  "action LIKE 'charge.%'",
+  "action LIKE 'payment.%'",
 ].join(" OR ");
 
 const expectedTables = new Set([
@@ -40,6 +42,10 @@ const expectedTables = new Set([
   "clinical_notes",
   "clinic_config",
   "clinic_counters",
+  "finance_charge_adjustments",
+  "finance_charge_lines",
+  "finance_charges",
+  "finance_payments",
   "fulfillment_artifact_invalidations",
   "fulfillment_dispense_price_snapshots",
   "fulfillment_dispense_lines",
@@ -114,10 +120,14 @@ const appendOnlyTables = [
   "fulfillment_dispense_lines",
   "fulfillment_dispense_price_snapshots",
   "fulfillment_label_versions",
+  "finance_charges",
+  "finance_charge_lines",
+  "finance_charge_adjustments",
+  "finance_payments",
 ] as const;
 
 function appendOnlyTriggerSql(table: (typeof appendOnlyTables)[number], operation: "update" | "delete"): string {
-  const indent = table === "inventory_reservation_allocations" || table === "inventory_stock_movements" || table === "inventory_adjustments" || table === "inventory_lot_status_events" || table.startsWith("fulfillment_") ? "  " : "\t";
+  const indent = table === "inventory_reservation_allocations" || table === "inventory_stock_movements" || table === "inventory_adjustments" || table === "inventory_lot_status_events" || table.startsWith("fulfillment_") || table.startsWith("finance_") ? "  " : "\t";
   return `CREATE TRIGGER \`${table}_block_${operation}\`
 BEFORE ${operation.toUpperCase()} ON \`${table}\`
 BEGIN
@@ -299,6 +309,10 @@ function verifyReset(sqlite: Database.Database): void {
     ["inventory_lot_status_events", "count(*)"],
     ["fulfillment_dispense_lines", "count(*)"],
     ["fulfillment_dispense_price_snapshots", "count(*)"],
+    ["finance_payments", "count(*)"],
+    ["finance_charge_adjustments", "count(*)"],
+    ["finance_charge_lines", "count(*)"],
+    ["finance_charges", "count(*)"],
     ["fulfillment_dispenses", "count(*)"],
     ["fulfillment_releases", "count(*)"],
     ["fulfillment_rejections", "count(*)"],
@@ -413,6 +427,10 @@ export function runResetSyntheticData(deps: ResetSyntheticDependencies): number 
     dropKnownAppendOnlyTriggers(sqlite);
     sqlite.exec("DELETE FROM sessions;");
     sqlite.exec("DELETE FROM idempotency_records;");
+    sqlite.exec("DELETE FROM finance_payments;");
+    sqlite.exec("DELETE FROM finance_charge_adjustments;");
+    sqlite.exec("DELETE FROM finance_charge_lines;");
+    sqlite.exec("DELETE FROM finance_charges;");
     sqlite.exec("DELETE FROM fulfillment_dispense_price_snapshots;");
     sqlite.exec("DELETE FROM medication_order_price_snapshots;");
     sqlite.exec("DELETE FROM fulfillment_dispense_lines;");

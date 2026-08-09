@@ -120,6 +120,13 @@
       "when": 1786262158232,
       "tag": "0016_finance_pricing_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1786264962975,
+      "tag": "0017_charge_collection_ledger",
+      "breakpoints": true
     }
   ]
 }

@@ -142,6 +142,111 @@ function seedInventoryEvidence(databasePath: string): void {
   }
 }
 
+function seedFinanceEvidence(databasePath: string): void {
+  const database = new Database(databasePath);
+  try {
+    const now = "2026-08-03T00:00:00.000Z";
+    const hash = "c".repeat(64);
+    const firstVisitId = database.prepare("SELECT id FROM visits ORDER BY id LIMIT 1").pluck().get() as string;
+    database.exec(`
+      INSERT INTO staff_accounts (
+        id, clinic_id, username, display_name, role, password_hash, must_change_password,
+        active, revision, last_password_changed_at, created_at, updated_at
+      ) VALUES (
+        'reset-finance-doctor', 'clinic', 'reset-finance-doctor', 'พญ. รีเซ็ตการเงิน', 'doctor', 'hash', 0,
+        1, 1, '${now}', '${now}', '${now}'
+      );
+      UPDATE visits SET status = 'AWAITING_CHARGE', revision = revision + 1 WHERE id = '${firstVisitId}';
+      INSERT INTO medication_decisions (
+        id, visit_id, version, kind, no_medication_reason, revision_reason, supersedes_id,
+        signed_by, signed_by_display_name, signed_at, content_hash
+      ) VALUES (
+        'reset-finance-decision-adjustment', '${firstVisitId}', 2, 'NO_MEDICATION', 'ไม่มีข้อบ่งใช้ยา', NULL, NULL,
+        'reset-finance-doctor', 'พญ. รีเซ็ตการเงิน', '${now}', '${hash}'
+      );
+      INSERT INTO finance_charges (
+        id, clinic_id, visit_id, source_kind, medication_decision_id, medication_decision_version,
+        fulfillment_dispense_id, clinic_pricing_revision, consultation_fee_baht_snapshot, currency,
+        line_count, finalized_by, finalized_by_display_name, finalized_at, content_hash
+      ) VALUES (
+        'reset-finance-charge-adjustment', 'clinic', '${firstVisitId}', 'NO_MEDICATION',
+        'reset-finance-decision-adjustment', 2, NULL, 1, 100, 'THB', 1,
+        'reset-finance-doctor', 'พญ. รีเซ็ตการเงิน', '${now}', '${hash}'
+      );
+      INSERT INTO finance_charge_lines (
+        id, charge_id, position, line_type, description_snapshot, quantity, unit_price_baht,
+        line_total_baht, medication_order_item_id, fulfillment_dispense_line_id
+      ) VALUES (
+        'reset-finance-line-adjustment', 'reset-finance-charge-adjustment', 0, 'CONSULTATION', 'ค่าตรวจ', 1, 100,
+        100, NULL, NULL
+      );
+      INSERT INTO finance_charge_adjustments (
+        id, charge_id, kind, amount_baht, reason, approved_by, approved_by_display_name, approved_at, content_hash
+      ) VALUES (
+        'reset-finance-adjustment', 'reset-finance-charge-adjustment', 'FULL_WAIVER', -100, 'ทดสอบรีเซ็ต',
+        'reset-finance-doctor', 'พญ. รีเซ็ตการเงิน', '${now}', '${hash}'
+      );
+      INSERT INTO patients (
+        id, clinic_id, hn, display_name, phone, birth_date, sex, revision, created_at, updated_at
+      ) VALUES (
+        'reset-finance-patient', 'clinic', 'DEMO-999999', 'ผู้ป่วยทดสอบ 999999', '0000009999',
+        '1990-01-01', 'unknown', 1, '${now}', '${now}'
+      );
+      INSERT INTO visits (
+        id, clinic_id, patient_id, status, chief_complaint, revision, arrived_at, started_at, created_by
+      ) VALUES (
+        'reset-finance-payment-visit', 'clinic', 'reset-finance-patient', 'AWAITING_CHARGE', 'ทดสอบรีเซ็ต', 1,
+        '${now}', '${now}', 'reset-finance-doctor'
+      );
+      INSERT INTO clinical_notes (
+        id, visit_id, version, subjective, objective, assessment, plan, source_draft_revision,
+        signed_by, signed_by_display_name, signed_at, content_hash
+      ) VALUES (
+        'reset-finance-note-payment', 'reset-finance-payment-visit', 1, 'subjective', 'objective', 'assessment',
+        'plan', 1, 'reset-finance-doctor', 'พญ. รีเซ็ตการเงิน', '${now}', '${hash}'
+      );
+      INSERT INTO medication_decisions (
+        id, visit_id, version, kind, no_medication_reason, revision_reason, supersedes_id,
+        signed_by, signed_by_display_name, signed_at, content_hash
+      ) VALUES (
+        'reset-finance-decision-payment', 'reset-finance-payment-visit', 1, 'NO_MEDICATION', 'ไม่มีข้อบ่งใช้ยา',
+        NULL, NULL, 'reset-finance-doctor', 'พญ. รีเซ็ตการเงิน', '${now}', '${hash}'
+      );
+      INSERT INTO finance_charges (
+        id, clinic_id, visit_id, source_kind, medication_decision_id, medication_decision_version,
+        fulfillment_dispense_id, clinic_pricing_revision, consultation_fee_baht_snapshot, currency,
+        line_count, finalized_by, finalized_by_display_name, finalized_at, content_hash
+      ) VALUES (
+        'reset-finance-charge-payment', 'clinic', 'reset-finance-payment-visit', 'NO_MEDICATION',
+        'reset-finance-decision-payment', 1, NULL, 1, 100, 'THB', 1,
+        'reset-finance-doctor', 'พญ. รีเซ็ตการเงิน', '${now}', '${hash}'
+      );
+      INSERT INTO finance_charge_lines (
+        id, charge_id, position, line_type, description_snapshot, quantity, unit_price_baht,
+        line_total_baht, medication_order_item_id, fulfillment_dispense_line_id
+      ) VALUES (
+        'reset-finance-line-payment', 'reset-finance-charge-payment', 0, 'CONSULTATION', 'ค่าตรวจ', 1, 100,
+        100, NULL, NULL
+      );
+      INSERT INTO finance_payments (
+        id, charge_id, visit_id, method, amount_baht, manual_reference, confirmed_by,
+        confirmed_by_display_name, confirmed_at, content_hash
+      ) VALUES (
+        'reset-finance-payment', 'reset-finance-charge-payment', 'reset-finance-payment-visit', 'CASH', 100,
+        NULL, 'reset-finance-doctor', 'พญ. รีเซ็ตการเงิน', '${now}', '${hash}'
+      );
+      INSERT INTO audit_events (
+        id, clinic_id, actor_id, actor_role, action, entity_type, entity_id, entity_revision, reason, occurred_at, metadata_json
+      ) VALUES (
+        'reset-finance-audit', 'clinic', 'reset-finance-doctor', 'doctor', 'charge.finalized', 'finance_charge',
+        'reset-finance-charge-payment', 2, NULL, '${now}', '{}'
+      );
+    `);
+  } finally {
+    database.close();
+  }
+}
+
 function seedFulfillmentAuditEvidence(databasePath: string): void {
   const database = new Database(databasePath);
   try {
@@ -178,6 +283,7 @@ describe("guarded synthetic reset", () => {
     const fixture = await populatedDatabase();
     seedClinicalEvidence(fixture.databasePath);
     seedInventoryEvidence(fixture.databasePath);
+    seedFinanceEvidence(fixture.databasePath);
     seedFulfillmentAuditEvidence(fixture.databasePath);
     const result = reset(fixture.databasePath);
 
@@ -204,6 +310,10 @@ describe("guarded synthetic reset", () => {
         "medication_order_items",
         "medication_order_price_snapshots",
         "fulfillment_dispense_price_snapshots",
+        "finance_payments",
+        "finance_charge_adjustments",
+        "finance_charge_lines",
+        "finance_charges",
         "medication_decisions",
         "inventory_stock_movements",
         "inventory_adjustments",
@@ -225,9 +335,9 @@ describe("guarded synthetic reset", () => {
       expect(database.prepare("SELECT consultation_fee_baht, pricing_revision FROM clinic_config WHERE id = 'clinic'").get())
         .toEqual({ consultation_fee_baht: 100, pricing_revision: 1 });
       expect(database.prepare("SELECT value FROM clinic_counters WHERE key = 'synthetic_patient'").pluck().get()).toBe(0);
-      expect(database.prepare("SELECT count(*) FROM staff_accounts").pluck().get()).toBe(1);
+      expect(database.prepare("SELECT count(*) FROM staff_accounts").pluck().get()).toBe(2);
       expect(database.prepare("SELECT count(*) FROM audit_events WHERE action LIKE 'account.%'").pluck().get()).toBe(fixture.accountAuditCount);
-      expect(database.prepare("SELECT count(*) FROM audit_events WHERE action LIKE 'patient.%' OR action LIKE 'visit.%' OR action LIKE 'allergy.%' OR action LIKE 'note.%' OR action LIKE 'medication.%' OR action LIKE 'inventory.%' OR action LIKE 'label.%' OR action LIKE 'preparation.%' OR action LIKE 'fulfillment.%' OR action LIKE 'dispense.%'").pluck().get()).toBe(0);
+      expect(database.prepare("SELECT count(*) FROM audit_events WHERE action LIKE 'patient.%' OR action LIKE 'visit.%' OR action LIKE 'allergy.%' OR action LIKE 'note.%' OR action LIKE 'medication.%' OR action LIKE 'inventory.%' OR action LIKE 'label.%' OR action LIKE 'preparation.%' OR action LIKE 'fulfillment.%' OR action LIKE 'dispense.%' OR action LIKE 'charge.%' OR action LIKE 'payment.%'").pluck().get()).toBe(0);
       expect(Number(fixture.accountAuditCount)).toBeGreaterThan(0);
       expect(() => database.prepare("DELETE FROM audit_events WHERE action LIKE 'account.%'").run()).toThrow("append-only");
       expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);

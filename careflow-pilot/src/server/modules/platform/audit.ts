@@ -57,6 +57,7 @@ const auditActionPolicyEntries = [
   ["inventory.lot-quarantined", "required"],
   ["inventory.lot-unquarantined", "required"],
   ["visit.handoff-confirmed", "optional"],
+  ["charge.finalized", "optional"],
 ] as const;
 
 type AuditActionPolicyEntry = (typeof auditActionPolicyEntries)[number];

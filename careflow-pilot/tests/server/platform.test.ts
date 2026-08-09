@@ -114,6 +114,7 @@ describe("role permissions", () => {
       "fulfillment:prepare",
       "label:print",
       "fulfillment:handoff",
+      "finance:read",
       ],
       doctor: [
         "patient:read",
@@ -139,6 +140,8 @@ describe("role permissions", () => {
       "inventory:quarantine",
       "inventory:release-quarantine",
       "inventory:adjust",
+      "finance:read",
+      "finance:finalize-charge",
       ],
     });
   });
