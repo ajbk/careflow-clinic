@@ -27,7 +27,7 @@ async function reviewAllergy(page: Page): Promise<void> {
   await expect(dialog).toHaveCount(0);
 }
 
-async function signOrder(page: Page, quantity: number): Promise<void> {
+async function signOrder(page: Page, quantity: number, directions = "รับประทานตามคำสั่งสังเคราะห์"): Promise<void> {
   await page.getByLabel("Subjective (ข้อมูลจากผู้ป่วย)").fill("อาการสังเคราะห์สำหรับเส้นทางจัดยาครบวงจร");
   await page.getByLabel("Objective (ผลตรวจ)").fill("ผลตรวจสังเคราะห์");
   await page.getByLabel("Assessment (การประเมิน)").fill("การประเมินสังเคราะห์");
@@ -37,7 +37,7 @@ async function signOrder(page: Page, quantity: number): Promise<void> {
   await page.getByLabel("ค้นหารายการยา").fill("DEMO-MED-001");
   await page.getByRole("button", { name: /เลือก \[DEMO\] ยาทดสอบชนิด A/ }).click();
   await page.getByLabel("จำนวน").fill(String(quantity));
-  await page.getByLabel("วิธีใช้ยา").fill("รับประทานตามคำสั่งสังเคราะห์");
+  await page.getByLabel("วิธีใช้ยา").fill(directions);
   await page.getByRole("button", { name: "บันทึกร่าง" }).click();
   await page.getByRole("button", { name: "ลงนามและส่งต่อ" }).click();
   const dialog = page.getByRole("dialog", { name: "ยืนยันการลงนาม" });
@@ -72,6 +72,14 @@ async function printCurrentLabel(page: Page, baseURL: string, visitId: string): 
   await page.addInitScript(() => { window.print = () => undefined; });
   await page.goto(`${baseURL}/dispensing/${visitId}/labels`);
   await expect(page.getByText("ขนาดสื่อ 80 × 100 มม.")).toBeVisible();
+  await page.emulateMedia({ media: "print" });
+  const printedBounds = await page.locator(".medicine-label").evaluate((element) => ({ width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height, clientHeight: element.clientHeight, scrollHeight: element.scrollHeight }));
+  expect(printedBounds.width).toBeGreaterThanOrEqual(301);
+  expect(printedBounds.width).toBeLessThanOrEqual(303);
+  expect(printedBounds.height).toBeGreaterThanOrEqual(377);
+  expect(printedBounds.height).toBeLessThanOrEqual(379);
+  expect(printedBounds.scrollHeight).toBeLessThanOrEqual(printedBounds.clientHeight);
+  await page.emulateMedia({ media: "screen" });
   await page.getByRole("button", { name: "บันทึกคำขอพิมพ์และเปิดหน้าต่างพิมพ์" }).click();
   await expect(page.getByText("บันทึกคำขอพิมพ์แล้ว", { exact: false })).toBeVisible();
 }
@@ -88,7 +96,7 @@ test("two browsers complete the signed ORDER through FEFO, release, restart, and
     await reviewAllergy(assistant);
     await loginAndAcknowledge(doctor, server.baseURL, "doctor");
     await queueDoctorIntoConsultation(doctor, patient.hn);
-    await signOrder(doctor, 8);
+    await signOrder(doctor, 8, "รับประทานหลังอาหารทันทีตามคำแนะนำของแพทย์ ".repeat(12).slice(0, 500));
 
     const early = await receiveLot(assistant, { key: "completion-early", lotNumber: "COMPLETE-EARLY", expiryDate: "2030-08-10", quantity: 5 });
     const late = await receiveLot(assistant, { key: "completion-late", lotNumber: "COMPLETE-LATE", expiryDate: "2030-08-20", quantity: 10 });
