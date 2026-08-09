@@ -277,13 +277,21 @@ export const checkoutDtoSchema = z.strictObject({
 });
 export type CheckoutDto = z.infer<typeof checkoutDtoSchema>;
 
+const waiverReasonSchema = z.string().trim().min(1).max(500);
+
 export const finalizeChargeBodySchema = rejectOwnPrototypeKeys(
   z.strictObject({
     expectedRevisions: z.strictObject({
       visit: z.number().int().min(1),
       clinicPricing: z.number().int().min(1),
     }),
-    payload: z.strictObject({ settlementIntent: z.literal("COLLECT") }),
+    payload: z.discriminatedUnion("settlementIntent", [
+      z.strictObject({ settlementIntent: z.literal("COLLECT") }),
+      z.strictObject({
+        settlementIntent: z.literal("FULL_WAIVER"),
+        waiverReason: waiverReasonSchema,
+      }),
+    ]),
   }),
 );
 export type FinalizeChargeBody = z.infer<typeof finalizeChargeBodySchema>;
@@ -297,7 +305,6 @@ export type FinalizeChargeResponse = z.infer<typeof finalizeChargeResponseSchema
 const collectionExpectedRevisionsSchema = z.strictObject({
   visit: z.number().int().safe().min(1),
 });
-const waiverReasonSchema = z.string().trim().min(1).max(500);
 const paymentAmountBahtSchema = z.number().int().safe().min(1).max(100_000_000);
 const manualPromptPayReferenceSchema = z.string().trim().min(1).max(100);
 

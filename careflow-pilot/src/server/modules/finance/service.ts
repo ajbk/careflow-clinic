@@ -83,6 +83,8 @@ export interface ChargeFinalizeReplayReference {
   visit: CheckoutDto["visit"];
   /** Optional for safe references written before the exact projection was pinned. */
   projection?: ChargeFinalizeReplayProjection;
+  /** Present only when finalization atomically created a full-waiver resolution. */
+  resolution?: Extract<FinanceResolution, { kind: "COLLECTION_NOT_REQUIRED" }>;
 }
 
 export interface ChargeFinalizeReplayProjection {
@@ -636,6 +638,18 @@ function replayCheckoutFromEvidence(
   tx: FinanceReadTransaction,
   reference: ChargeFinalizeReplayReference,
 ): CheckoutDto {
+  if (reference.resolution) {
+    if (!reference.projection) {
+      throw new Error("Idempotency waiver finalization reference requires a pinned projection");
+    }
+    return replayCollectionFromEvidence(tx, {
+      chargeId: reference.chargeId,
+      resolution: reference.resolution,
+      patient: reference.patient,
+      visit: reference.visit,
+      projection: reference.projection,
+    });
+  }
   const evidence = readChargeEvidence(tx, { chargeId: reference.chargeId }, "CHARGE_ONLY");
   if (!evidence || evidence.charge.visitId !== reference.visit.id) {
     throw new Error("Idempotency Charge reference does not match immutable evidence");
@@ -644,11 +658,7 @@ function replayCheckoutFromEvidence(
     adjustmentTotalBaht: 0,
     netDueBaht: evidence.grossTotalBaht,
     collectionState: "AWAITING_COLLECTION",
-    allowedActions: allowedActions(
-      { id: evidence.charge.finalizedBy, role: "doctor", displayName: evidence.charge.finalizedByDisplayName },
-      reference.visit,
-      evidence,
-    ),
+    allowedActions: [],
     closeBlockers: ["collection"],
   } satisfies ChargeFinalizeReplayProjection;
   // A replay uses reference-pinned visit/patient/projection fields and immutable
@@ -866,6 +876,9 @@ export function createFinanceService(input: FinanceServiceOptions): FinanceServi
 
     finalizeCharge(tx, actor, visitId, command) {
       requirePermission(actor, "finance:finalize-charge");
+      const waiverReason = command.payload.settlementIntent === "FULL_WAIVER"
+        ? normalizeRequiredText(command.payload.waiverReason, 500, "payload.waiverReason")
+        : undefined;
       const existing = tx
         .select({ id: financeCharges.id })
         .from(financeCharges)
@@ -927,8 +940,33 @@ export function createFinanceService(input: FinanceServiceOptions): FinanceServi
       }
       assertPersistedFinalization(tx, chargeId, contentHash, lines.length, quote.grossTotalBaht);
 
+      if (waiverReason !== undefined) {
+        const adjustment: AdjustmentHashPayload = {
+          id: idFactory(),
+          chargeId,
+          kind: "FULL_WAIVER",
+          amountBaht: -quote.grossTotalBaht,
+          reason: waiverReason,
+          approvedBy: actor.id,
+          approvedByDisplayName: actor.displayName,
+          approvedAt: clock().toISOString(),
+        };
+        tx.insert(financeChargeAdjustments)
+          .values({ ...adjustment, contentHash: adjustmentHash(adjustment) })
+          .run();
+        const evidence = readChargeEvidence(tx, { chargeId });
+        if (
+          !evidence?.adjustment ||
+          evidence.adjustment.id !== adjustment.id ||
+          evidence.adjustment.amountBaht !== -quote.grossTotalBaht
+        ) {
+          throw new Error("Charge full waiver did not persist complete immutable evidence");
+        }
+      }
+
+      const nextStatus = waiverReason === undefined ? "AWAITING_PAYMENT" : "READY_TO_CLOSE";
       const changed = tx.update(visits)
-        .set({ status: "AWAITING_PAYMENT", revision: visit.revision + 1 })
+        .set({ status: nextStatus, revision: visit.revision + 1 })
         .where(and(
           eq(visits.id, visit.id),
           eq(visits.status, "AWAITING_CHARGE"),

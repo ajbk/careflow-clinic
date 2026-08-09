@@ -86,6 +86,17 @@ function body(visitRevision = 7, clinicPricingRevision = 1) {
   };
 }
 
+function fullWaiverBody(
+  waiverReason = "ผู้ป่วยเข้าเกณฑ์ยกเว้นค่าบริการ",
+  visitRevision = 7,
+  clinicPricingRevision = 1,
+) {
+  return {
+    expectedRevisions: { visit: visitRevision, clinicPricing: clinicPricingRevision },
+    payload: { settlementIntent: "FULL_WAIVER" as const, waiverReason },
+  };
+}
+
 describe("finance checkout routes", () => {
   it("rejects anonymous charge finalization before any finance, audit, or idempotency write", async () => {
     const test = await fixture();
@@ -132,26 +143,162 @@ describe("finance checkout routes", () => {
     });
     expect(assistantFinalize.statusCode).toBe(403);
     expect(assistantFinalize.json().error.code).toBe("FORBIDDEN");
+
+    const assistantWaiverFinalize = await test.app.inject({
+      method: "POST",
+      url: "/api/checkout/finance-route-visit/charge-finalizations",
+      headers: { cookie: test.assistantCookie, "idempotency-key": "finance-assistant-waiver-denied" },
+      payload: fullWaiverBody(),
+    });
+    expect(assistantWaiverFinalize.statusCode).toBe(403);
+    expect(assistantWaiverFinalize.json().error.code).toBe("FORBIDDEN");
+    expect(countRows(test, "finance_charges")).toBe(0);
+    expect(countRows(test, "finance_charge_adjustments")).toBe(0);
+    expect(countRows(test, "audit_events")).toBe(0);
+    expect(countRows(test, "idempotency_records")).toBe(0);
   });
 
-  it("strictly parses a server-derived finalize command and exposes only the approved COLLECT variant", async () => {
+  it("strictly parses both server-derived finalization variants and trims the full-waiver reason", async () => {
     const values = contracts as Record<string, unknown>;
     const finalizeChargeBodySchema = values.finalizeChargeBodySchema as {
-      safeParse: (value: unknown) => { success: boolean };
+      safeParse: (value: unknown) => {
+        success: boolean;
+        data?: { payload: { settlementIntent: string; waiverReason?: string } };
+      };
     } | undefined;
     expect(finalizeChargeBodySchema).toBeDefined();
     if (!finalizeChargeBodySchema) return;
 
     expect(finalizeChargeBodySchema.safeParse(body()).success).toBe(true);
     expect(finalizeChargeBodySchema.safeParse({ ...body(), grossTotalBaht: 100 }).success).toBe(false);
+    const fullWaiver = finalizeChargeBodySchema.safeParse(fullWaiverBody("  ผู้ป่วยเข้าเกณฑ์ยกเว้น  "));
+    expect(fullWaiver.success).toBe(true);
+    expect(fullWaiver.data?.payload).toEqual({
+      settlementIntent: "FULL_WAIVER",
+      waiverReason: "ผู้ป่วยเข้าเกณฑ์ยกเว้น",
+    });
+    expect(finalizeChargeBodySchema.safeParse(fullWaiverBody("   ")).success).toBe(false);
     expect(finalizeChargeBodySchema.safeParse({
-      expectedRevisions: { visit: 7, clinicPricing: 1 },
-      payload: { settlementIntent: "FULL_WAIVER", waiverReason: "ยังไม่อยู่ใน Task 2" },
+      ...fullWaiverBody(),
+      payload: { ...fullWaiverBody().payload, amountBaht: 100 },
     }).success).toBe(false);
     expect(finalizeChargeBodySchema.safeParse({
       expectedRevisions: { visit: 7, clinicPricing: 1 },
       payload: { settlementIntent: "COLLECT", amountBaht: 100 },
     }).success).toBe(false);
+  });
+
+  it("atomically finalizes a Doctor full waiver with exact evidence and safe replay", async () => {
+    const test = await fixture({ idPrefix: "finance-finalize-waiver" });
+    const command = fullWaiverBody("  ผู้ป่วยเข้าเกณฑ์ยกเว้นค่าบริการ  ");
+    const first = await test.app.inject({
+      method: "POST",
+      url: "/api/checkout/finance-route-visit/charge-finalizations",
+      headers: { cookie: test.doctorCookie, "idempotency-key": "finance-finalize-waiver-replay" },
+      payload: command,
+    });
+
+    expect(first.statusCode).toBe(201);
+    if (first.statusCode !== 201) return;
+    expect(first.json()).toMatchObject({
+      replayed: false,
+      data: {
+        visit: { status: "READY_TO_CLOSE", revision: 8 },
+        grossTotalBaht: 100,
+        adjustmentTotalBaht: -100,
+        netDueBaht: 0,
+        collectionState: "COLLECTION_NOT_REQUIRED",
+        allowedActions: [],
+        closeBlockers: [],
+      },
+    });
+    const chargeId = first.json().data.charge.id as string;
+    const adjustment = test.database.sqlite.prepare(`
+      SELECT id, charge_id AS chargeId, kind, amount_baht AS amountBaht, reason,
+        approved_by AS approvedBy, approved_by_display_name AS approvedByDisplayName,
+        approved_at AS approvedAt, content_hash AS contentHash
+      FROM finance_charge_adjustments WHERE charge_id = ?
+    `).get(chargeId) as Record<string, unknown> | undefined;
+    expect(adjustment).toBeDefined();
+    if (!adjustment) return;
+    const adjustmentId = adjustment.id as string;
+    expect(adjustmentId).toMatch(/^finance-finalize-waiver-\d+$/);
+    expect(adjustment).toMatchObject({
+      chargeId,
+      kind: "FULL_WAIVER",
+      amountBaht: -100,
+      reason: "ผู้ป่วยเข้าเกณฑ์ยกเว้นค่าบริการ",
+      approvedBy: "finance-route-doctor",
+      approvedByDisplayName: "พญ. เส้นทางการเงิน",
+      approvedAt: "2026-08-03T00:00:00.000Z",
+    });
+    expect(adjustment?.contentHash).toMatch(/^[0-9a-f]{64}$/);
+
+    const audits = test.database.sqlite.prepare(`
+      SELECT action, entity_type AS entityType, entity_id AS entityId,
+        entity_revision AS entityRevision, reason, metadata_json AS metadataJson
+      FROM audit_events ORDER BY rowid
+    `).all() as Array<Record<string, unknown>>;
+    expect(audits).toHaveLength(2);
+    expect(audits[0]).toMatchObject({
+      action: "charge.finalized",
+      entityType: "finance_charge",
+      entityId: chargeId,
+      entityRevision: 8,
+      reason: null,
+    });
+    expect(JSON.parse(audits[0]?.metadataJson as string)).toMatchObject({
+      visitId: "finance-route-visit",
+      grossTotalBaht: 100,
+      previousStatus: "AWAITING_CHARGE",
+      nextStatus: "READY_TO_CLOSE",
+    });
+    expect(audits[1]).toMatchObject({
+      action: "charge.waiver-approved",
+      entityType: "finance_charge_adjustment",
+      entityId: adjustmentId,
+      entityRevision: 8,
+      reason: "ผู้ป่วยเข้าเกณฑ์ยกเว้นค่าบริการ",
+    });
+    expect(JSON.parse(audits[1]?.metadataJson as string)).toEqual({
+      adjustmentAmountBaht: -100,
+      chargeId,
+      grossTotalBaht: 100,
+    });
+
+    const replay = await test.app.inject({
+      method: "POST",
+      url: "/api/checkout/finance-route-visit/charge-finalizations",
+      headers: { cookie: test.doctorCookie, "idempotency-key": "finance-finalize-waiver-replay" },
+      payload: command,
+    });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json().replayed).toBe(true);
+    expect(JSON.stringify(replay.json().data)).toBe(JSON.stringify(first.json().data));
+
+    const collision = await test.app.inject({
+      method: "POST",
+      url: "/api/checkout/finance-route-visit/charge-finalizations",
+      headers: { cookie: test.doctorCookie, "idempotency-key": "finance-finalize-waiver-replay" },
+      payload: fullWaiverBody("เหตุผลอื่น"),
+    });
+    expect(collision.statusCode).toBe(409);
+    expect(collision.json().error.code).toBe("IDEMPOTENCY_CONFLICT");
+
+    const differentKey = await test.app.inject({
+      method: "POST",
+      url: "/api/checkout/finance-route-visit/charge-finalizations",
+      headers: { cookie: test.doctorCookie, "idempotency-key": "finance-finalize-waiver-second" },
+      payload: fullWaiverBody("ผู้ป่วยเข้าเกณฑ์ยกเว้นค่าบริการ", 8),
+    });
+    expect(differentKey.statusCode).toBe(409);
+    expect(differentKey.json().error.code).toBe("CHARGE_ALREADY_FINALIZED");
+    expect(countRows(test, "finance_charges")).toBe(1);
+    expect(countRows(test, "finance_charge_lines")).toBe(1);
+    expect(countRows(test, "finance_charge_adjustments")).toBe(1);
+    expect(countRows(test, "finance_payments")).toBe(0);
+    expect(countRows(test, "audit_events")).toBe(2);
+    expect(countRows(test, "idempotency_records")).toBe(1);
   });
 
   it("finalizes once, replays the immutable response at 200, and rejects collisions and domain duplicates", async () => {
@@ -207,7 +354,7 @@ describe("finance checkout routes", () => {
     expect(countRows(test, "idempotency_records")).toBe(1);
   });
 
-  it("replays the exact finalization projection after later evidence and from a pre-projection reference", async () => {
+  it("replays the exact pinned finalization projection after later evidence", async () => {
     const test = await fixture();
     const first = await test.app.inject({
       method: "POST",
@@ -247,27 +394,111 @@ describe("finance checkout routes", () => {
     expect(countRows(test, "finance_payments")).toBe(1);
     expect(countRows(test, "audit_events")).toBe(1);
     expect(countRows(test, "idempotency_records")).toBe(1);
+  });
 
-    test.database.sqlite.prepare(`
-      UPDATE idempotency_records SET response_json = ?
-      WHERE actor_id = 'finance-route-doctor' AND key = 'finance-finalize-stable-later'
-    `).run(JSON.stringify({
-      type: "safe-replay-reference",
-      reference: {
-        chargeId,
-        patient: originalData.patient,
-        visit: originalData.visit,
+  it("replays a literal projection-less 5dacfa4-era COLLECT response byte-for-byte", async () => {
+    const test = await fixture();
+    const historicalData = {
+      patient: {
+        id: "finance-route-patient",
+        hn: "DEMO-000011",
+        displayName: "ผู้ป่วยทดสอบ 000011",
+        birthDate: "1990-01-01",
+        sex: "unknown",
       },
-    }));
+      visit: {
+        id: "finance-route-visit",
+        status: "AWAITING_PAYMENT",
+        revision: 8,
+        arrivedAt: NOW,
+        startedAt: NOW,
+        closedAt: null,
+      },
+      sourceKind: "NO_MEDICATION",
+      charge: {
+        id: "legacy-task2-charge",
+        sourceKind: "NO_MEDICATION",
+        medicationDecisionId: "finance-route-decision",
+        medicationDecisionVersion: 1,
+        fulfillmentDispenseId: null,
+        clinicPricingRevision: 1,
+        consultationFeeBahtSnapshot: 100,
+        currency: "THB",
+        lineCount: 1,
+        finalizedBy: {
+          id: "finance-route-doctor",
+          displayName: "พญ. เส้นทางการเงิน",
+        },
+        finalizedAt: "2026-08-03T00:00:00.000Z",
+        contentHash: "9d23815dffbf6ec66a231a62bbb2f4e2f5306e466774c511e8c9b3b2792173ab",
+      },
+      lines: [{
+        id: "legacy-task2-line",
+        position: 0,
+        lineType: "CONSULTATION",
+        descriptionSnapshot: "ค่าตรวจ",
+        quantity: 1,
+        unitPriceBaht: 100,
+        lineTotalBaht: 100,
+        medicationOrderItemId: null,
+        fulfillmentDispenseLineId: null,
+      }],
+      grossTotalBaht: 100,
+      adjustmentTotalBaht: 0,
+      netDueBaht: 100,
+      collectionState: "AWAITING_COLLECTION",
+      allowedActions: [],
+      closeBlockers: ["collection"],
+    };
+    test.database.sqlite.exec(`
+      INSERT INTO finance_charges (
+        id, clinic_id, visit_id, source_kind, medication_decision_id,
+        medication_decision_version, fulfillment_dispense_id, clinic_pricing_revision,
+        consultation_fee_baht_snapshot, currency, line_count, finalized_by,
+        finalized_by_display_name, finalized_at, content_hash
+      ) VALUES (
+        'legacy-task2-charge', 'clinic', 'finance-route-visit', 'NO_MEDICATION',
+        'finance-route-decision', 1, NULL, 1, 100, 'THB', 1,
+        'finance-route-doctor', 'พญ. เส้นทางการเงิน', '2026-08-03T00:00:00.000Z',
+        '9d23815dffbf6ec66a231a62bbb2f4e2f5306e466774c511e8c9b3b2792173ab'
+      );
+      INSERT INTO finance_charge_lines (
+        id, charge_id, position, line_type, description_snapshot, quantity,
+        unit_price_baht, line_total_baht, medication_order_item_id, fulfillment_dispense_line_id
+      ) VALUES (
+        'legacy-task2-line', 'legacy-task2-charge', 0, 'CONSULTATION', 'ค่าตรวจ',
+        1, 100, 100, NULL, NULL
+      );
+      UPDATE visits SET status = 'AWAITING_PAYMENT', revision = 8
+      WHERE id = 'finance-route-visit';
+    `);
+    test.database.sqlite.prepare(`
+      INSERT INTO idempotency_records (
+        clinic_id, actor_id, key, request_hash, response_status, response_json, created_at
+      ) VALUES ('clinic', 'finance-route-doctor', ?, ?, 201, ?, ?)
+    `).run(
+      "finance-task2-projectionless",
+      "6c776d2151b3195bacb534ccc4fda6bd880450df0ec79a1c2eb22bee2a83b809",
+      JSON.stringify({
+        type: "safe-replay-reference",
+        reference: {
+          chargeId: "legacy-task2-charge",
+          patient: historicalData.patient,
+          visit: historicalData.visit,
+        },
+      }),
+      "2026-08-03T00:00:00.000Z",
+    );
+
     const legacyReferenceReplay = await test.app.inject({
       method: "POST",
       url: "/api/checkout/finance-route-visit/charge-finalizations",
-      headers: { cookie: test.doctorCookie, "idempotency-key": "finance-finalize-stable-later" },
+      headers: { cookie: test.doctorCookie, "idempotency-key": "finance-task2-projectionless" },
       payload: body(),
     });
     expect(legacyReferenceReplay.statusCode).toBe(200);
     expect(legacyReferenceReplay.json().replayed).toBe(true);
-    expect(JSON.stringify(legacyReferenceReplay.json().data)).toBe(JSON.stringify(originalData));
+    expect(JSON.stringify(legacyReferenceReplay.json().data)).toBe(JSON.stringify(historicalData));
   });
 
   it("returns stale Visit and clinic-pricing revisions without creating finance evidence", async () => {
@@ -347,6 +578,60 @@ describe("finance checkout routes", () => {
       if (response.statusCode !== 500) continue;
       expect(countRows(test, "finance_charges"), failure.name).toBe(0);
       expect(countRows(test, "finance_charge_lines"), failure.name).toBe(0);
+      expect(countRows(test, "audit_events"), failure.name).toBe(0);
+      expect(countRows(test, "idempotency_records"), failure.name).toBe(0);
+      expect(test.database.sqlite.prepare("SELECT status, revision FROM visits WHERE id = 'finance-route-visit'").get(), failure.name)
+        .toEqual({ status: "AWAITING_CHARGE", revision: 7 });
+    }
+  });
+
+  it("rolls back every full-waiver finalization row when a terminal write fails", async () => {
+    const failureCases = [
+      {
+        name: "adjustment",
+        trigger: "finance_fail_finalize_waiver_adjustment",
+        statement: "BEFORE INSERT ON finance_charge_adjustments",
+        when: "",
+      },
+      {
+        name: "visit",
+        trigger: "finance_fail_finalize_waiver_visit",
+        statement: "BEFORE UPDATE OF status ON visits",
+        when: "",
+      },
+      {
+        name: "waiver-audit",
+        trigger: "finance_fail_finalize_waiver_audit",
+        statement: "BEFORE INSERT ON audit_events",
+        when: "WHEN NEW.action = 'charge.waiver-approved'",
+      },
+      {
+        name: "idempotency",
+        trigger: "finance_fail_finalize_waiver_idempotency",
+        statement: "BEFORE INSERT ON idempotency_records",
+        when: "",
+      },
+    ];
+
+    for (const failure of failureCases) {
+      const test = await fixture({ idPrefix: `finance-finalize-waiver-${failure.name}` });
+      test.database.sqlite.exec(`
+        CREATE TRIGGER ${failure.trigger} ${failure.statement} ${failure.when}
+        BEGIN
+          SELECT RAISE(ABORT, '${failure.name} injection');
+        END;
+      `);
+      const response = await test.app.inject({
+        method: "POST",
+        url: "/api/checkout/finance-route-visit/charge-finalizations",
+        headers: { cookie: test.doctorCookie, "idempotency-key": `finance-waiver-${failure.name}-failure` },
+        payload: fullWaiverBody(),
+      });
+      expect(response.statusCode, failure.name).toBe(500);
+      expect(countRows(test, "finance_charges"), failure.name).toBe(0);
+      expect(countRows(test, "finance_charge_lines"), failure.name).toBe(0);
+      expect(countRows(test, "finance_charge_adjustments"), failure.name).toBe(0);
+      expect(countRows(test, "finance_payments"), failure.name).toBe(0);
       expect(countRows(test, "audit_events"), failure.name).toBe(0);
       expect(countRows(test, "idempotency_records"), failure.name).toBe(0);
       expect(test.database.sqlite.prepare("SELECT status, revision FROM visits WHERE id = 'finance-route-visit'").get(), failure.name)

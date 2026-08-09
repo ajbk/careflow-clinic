@@ -75,6 +75,7 @@ export function registerFinanceRoutes(input: {
     const command = finalizeChargeBodySchema.parse(request.body);
     const visitId = requestVisitId(request);
     const key = idempotencyKey(request);
+    let finalizationResolution: ChargeFinalizeReplayReference["resolution"];
     const result = executeIdempotent<CheckoutDto, ChargeFinalizeReplayReference>({
       db: input.database.db,
       actor,
@@ -85,6 +86,21 @@ export function registerFinanceRoutes(input: {
       work: (tx) => {
         const data = input.finance.finalizeCharge(tx, actor, visitId, command);
         if (!data.charge) throw new Error("Charge finalization did not return immutable Charge evidence");
+        let waiverAdjustment: typeof financeChargeAdjustments.$inferSelect | undefined;
+        if (command.payload.settlementIntent === "FULL_WAIVER") {
+          const resolution = input.finance.readResolution(tx, visitId);
+          if (resolution.kind !== "COLLECTION_NOT_REQUIRED") {
+            throw new Error("Full-waiver finalization did not return immutable Adjustment evidence");
+          }
+          waiverAdjustment = tx.select()
+            .from(financeChargeAdjustments)
+            .where(eq(financeChargeAdjustments.id, resolution.adjustmentId))
+            .get();
+          if (!waiverAdjustment || waiverAdjustment.chargeId !== data.charge.id) {
+            throw new Error("Full-waiver finalization did not persist Adjustment evidence");
+          }
+          finalizationResolution = resolution;
+        }
         appendAuditEvent({
           tx,
           actor,
@@ -104,9 +120,29 @@ export function registerFinanceRoutes(input: {
             lineIds: data.lines.map((line) => line.id),
             grossTotalBaht: data.grossTotalBaht,
             previousStatus: "AWAITING_CHARGE",
-            nextStatus: "AWAITING_PAYMENT",
+            nextStatus: command.payload.settlementIntent === "FULL_WAIVER"
+              ? "READY_TO_CLOSE"
+              : "AWAITING_PAYMENT",
           },
         });
+        if (waiverAdjustment) {
+          appendAuditEvent({
+            tx,
+            actor,
+            id: `audit:charge.waiver-approved:${waiverAdjustment.id}:${key}`,
+            action: "charge.waiver-approved",
+            entityType: "finance_charge_adjustment",
+            entityId: waiverAdjustment.id,
+            entityRevision: data.visit.revision,
+            reason: waiverAdjustment.reason,
+            occurredAt: waiverAdjustment.approvedAt,
+            metadata: {
+              chargeId: data.charge.id,
+              grossTotalBaht: data.grossTotalBaht,
+              adjustmentAmountBaht: waiverAdjustment.amountBaht,
+            },
+          });
+        }
         return { statusCode: 201, data };
       },
       safeReplay: {
@@ -123,6 +159,7 @@ export function registerFinanceRoutes(input: {
               allowedActions: [...data.allowedActions],
               closeBlockers: [...data.closeBlockers],
             },
+            ...(finalizationResolution ? { resolution: finalizationResolution } : {}),
           };
         },
         rebuild(tx, reference) {
