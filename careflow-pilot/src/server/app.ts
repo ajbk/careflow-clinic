@@ -26,7 +26,7 @@ import {
 import { createNoteService } from "./modules/note/index.js";
 import { createClinicalWorkflow } from "./workflows/clinical.js";
 import { registerClinicalRoutes } from "./workflows/clinical-routes.js";
-import { createVisitCompletionWorkflow } from "./workflows/visit-completion.js";
+import { createVisitCompletionWorkflow, type VisitCloseWriteStage } from "./workflows/visit-completion.js";
 import { registerVisitCompletionRoutes } from "./workflows/visit-completion-routes.js";
 import { isApiPath, registerClientAssets } from "./static.js";
 
@@ -44,6 +44,8 @@ export interface BuildAppOptions {
   clientAssetsRoot?: string;
   /** Test-only seam used to prove a close transaction rolls back as one unit. */
   beforeVisitCloseTransition?: () => void;
+  /** Test-only failure injection at each close transaction write boundary. */
+  visitCloseFailureInjector?: (stage: VisitCloseWriteStage) => void;
 }
 
 function zodFieldErrors(error: ZodError): Record<string, string> {
@@ -156,8 +158,14 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     clock: options.clock,
     idFactory: options.idFactory,
     beforeVisitCloseTransition: options.beforeVisitCloseTransition,
+    failureInjector: options.visitCloseFailureInjector,
   });
-  registerVisitCompletionRoutes({ app, database: options.db, completion: visitCompletion });
+  registerVisitCompletionRoutes({
+    app,
+    database: options.db,
+    completion: visitCompletion,
+    failureInjector: options.visitCloseFailureInjector,
+  });
 
   const requestStartedAt = new WeakMap<object, number>();
   app.addHook("onRequest", async (request) => {

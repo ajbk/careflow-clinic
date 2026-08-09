@@ -21,6 +21,11 @@ interface ReadyToCloseData {
   paymentId: string;
 }
 
+interface WaivedReadyToCloseData {
+  checkout: CheckoutData;
+  adjustmentId: string;
+}
+
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
@@ -30,7 +35,16 @@ function sequence(prefix: string): () => string {
   return () => `${prefix}-${++index}`;
 }
 
-async function fixture(overrides: { beforeVisitCloseTransition?: () => void } = {}): Promise<CompletionFixture> {
+type VisitCloseWriteStage =
+  | "AFTER_CLOSURE_INSERT"
+  | "AFTER_VISIT_TRANSITION"
+  | "AFTER_AUDIT_APPEND"
+  | "AFTER_IDEMPOTENCY_INSERT";
+
+async function fixture(overrides: {
+  beforeVisitCloseTransition?: () => void;
+  visitCloseFailureInjector?: (stage: VisitCloseWriteStage) => void;
+} = {}): Promise<CompletionFixture> {
   const test = await createTestApp({
     clock: () => new Date(NOW),
     idFactory: sequence("visit-completion-route"),
@@ -118,6 +132,43 @@ async function readyToClose(test: CompletionFixture): Promise<ReadyToCloseData> 
   ).pluck().get();
   if (typeof paymentId !== "string") throw new Error("Fixture payment was not collected");
   return { checkout: (collected.json() as { data: CheckoutData }).data, paymentId };
+}
+
+async function readyToCloseWithWaiver(test: CompletionFixture): Promise<WaivedReadyToCloseData> {
+  const finalized = await test.app.inject({
+    method: "POST",
+    url: "/api/checkout/visit-completion-visit/charge-finalizations",
+    headers: { cookie: test.doctorCookie, "idempotency-key": "visit-completion-waiver-finalize" },
+    payload: {
+      expectedRevisions: { visit: 7, clinicPricing: 1 },
+      payload: { settlementIntent: "FULL_WAIVER", waiverReason: "ผู้ป่วยได้รับยกเว้นเต็มจำนวน" },
+    },
+  });
+  expect(finalized.statusCode).toBe(201);
+  const checkout = (finalized.json() as { data: CheckoutData }).data;
+  const adjustmentId = test.database.sqlite.prepare(
+    "SELECT id FROM finance_charge_adjustments",
+  ).pluck().get();
+  if (!checkout.charge || typeof adjustmentId !== "string") {
+    throw new Error("Fixture full waiver was not finalized");
+  }
+  return { checkout, adjustmentId };
+}
+
+function expectCloseBlocker(
+  response: { statusCode: number; json(): { error: { code: string; fieldErrors?: Record<string, string> } } },
+  field: "charge" | "collection" | "visitState",
+): void {
+  expect(response.statusCode).toBe(409);
+  const error = response.json().error;
+  expect(error.code).toBe("VISIT_CLOSE_BLOCKED");
+  expect(error.fieldErrors).toEqual({
+    [field]: field === "charge"
+      ? "ต้องมีหลักฐาน Charge ที่สมบูรณ์"
+      : field === "collection"
+        ? "ต้องมีหลักฐานการชำระหรือยกเว้นที่ตรงกัน"
+        : "สถานะ Visit ยังไม่พร้อมปิด",
+  });
 }
 
 describe("Doctor Visit close route", () => {
@@ -239,6 +290,242 @@ describe("Doctor Visit close route", () => {
     });
   });
 
+  it("classifies a persisted Payment amount mismatch as collection evidence, not Charge evidence", async () => {
+    const test = await fixture();
+    const ready = await readyToClose(test);
+    if (!ready.checkout.charge) throw new Error("Fixture Charge was not finalized");
+    test.database.sqlite.exec("DROP TRIGGER finance_payments_block_update;");
+    test.database.sqlite.prepare(
+      "UPDATE finance_payments SET amount_baht = 99 WHERE id = ?",
+    ).run(ready.paymentId);
+
+    const response = await test.app.inject({
+      method: "POST",
+      url: "/api/visits/visit-completion-visit/close",
+      headers: { cookie: test.doctorCookie, "idempotency-key": "visit-completion-payment-mismatch" },
+      payload: {
+        expectedRevisions: { visit: 9 },
+        payload: {
+          chargeId: ready.checkout.charge.id,
+          resolution: { kind: "PAYMENT", paymentId: ready.paymentId },
+        },
+      },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({
+      error: {
+        code: "VISIT_CLOSE_BLOCKED",
+        fieldErrors: { collection: "ต้องมีหลักฐานการชำระหรือยกเว้นที่ตรงกัน" },
+      },
+    });
+    expect(response.json().error.fieldErrors).not.toHaveProperty("charge");
+    expect(test.database.sqlite.prepare("SELECT count(*) FROM visit_closures").pluck().get()).toBe(0);
+  });
+
+  it("returns the exact charge blocker for absent and incomplete Charge evidence", async () => {
+    const absent = await fixture();
+    absent.database.sqlite.prepare(
+      "UPDATE visits SET status = 'READY_TO_CLOSE', revision = 8 WHERE id = 'visit-completion-visit'",
+    ).run();
+    const absentResponse = await absent.app.inject({
+      method: "POST",
+      url: "/api/visits/visit-completion-visit/close",
+      headers: { cookie: absent.doctorCookie, "idempotency-key": "visit-completion-charge-absent" },
+      payload: {
+        expectedRevisions: { visit: 8 },
+        payload: {
+          chargeId: "missing-charge",
+          resolution: { kind: "PAYMENT", paymentId: "missing-payment" },
+        },
+      },
+    });
+    expectCloseBlocker(absentResponse, "charge");
+
+    const incomplete = await fixture();
+    const finalized = await incomplete.app.inject({
+      method: "POST",
+      url: "/api/checkout/visit-completion-visit/charge-finalizations",
+      headers: { cookie: incomplete.doctorCookie, "idempotency-key": "visit-completion-charge-incomplete-finalize" },
+      payload: {
+        expectedRevisions: { visit: 7, clinicPricing: 1 },
+        payload: { settlementIntent: "COLLECT" },
+      },
+    });
+    expect(finalized.statusCode).toBe(201);
+    const charge = (finalized.json() as { data: CheckoutData }).data.charge;
+    if (!charge) throw new Error("Fixture Charge was not finalized");
+    incomplete.database.sqlite.exec("DROP TRIGGER finance_charge_lines_block_delete;");
+    incomplete.database.sqlite.prepare("DELETE FROM finance_charge_lines WHERE charge_id = ?").run(charge.id);
+    incomplete.database.sqlite.prepare(
+      "UPDATE visits SET status = 'READY_TO_CLOSE', revision = 9 WHERE id = 'visit-completion-visit'",
+    ).run();
+    const incompleteResponse = await incomplete.app.inject({
+      method: "POST",
+      url: "/api/visits/visit-completion-visit/close",
+      headers: { cookie: incomplete.doctorCookie, "idempotency-key": "visit-completion-charge-incomplete" },
+      payload: {
+        expectedRevisions: { visit: 9 },
+        payload: {
+          chargeId: charge.id,
+          resolution: { kind: "PAYMENT", paymentId: "missing-payment" },
+        },
+      },
+    });
+    expectCloseBlocker(incompleteResponse, "charge");
+    expect(incomplete.database.sqlite.prepare("SELECT count(*) FROM visit_closures").pluck().get()).toBe(0);
+  });
+
+  it("returns the exact collection blocker for a non-full waiver or both persisted resolutions", async () => {
+    const nonFullWaiver = await fixture();
+    const waived = await readyToCloseWithWaiver(nonFullWaiver);
+    if (!waived.checkout.charge) throw new Error("Fixture Charge was not finalized");
+    nonFullWaiver.database.sqlite.exec("DROP TRIGGER finance_charge_adjustments_block_update;");
+    nonFullWaiver.database.sqlite.prepare(
+      "UPDATE finance_charge_adjustments SET amount_baht = -99 WHERE id = ?",
+    ).run(waived.adjustmentId);
+    const nonFullResponse = await nonFullWaiver.app.inject({
+      method: "POST",
+      url: "/api/visits/visit-completion-visit/close",
+      headers: { cookie: nonFullWaiver.doctorCookie, "idempotency-key": "visit-completion-non-full-waiver" },
+      payload: {
+        expectedRevisions: { visit: 8 },
+        payload: {
+          chargeId: waived.checkout.charge.id,
+          resolution: { kind: "COLLECTION_NOT_REQUIRED", waiverAdjustmentId: waived.adjustmentId },
+        },
+      },
+    });
+    expectCloseBlocker(nonFullResponse, "collection");
+
+    const both = await fixture();
+    const paid = await readyToClose(both);
+    if (!paid.checkout.charge) throw new Error("Fixture Charge was not finalized");
+    both.database.sqlite.exec("DROP TRIGGER finance_charge_adjustments_source_guard;");
+    both.database.sqlite.prepare(`
+      INSERT INTO finance_charge_adjustments (
+        id, charge_id, kind, amount_baht, reason, approved_by,
+        approved_by_display_name, approved_at, content_hash
+      ) VALUES (?, ?, 'FULL_WAIVER', -100, 'หลักฐานทุจริต', ?, ?, ?, ?)
+    `).run(
+      "visit-completion-illegal-adjustment",
+      paid.checkout.charge.id,
+      "visit-completion-doctor",
+      "พญ. ปิด Visit",
+      NOW,
+      HASH,
+    );
+    const bothResponse = await both.app.inject({
+      method: "POST",
+      url: "/api/visits/visit-completion-visit/close",
+      headers: { cookie: both.doctorCookie, "idempotency-key": "visit-completion-both-resolutions" },
+      payload: {
+        expectedRevisions: { visit: 9 },
+        payload: {
+          chargeId: paid.checkout.charge.id,
+          resolution: { kind: "PAYMENT", paymentId: paid.paymentId },
+        },
+      },
+    });
+    expectCloseBlocker(bothResponse, "collection");
+    expect(both.database.sqlite.prepare("SELECT count(*) FROM visit_closures").pluck().get()).toBe(0);
+  });
+
+  it("distinguishes pending workflow, stale revision, and different-key reopen attempts", async () => {
+    const pending = await fixture();
+    const pendingResponse = await pending.app.inject({
+      method: "POST",
+      url: "/api/visits/visit-completion-visit/close",
+      headers: { cookie: pending.doctorCookie, "idempotency-key": "visit-completion-pending-workflow" },
+      payload: {
+        expectedRevisions: { visit: 7 },
+        payload: {
+          chargeId: "missing-charge",
+          resolution: { kind: "PAYMENT", paymentId: "missing-payment" },
+        },
+      },
+    });
+    expectCloseBlocker(pendingResponse, "visitState");
+
+    const closed = await fixture();
+    const ready = await readyToClose(closed);
+    if (!ready.checkout.charge) throw new Error("Fixture Charge was not finalized");
+    const body = {
+      expectedRevisions: { visit: 9 },
+      payload: {
+        chargeId: ready.checkout.charge.id,
+        resolution: { kind: "PAYMENT" as const, paymentId: ready.paymentId },
+      },
+    };
+    const stale = await closed.app.inject({
+      method: "POST",
+      url: "/api/visits/visit-completion-visit/close",
+      headers: { cookie: closed.doctorCookie, "idempotency-key": "visit-completion-stale-before-close" },
+      payload: { ...body, expectedRevisions: { visit: 8 } },
+    });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json().error).toMatchObject({
+      code: "REVISION_CONFLICT",
+      currentRevisions: { visit: 9 },
+    });
+
+    const first = await closed.app.inject({
+      method: "POST",
+      url: "/api/visits/visit-completion-visit/close",
+      headers: { cookie: closed.doctorCookie, "idempotency-key": "visit-completion-first-before-reopen" },
+      payload: body,
+    });
+    expect(first.statusCode).toBe(201);
+    const differentKey = await closed.app.inject({
+      method: "POST",
+      url: "/api/visits/visit-completion-visit/close",
+      headers: { cookie: closed.doctorCookie, "idempotency-key": "visit-completion-different-key-reopen" },
+      payload: body,
+    });
+    expect(differentKey.statusCode).toBe(409);
+    expect(differentKey.json().error).toMatchObject({
+      code: "REVISION_CONFLICT",
+      currentRevisions: { visit: 10 },
+    });
+    const currentRevisionReopen = await closed.app.inject({
+      method: "POST",
+      url: "/api/visits/visit-completion-visit/close",
+      headers: { cookie: closed.doctorCookie, "idempotency-key": "visit-completion-current-revision-reopen" },
+      payload: { ...body, expectedRevisions: { visit: 10 } },
+    });
+    expectCloseBlocker(currentRevisionReopen, "visitState");
+    expect(closed.database.sqlite.prepare("SELECT count(*) FROM visit_closures").pluck().get()).toBe(1);
+  });
+
+  it("closes a full-waiver resolution without creating or pinning a Payment", async () => {
+    const test = await fixture();
+    const ready = await readyToCloseWithWaiver(test);
+    if (!ready.checkout.charge) throw new Error("Fixture Charge was not finalized");
+    const response = await test.app.inject({
+      method: "POST",
+      url: "/api/visits/visit-completion-visit/close",
+      headers: { cookie: test.doctorCookie, "idempotency-key": "visit-completion-waiver-close" },
+      payload: {
+        expectedRevisions: { visit: 8 },
+        payload: {
+          chargeId: ready.checkout.charge.id,
+          resolution: {
+            kind: "COLLECTION_NOT_REQUIRED",
+            waiverAdjustmentId: ready.adjustmentId,
+          },
+        },
+      },
+    });
+    expect(response.statusCode).toBe(201);
+    expect(response.json().data.resolution).toEqual({
+      kind: "COLLECTION_NOT_REQUIRED",
+      waiverAdjustmentId: ready.adjustmentId,
+    });
+    expect(test.database.sqlite.prepare(
+      "SELECT payment_id, waiver_adjustment_id FROM visit_closures",
+    ).get()).toEqual({ payment_id: null, waiver_adjustment_id: ready.adjustmentId });
+    expect(test.database.sqlite.prepare("SELECT count(*) FROM finance_payments").pluck().get()).toBe(0);
+  });
+
   it("rolls back the inserted Closure, Visit transition, audit, and idempotency record when close fails mid-transaction", async () => {
     const test = await fixture({ beforeVisitCloseTransition: () => { throw new Error("injected close transition failure"); } });
     const ready = await readyToClose(test);
@@ -259,6 +546,45 @@ describe("Doctor Visit close route", () => {
     });
     expect(test.database.sqlite.prepare("SELECT count(*) FROM audit_events WHERE action = 'visit.closed'").pluck().get()).toBe(0);
     expect(test.database.sqlite.prepare("SELECT count(*) FROM idempotency_records WHERE key = 'visit-completion-rollback'").pluck().get()).toBe(0);
+  });
+
+  it.each([
+    "AFTER_CLOSURE_INSERT",
+    "AFTER_VISIT_TRANSITION",
+    "AFTER_AUDIT_APPEND",
+    "AFTER_IDEMPOTENCY_INSERT",
+  ] as const)("rolls back every close write after injected %s failure", async (failedStage) => {
+    const test = await fixture({
+      visitCloseFailureInjector: (stage) => {
+        if (stage === failedStage) throw new Error(`injected ${stage} failure`);
+      },
+    });
+    const ready = await readyToClose(test);
+    if (!ready.checkout.charge) throw new Error("Fixture Charge was not finalized");
+    const key = `visit-completion-rollback-${failedStage.toLowerCase()}`;
+    const response = await test.app.inject({
+      method: "POST",
+      url: "/api/visits/visit-completion-visit/close",
+      headers: { cookie: test.doctorCookie, "idempotency-key": key },
+      payload: {
+        expectedRevisions: { visit: 9 },
+        payload: {
+          chargeId: ready.checkout.charge.id,
+          resolution: { kind: "PAYMENT", paymentId: ready.paymentId },
+        },
+      },
+    });
+    expect(response.statusCode).toBe(500);
+    expect(test.database.sqlite.prepare("SELECT count(*) FROM visit_closures").pluck().get()).toBe(0);
+    expect(test.database.sqlite.prepare(
+      "SELECT status, revision, closed_at FROM visits WHERE id = 'visit-completion-visit'",
+    ).get()).toEqual({ status: "READY_TO_CLOSE", revision: 9, closed_at: null });
+    expect(test.database.sqlite.prepare(
+      "SELECT count(*) FROM audit_events WHERE action = 'visit.closed'",
+    ).pluck().get()).toBe(0);
+    expect(test.database.sqlite.prepare(
+      "SELECT count(*) FROM idempotency_records WHERE key = ?",
+    ).pluck().get(key)).toBe(0);
   });
 
   it("denies an Assistant before a direct close request can read clinical evidence", async () => {

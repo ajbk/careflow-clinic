@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import * as contracts from "../../src/shared/contracts.js";
+import type { CheckoutDto } from "../../src/shared/contracts.js";
 import { cookieFrom, login, seedAccount } from "./helpers/auth.js";
 import { createTestApp } from "./helpers/database.js";
 
@@ -129,6 +130,18 @@ function promptPayBody(
   return {
     expectedRevisions: { visit: visitRevision },
     payload: { chargeId, amountBaht, manualReference },
+  };
+}
+
+function preTask5Checkout(data: CheckoutDto, contentHash: string): unknown {
+  const { resolution: _resolution, ...withoutResolution } = data;
+  void _resolution;
+  if (!data.charge) throw new Error("Historical command fixture requires a finalized Charge");
+  return {
+    ...withoutResolution,
+    charge: { ...data.charge, contentHash },
+    // Before Task 5 the Doctor had no close action in Checkout.
+    allowedActions: [],
   };
 }
 
@@ -360,6 +373,85 @@ describe("terminal finance collection", () => {
       amountBaht: 100,
       manualReference: "PP-REF-001",
     });
+  });
+
+  it.each([
+    {
+      name: "waiver",
+      key: "finance-historical-waiver",
+      actor: "doctor" as const,
+      url: "/api/checkout/finance-collection-visit/waivers",
+      payload: (chargeId: string) => waiverBody(chargeId),
+    },
+    {
+      name: "Cash",
+      key: "finance-historical-cash",
+      actor: "assistant" as const,
+      url: "/api/checkout/finance-collection-visit/payments/cash",
+      payload: (chargeId: string) => cashBody(chargeId),
+    },
+    {
+      name: "PromptPay",
+      key: "finance-historical-promptpay",
+      actor: "doctor" as const,
+      url: "/api/checkout/finance-collection-visit/payments/promptpay",
+      payload: (chargeId: string) => promptPayBody(chargeId),
+    },
+  ])("replays an actual pre-Task5 $name envelope byte-for-byte without changing current Checkout", async (variant) => {
+    const test = await fixture({ idPrefix: `finance-${variant.name.toLowerCase()}-legacy` });
+    const finalized = await finalize(test, `finance-${variant.name.toLowerCase()}-legacy-finalize`);
+    if (!finalized.charge) throw new Error("Unable to finalize historical collection fixture");
+    const cookie = variant.actor === "doctor" ? test.doctorCookie : test.assistantCookie;
+    const actorId = variant.actor === "doctor"
+      ? "finance-collection-doctor"
+      : "finance-collection-assistant";
+    const payload = variant.payload(finalized.charge.id);
+    const first = await test.app.inject({
+      method: "POST",
+      url: variant.url,
+      headers: { cookie, "idempotency-key": variant.key },
+      payload,
+    });
+    expect(first.statusCode).toBe(201);
+    const currentData = (first.json() as { data: CheckoutDto }).data;
+    expect(JSON.stringify(currentData)).not.toContain("contentHash");
+    const charge = test.database.sqlite.prepare(
+      "SELECT content_hash AS contentHash FROM finance_charges WHERE id = ?",
+    ).get(finalized.charge.id) as { contentHash: string } | undefined;
+    if (!charge) throw new Error("Historical collection fixture is missing Charge evidence");
+    const historicalData = preTask5Checkout(currentData, charge.contentHash);
+    test.database.sqlite.prepare(`
+      UPDATE idempotency_records SET response_json = ?
+      WHERE actor_id = ? AND key = ?
+    `).run(JSON.stringify({ data: historicalData, replayed: false }), actorId, variant.key);
+
+    const replay = await test.app.inject({
+      method: "POST",
+      url: variant.url,
+      headers: { cookie, "idempotency-key": variant.key },
+      payload,
+    });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json().replayed).toBe(true);
+    expect(JSON.stringify(replay.json().data)).toBe(JSON.stringify(historicalData));
+
+    const redacted = test.database.sqlite.prepare(`
+      SELECT response_json AS responseJson FROM idempotency_records
+      WHERE actor_id = ? AND key = ?
+    `).get(actorId, variant.key) as { responseJson: string } | undefined;
+    expect(redacted?.responseJson).not.toContain(charge.contentHash);
+    expect(JSON.parse(redacted?.responseJson ?? "{}")).toMatchObject({
+      type: "safe-replay-reference",
+      reference: { responseShape: "LEGACY_HASHED_V1" },
+    });
+
+    const current = await test.app.inject({
+      method: "GET",
+      url: "/api/checkout/finance-collection-visit",
+      headers: { cookie },
+    });
+    expect(current.statusCode).toBe(200);
+    expect(JSON.stringify(current.json().data)).not.toContain("contentHash");
   });
 
   it("rejects Assistant waiver attempts before any collection write", async () => {

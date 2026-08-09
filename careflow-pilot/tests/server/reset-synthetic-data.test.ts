@@ -341,6 +341,18 @@ describe("guarded synthetic reset", () => {
       expect(Number(fixture.accountAuditCount)).toBeGreaterThan(0);
       expect(() => database.prepare("DELETE FROM audit_events WHERE action LIKE 'account.%'").run()).toThrow("append-only");
       expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+      expect(database.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type = 'trigger' AND name IN (
+          'inventory_reservations_after_closure_block_insert',
+          'inventory_reservations_after_closure_block_delete',
+          'inventory_reservation_allocations_after_closure_block_insert'
+        ) ORDER BY name
+      `).all()).toEqual([
+        { name: "inventory_reservation_allocations_after_closure_block_insert" },
+        { name: "inventory_reservations_after_closure_block_delete" },
+        { name: "inventory_reservations_after_closure_block_insert" },
+      ]);
     } finally {
       database.close();
     }

@@ -409,6 +409,7 @@ server re-reads source chain ทุกตัว ห้ามเชื่อ IDs 
 - key + payload เดิมคืน evidence IDs และ response เดิม; first commit `201`, replay `200`
 - key เดิม + payload ต่างตอบ `IDEMPOTENCY_CONFLICT` โดยไม่มี write
 - replay reference ต้อง pin Charge/Adjustment/Payment/Closure IDs และอ่าน immutable evidence เดิม ไม่ประกอบ response จาก current master
+- Checkout GET และ response ของ command ที่สร้างใหม่ตั้งแต่ Task 5 เป็นต้นไปเป็น hash-free เสมอ ส่วน compatibility exception มีเพียง authenticated same-actor replay ของ idempotency record ก่อน Task 5 เท่านั้น ซึ่งต้องใช้ replay shape ที่ versioned เพื่อคืน legacy envelope เดิมแบบ byte-equivalent รวม `charge.contentHash`; ห้ามใช้ exception นี้กับ GET, actor อื่น หรือ response ใหม่
 - ใช้ audited transaction แบบ `BEGIN IMMEDIATE`, conditional Visit revision update และ unique constraints
 - Cash, PromptPay และ waiver ที่ชนกันสำเร็จได้เพียงหนึ่งคำสั่ง อีกคำสั่งตอบ state/revision conflict โดยไม่เกิด partial write
 

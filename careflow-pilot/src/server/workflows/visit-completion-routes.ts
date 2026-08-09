@@ -7,7 +7,7 @@ import {
 import { requireActor } from "../auth/hooks.js";
 import type { DatabaseHandle } from "../db/client.js";
 import { executeIdempotent } from "../modules/platform/index.js";
-import type { VisitCompletionWorkflow } from "./visit-completion.js";
+import type { VisitCloseWriteStage, VisitCompletionWorkflow } from "./visit-completion.js";
 
 function requestVisitId(request: { params: unknown }): string {
   return (request.params as { visitId?: string }).visitId ?? "";
@@ -23,6 +23,7 @@ export function registerVisitCompletionRoutes(input: {
   app: FastifyInstance;
   database: DatabaseHandle;
   completion: VisitCompletionWorkflow;
+  failureInjector?: (stage: VisitCloseWriteStage) => void;
 }): void {
   input.app.post("/api/visits/:visitId/close", async (request, reply) => {
     // Authorization must occur before parsing or reading potentially clinical evidence.
@@ -47,6 +48,7 @@ export function registerVisitCompletionRoutes(input: {
           closeVisitResponseSchema.safeParse({ data, replayed: false }).success
         ),
       },
+      afterStore: () => input.failureInjector?.("AFTER_IDEMPOTENCY_INSERT"),
     });
     return reply.code(result.body.replayed ? 200 : result.statusCode).send(result.body);
   });

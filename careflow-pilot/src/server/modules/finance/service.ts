@@ -3,6 +3,7 @@ import { and, asc, eq } from "drizzle-orm";
 import stableStringify from "fast-json-stable-stringify";
 import type {
   Actor,
+  CheckoutChargeDto,
   CheckoutDto,
   CheckoutLineDto,
   FinalizeChargeBody,
@@ -68,12 +69,23 @@ export interface FinanceService {
   getCloseEvidence(
     tx: AppDatabase | AppTransaction,
     visitId: string,
-  ): FinanceCloseEvidence | null;
+  ): FinanceCloseEvidenceValidation;
   /** Rebuilds a safe idempotency replay from immutable Charge evidence only. */
-  rebuildFinalization(tx: AppTransaction, reference: ChargeFinalizeReplayReference): CheckoutDto;
+  rebuildFinalization(tx: AppTransaction, reference: ChargeFinalizeReplayReference): CheckoutReplayDto;
   /** Rebuilds a terminal collection replay from pinned immutable evidence. */
-  rebuildCollection(tx: AppTransaction, reference: FinanceCollectionReplayReference): CheckoutDto;
+  rebuildCollection(tx: AppTransaction, reference: FinanceCollectionReplayReference): CheckoutReplayDto;
 }
+
+/**
+ * The pre-Task5 wire shape is accepted only while rebuilding an actor-scoped
+ * idempotency replay. It is deliberately not part of the public Checkout DTO.
+ */
+export type HistoricalCheckoutDto = Omit<CheckoutDto, "charge" | "resolution"> & {
+  charge: (CheckoutChargeDto & { contentHash: string }) | null;
+};
+
+export type CheckoutReplayDto = CheckoutDto | HistoricalCheckoutDto;
+export type CheckoutReplayShape = "LEGACY_HASHED_V1" | "HASH_FREE_V2";
 
 export interface FinanceServiceOptions {
   database: DatabaseHandle;
@@ -90,6 +102,8 @@ export interface ChargeFinalizeReplayReference {
   projection?: ChargeFinalizeReplayProjection;
   /** Omitted by pre-close references whose original Checkout response had no resolution field. */
   responseIncludesResolution?: boolean;
+  /** Explicit on new references; absent references are interpreted by their stored-era fields. */
+  responseShape?: CheckoutReplayShape;
   /** Present only when finalization atomically created a full-waiver resolution. */
   resolution?: Extract<FinanceResolution, { kind: "COLLECTION_NOT_REQUIRED" }>;
 }
@@ -134,6 +148,8 @@ export interface FinanceCollectionReplayReference {
   projection: ChargeFinalizeReplayProjection;
   /** Omitted by pre-close references whose original Checkout response had no resolution field. */
   responseIncludesResolution?: boolean;
+  /** Explicit on new references; absent references are interpreted by their stored-era fields. */
+  responseShape?: CheckoutReplayShape;
 }
 
 export interface FinanceCloseEvidence {
@@ -145,6 +161,12 @@ export interface FinanceCloseEvidence {
   adjustment: typeof financeChargeAdjustments.$inferSelect | undefined;
   payment: typeof financePayments.$inferSelect | undefined;
 }
+
+export type FinanceCloseEvidenceValidation =
+  | { kind: "CHARGE_ABSENT" }
+  | { kind: "CHARGE_INVALID" }
+  | { kind: "RESOLUTION_INVALID" }
+  | { kind: "VALID"; evidence: FinanceCloseEvidence };
 
 interface CheckoutContext {
   patient: CheckoutDto["patient"];
@@ -459,7 +481,7 @@ function hashPayment(payment: typeof financePayments.$inferSelect | PaymentHashP
   };
 }
 
-function readChargeEvidence(
+function loadChargeEvidence(
   tx: FinanceReadTransaction,
   input: { visitId?: string; chargeId?: string },
   resolutionMode: "CURRENT" | "CHARGE_ONLY" = "CURRENT",
@@ -497,6 +519,13 @@ function readChargeEvidence(
     : undefined;
 
   const grossTotalBaht = lines.reduce((total, line) => total + line.lineTotalBaht, 0);
+  const adjustmentTotalBaht = adjustment?.amountBaht ?? 0;
+  const netDueBaht = grossTotalBaht + adjustmentTotalBaht;
+  return { charge, lines, grossTotalBaht, adjustmentTotalBaht, netDueBaht, adjustment, payment };
+}
+
+function chargeEvidenceIsValid(evidence: PersistedChargeEvidence): boolean {
+  const { charge, lines, grossTotalBaht } = evidence;
   const consultationLines = lines.filter((line) => line.lineType === "CONSULTATION");
   const lineIntegrity = lines.length === charge.lineCount &&
     consultationLines.length === 1 &&
@@ -507,19 +536,25 @@ function readChargeEvidence(
       assertSafeBaht(line.lineTotalBaht, 0, 100_000_000) &&
       line.lineTotalBaht === line.quantity * line.unitPriceBaht
     ));
-  if (!lineIntegrity || !assertSafeBaht(grossTotalBaht, 1, 100_000_000)) {
-    throw incompleteChargeSource();
-  }
-  if (charge.contentHash !== chargeHash(hashHeader(charge), lines.map(hashLine))) {
-    throw incompleteChargeSource();
-  }
-  const adjustmentTotalBaht = adjustment?.amountBaht ?? 0;
-  const netDueBaht = grossTotalBaht + adjustmentTotalBaht;
+  return lineIntegrity &&
+    assertSafeBaht(grossTotalBaht, 1, 100_000_000) &&
+    charge.contentHash === chargeHash(hashHeader(charge), lines.map(hashLine));
+}
+
+function resolutionEvidenceIsValid(evidence: PersistedChargeEvidence): boolean {
+  const {
+    adjustment,
+    adjustmentTotalBaht,
+    charge,
+    grossTotalBaht,
+    netDueBaht,
+    payment,
+  } = evidence;
   if (
     !assertSafeBaht(adjustmentTotalBaht, -100_000_000, 0) ||
     !assertSafeBaht(netDueBaht, 0, 100_000_000)
   ) {
-    throw incompleteChargeSource();
+    return false;
   }
   if (
     adjustment && (
@@ -530,7 +565,7 @@ function readChargeEvidence(
       adjustment.contentHash !== adjustmentHash(hashAdjustment(adjustment))
     )
   ) {
-    throw incompleteChargeSource();
+    return false;
   }
   const promptPayReferenceIsValid = payment?.method === "PROMPTPAY" &&
     isTrimmedText(payment.manualReference, 100);
@@ -546,10 +581,25 @@ function readChargeEvidence(
       payment.contentHash !== paymentHash(hashPayment(payment))
     )
   ) {
+    return false;
+  }
+  return !(adjustment && payment);
+}
+
+function readChargeEvidence(
+  tx: FinanceReadTransaction,
+  input: { visitId?: string; chargeId?: string },
+  resolutionMode: "CURRENT" | "CHARGE_ONLY" = "CURRENT",
+): PersistedChargeEvidence | undefined {
+  const evidence = loadChargeEvidence(tx, input, resolutionMode);
+  if (!evidence) return undefined;
+  if (
+    !chargeEvidenceIsValid(evidence) ||
+    (resolutionMode === "CURRENT" && !resolutionEvidenceIsValid(evidence))
+  ) {
     throw incompleteChargeSource();
   }
-  if (adjustment && payment) throw incompleteChargeSource();
-  return { charge, lines, grossTotalBaht, adjustmentTotalBaht, netDueBaht, adjustment, payment };
+  return evidence;
 }
 
 function collectionState(
@@ -621,8 +671,9 @@ function checkoutFromEvidence(
   context: CheckoutContext,
   evidence: PersistedChargeEvidence,
   pinnedProjection?: ChargeFinalizeReplayProjection,
+  responseShape: CheckoutReplayShape = "HASH_FREE_V2",
   includeResolution = true,
-): CheckoutDto {
+): CheckoutReplayDto {
   const projection = pinnedProjection ?? {
     adjustmentTotalBaht: evidence.adjustmentTotalBaht,
     netDueBaht: evidence.netDueBaht,
@@ -663,13 +714,18 @@ function checkoutFromEvidence(
         displayName: evidence.charge.finalizedByDisplayName,
       },
       finalizedAt: evidence.charge.finalizedAt,
+      ...(responseShape === "LEGACY_HASHED_V1"
+        ? { contentHash: evidence.charge.contentHash }
+        : {}),
     },
     lines: evidence.lines.map(persistedLineToCheckoutLine),
     grossTotalBaht: evidence.grossTotalBaht,
     adjustmentTotalBaht: projection.adjustmentTotalBaht,
     netDueBaht: projection.netDueBaht,
     collectionState: projection.collectionState,
-    ...(includeResolution ? { resolution: resolutionFromEvidence(evidence) } : {}),
+    ...(responseShape === "HASH_FREE_V2" && includeResolution
+      ? { resolution: resolutionFromEvidence(evidence) }
+      : {}),
     allowedActions: projection.allowedActions,
     closeBlockers: projection.closeBlockers,
   };
@@ -678,7 +734,7 @@ function checkoutFromEvidence(
 function replayCheckoutFromEvidence(
   tx: FinanceReadTransaction,
   reference: ChargeFinalizeReplayReference,
-): CheckoutDto {
+): CheckoutReplayDto {
   if (reference.resolution) {
     if (!reference.projection) {
       throw new Error("Idempotency waiver finalization reference requires a pinned projection");
@@ -690,6 +746,7 @@ function replayCheckoutFromEvidence(
       visit: reference.visit,
       projection: reference.projection,
       responseIncludesResolution: reference.responseIncludesResolution,
+      responseShape: reference.responseShape,
     });
   }
   const evidence = readChargeEvidence(tx, { chargeId: reference.chargeId }, "CHARGE_ONLY");
@@ -711,6 +768,9 @@ function replayCheckoutFromEvidence(
     { clinicId: evidence.charge.clinicId, patient: reference.patient, visit: reference.visit },
     evidence,
     projection,
+    reference.responseShape ?? (
+      reference.responseIncludesResolution === undefined ? "LEGACY_HASHED_V1" : "HASH_FREE_V2"
+    ),
     reference.responseIncludesResolution === true,
   );
 }
@@ -772,7 +832,7 @@ function transitionToReadyToClose(
 function replayCollectionFromEvidence(
   tx: FinanceReadTransaction,
   reference: FinanceCollectionReplayReference,
-): CheckoutDto {
+): CheckoutReplayDto {
   const evidence = readChargeEvidence(tx, { chargeId: reference.chargeId });
   if (!evidence || evidence.charge.visitId !== reference.visit.id) {
     throw new Error("Idempotency collection reference does not match immutable Charge evidence");
@@ -805,6 +865,9 @@ function replayCollectionFromEvidence(
     { clinicId: evidence.charge.clinicId, patient: reference.patient, visit: reference.visit },
     evidence,
     reference.projection,
+    reference.responseShape ?? (
+      reference.responseIncludesResolution === undefined ? "LEGACY_HASHED_V1" : "HASH_FREE_V2"
+    ),
     reference.responseIncludesResolution === true,
   );
 }
@@ -1093,7 +1156,11 @@ export function createFinanceService(input: FinanceServiceOptions): FinanceServi
     },
 
     getCloseEvidence(tx, visitId) {
-      return readChargeEvidence(tx, { visitId }) ?? null;
+      const evidence = loadChargeEvidence(tx, { visitId });
+      if (!evidence) return { kind: "CHARGE_ABSENT" };
+      if (!chargeEvidenceIsValid(evidence)) return { kind: "CHARGE_INVALID" };
+      if (!resolutionEvidenceIsValid(evidence)) return { kind: "RESOLUTION_INVALID" };
+      return { kind: "VALID", evidence };
     },
 
     rebuildFinalization(tx, reference) {

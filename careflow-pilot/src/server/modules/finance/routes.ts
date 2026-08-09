@@ -1,7 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { eq } from "drizzle-orm";
+import { z } from "zod";
 import {
   approveFullWaiverBodySchema,
+  checkoutChargeSchema,
   checkoutDtoSchema,
   confirmPromptPayBodySchema,
   finalizeChargeBodySchema,
@@ -13,8 +15,11 @@ import type { DatabaseHandle } from "../../db/client.js";
 import { appendAuditEvent, executeIdempotent, type AuditedTransaction } from "../platform/index.js";
 import type {
   ChargeFinalizeReplayReference,
+  CheckoutReplayDto,
+  CheckoutReplayShape,
   FinanceCollectionReplayReference,
   FinanceService,
+  HistoricalCheckoutDto,
 } from "./service.js";
 import { financeChargeAdjustments, financePayments } from "./schema.js";
 
@@ -33,6 +38,7 @@ function collectionReplayReference(
   tx: AuditedTransaction,
   visitId: string,
   data: CheckoutDto,
+  responseShape: CheckoutReplayShape = "HASH_FREE_V2",
 ): FinanceCollectionReplayReference {
   if (!data.charge) throw new Error("Collection replay reference requires a Charge");
   const resolution = finance.readResolution(tx, visitId);
@@ -44,6 +50,7 @@ function collectionReplayReference(
     resolution,
     patient: data.patient,
     visit: data.visit,
+    responseShape,
     responseIncludesResolution: Object.prototype.hasOwnProperty.call(data, "resolution"),
     projection: {
       adjustmentTotalBaht: data.adjustmentTotalBaht,
@@ -55,9 +62,16 @@ function collectionReplayReference(
   };
 }
 
-function rejectCollectionLegacyResponse(data: unknown): data is CheckoutDto {
-  void data;
-  return false;
+const historicalCheckoutDtoSchema = checkoutDtoSchema
+  .omit({ resolution: true })
+  .extend({
+    charge: checkoutChargeSchema.extend({
+      contentHash: z.string().regex(/^[0-9a-f]{64}$/),
+    }).nullable(),
+  });
+
+function isHistoricalCheckoutResponse(data: unknown): data is HistoricalCheckoutDto {
+  return historicalCheckoutDtoSchema.safeParse(data).success;
 }
 
 export function registerFinanceRoutes(input: {
@@ -77,7 +91,7 @@ export function registerFinanceRoutes(input: {
     const visitId = requestVisitId(request);
     const key = idempotencyKey(request);
     let finalizationResolution: ChargeFinalizeReplayReference["resolution"];
-    const result = executeIdempotent<CheckoutDto, ChargeFinalizeReplayReference>({
+    const result = executeIdempotent<CheckoutReplayDto, ChargeFinalizeReplayReference>({
       db: input.database.db,
       actor,
       key,
@@ -147,12 +161,21 @@ export function registerFinanceRoutes(input: {
         return { statusCode: 201, data };
       },
       safeReplay: {
-        store(data) {
+        store(data, tx) {
           if (!data.charge) throw new Error("Charge replay reference requires a Charge");
+          const responseShape = isHistoricalCheckoutResponse(data)
+            ? "LEGACY_HASHED_V1"
+            : "HASH_FREE_V2";
+          const persistedResolution = finalizationResolution ?? (
+            responseShape === "LEGACY_HASHED_V1" && data.collectionState === "COLLECTION_NOT_REQUIRED"
+              ? input.finance.readResolution(tx, visitId)
+              : undefined
+          );
           return {
             chargeId: data.charge.id,
             patient: data.patient,
             visit: data.visit,
+            responseShape,
             responseIncludesResolution: Object.prototype.hasOwnProperty.call(data, "resolution"),
             projection: {
               adjustmentTotalBaht: data.adjustmentTotalBaht,
@@ -161,15 +184,15 @@ export function registerFinanceRoutes(input: {
               allowedActions: [...data.allowedActions],
               closeBlockers: [...data.closeBlockers],
             },
-            ...(finalizationResolution ? { resolution: finalizationResolution } : {}),
+            ...(persistedResolution?.kind === "COLLECTION_NOT_REQUIRED"
+              ? { resolution: persistedResolution }
+              : {}),
           };
         },
         rebuild(tx, reference) {
           return input.finance.rebuildFinalization(tx, reference);
         },
-        isLegacyResponse(data): data is CheckoutDto {
-          return checkoutDtoSchema.safeParse(data).success;
-        },
+        isLegacyResponse: isHistoricalCheckoutResponse,
       },
     });
     return reply.code(result.body.replayed ? 200 : result.statusCode).send(result.body);
@@ -181,7 +204,7 @@ export function registerFinanceRoutes(input: {
     const visitId = requestVisitId(request);
     const key = idempotencyKey(request);
     let reference: FinanceCollectionReplayReference | undefined;
-    const result = executeIdempotent<CheckoutDto, FinanceCollectionReplayReference>({
+    const result = executeIdempotent<CheckoutReplayDto, FinanceCollectionReplayReference>({
       db: input.database.db,
       actor,
       key,
@@ -222,14 +245,15 @@ export function registerFinanceRoutes(input: {
         return { statusCode: 201, data };
       },
       safeReplay: {
-        store() {
-          if (!reference) throw new Error("Waiver replay reference was not created");
-          return reference;
+        store(data, tx) {
+          if (reference) return { ...reference, responseShape: "HASH_FREE_V2" };
+          if (!isHistoricalCheckoutResponse(data)) throw new Error("Waiver replay reference was not created");
+          return collectionReplayReference(input.finance, tx, visitId, data, "LEGACY_HASHED_V1");
         },
         rebuild(tx, storedReference) {
           return input.finance.rebuildCollection(tx, storedReference);
         },
-        isLegacyResponse: rejectCollectionLegacyResponse,
+        isLegacyResponse: isHistoricalCheckoutResponse,
       },
     });
     return reply.code(result.body.replayed ? 200 : result.statusCode).send(result.body);
@@ -241,7 +265,7 @@ export function registerFinanceRoutes(input: {
     const visitId = requestVisitId(request);
     const key = idempotencyKey(request);
     let reference: FinanceCollectionReplayReference | undefined;
-    const result = executeIdempotent<CheckoutDto, FinanceCollectionReplayReference>({
+    const result = executeIdempotent<CheckoutReplayDto, FinanceCollectionReplayReference>({
       db: input.database.db,
       actor,
       key,
@@ -284,14 +308,15 @@ export function registerFinanceRoutes(input: {
         return { statusCode: 201, data };
       },
       safeReplay: {
-        store() {
-          if (!reference) throw new Error("Cash replay reference was not created");
-          return reference;
+        store(data, tx) {
+          if (reference) return { ...reference, responseShape: "HASH_FREE_V2" };
+          if (!isHistoricalCheckoutResponse(data)) throw new Error("Cash replay reference was not created");
+          return collectionReplayReference(input.finance, tx, visitId, data, "LEGACY_HASHED_V1");
         },
         rebuild(tx, storedReference) {
           return input.finance.rebuildCollection(tx, storedReference);
         },
-        isLegacyResponse: rejectCollectionLegacyResponse,
+        isLegacyResponse: isHistoricalCheckoutResponse,
       },
     });
     return reply.code(result.body.replayed ? 200 : result.statusCode).send(result.body);
@@ -303,7 +328,7 @@ export function registerFinanceRoutes(input: {
     const visitId = requestVisitId(request);
     const key = idempotencyKey(request);
     let reference: FinanceCollectionReplayReference | undefined;
-    const result = executeIdempotent<CheckoutDto, FinanceCollectionReplayReference>({
+    const result = executeIdempotent<CheckoutReplayDto, FinanceCollectionReplayReference>({
       db: input.database.db,
       actor,
       key,
@@ -348,14 +373,15 @@ export function registerFinanceRoutes(input: {
         return { statusCode: 201, data };
       },
       safeReplay: {
-        store() {
-          if (!reference) throw new Error("PromptPay replay reference was not created");
-          return reference;
+        store(data, tx) {
+          if (reference) return { ...reference, responseShape: "HASH_FREE_V2" };
+          if (!isHistoricalCheckoutResponse(data)) throw new Error("PromptPay replay reference was not created");
+          return collectionReplayReference(input.finance, tx, visitId, data, "LEGACY_HASHED_V1");
         },
         rebuild(tx, storedReference) {
           return input.finance.rebuildCollection(tx, storedReference);
         },
-        isLegacyResponse: rejectCollectionLegacyResponse,
+        isLegacyResponse: isHistoricalCheckoutResponse,
       },
     });
     return reply.code(result.body.replayed ? 200 : result.statusCode).send(result.body);

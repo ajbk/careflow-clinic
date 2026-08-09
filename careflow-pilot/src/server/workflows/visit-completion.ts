@@ -55,6 +55,12 @@ type ClosureReplayReference = {
 
 type CloseBlocker = "charge" | "collection" | "visitState";
 
+export type VisitCloseWriteStage =
+  | "AFTER_CLOSURE_INSERT"
+  | "AFTER_VISIT_TRANSITION"
+  | "AFTER_AUDIT_APPEND"
+  | "AFTER_IDEMPOTENCY_INSERT";
+
 function notFound(): never {
   throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit ที่ร้องขอ" });
 }
@@ -228,6 +234,8 @@ export interface VisitCompletionWorkflowOptions {
   idFactory?: () => string;
   /** Focused test seam: proves inserted Closure rolls back when transition work fails. */
   beforeVisitCloseTransition?: () => void;
+  /** Focused test seam for each write in the caller-owned close transaction. */
+  failureInjector?: (stage: VisitCloseWriteStage) => void;
 }
 
 export function createVisitCompletionWorkflow(
@@ -255,16 +263,13 @@ export function createVisitCompletionWorkflow(
       }
       if (context.visit.status !== "READY_TO_CLOSE") closeBlocked("visitState");
 
-      let finance;
-      try {
-        finance = input.finance.getCloseEvidence(tx, visitId);
-      } catch (error) {
-        if (error instanceof ApiError && error.code === "CHARGE_SOURCE_INCOMPLETE") {
-          closeBlocked("charge");
-        }
-        throw error;
+      const financeValidation = input.finance.getCloseEvidence(tx, visitId);
+      if (financeValidation.kind === "CHARGE_ABSENT" || financeValidation.kind === "CHARGE_INVALID") {
+        closeBlocked("charge");
       }
-      if (!finance || finance.charge.id !== command.payload.chargeId) closeBlocked("charge");
+      if (financeValidation.kind === "RESOLUTION_INVALID") closeBlocked("collection");
+      const finance = financeValidation.evidence;
+      if (finance.charge.id !== command.payload.chargeId) closeBlocked("charge");
 
       let paymentId: string | null = null;
       let waiverAdjustmentId: string | null = null;
@@ -356,6 +361,7 @@ export function createVisitCompletionWorkflow(
       } as const;
       const closure = { ...closureBase, contentHash: closureHash(closureBase) };
       tx.insert(visitClosures).values(closure).run();
+      input.failureInjector?.("AFTER_CLOSURE_INSERT");
       input.beforeVisitCloseTransition?.();
       const changed = tx.update(visits)
         .set({
@@ -380,6 +386,7 @@ export function createVisitCompletionWorkflow(
         }
         closeBlocked("visitState");
       }
+      input.failureInjector?.("AFTER_VISIT_TRANSITION");
       appendAuditEvent({
         tx,
         actor,
@@ -398,6 +405,7 @@ export function createVisitCompletionWorkflow(
           nextStatus: "CLOSED",
         },
       });
+      input.failureInjector?.("AFTER_AUDIT_APPEND");
       const closedVisit = tx.select().from(visits).where(eq(visits.id, context.visit.id)).get();
       if (!closedVisit) throw new Error("Closed Visit was not persisted");
       return toClosureDto(closure, closedVisit);
@@ -429,13 +437,10 @@ export function createVisitCompletionWorkflow(
       ) {
         opdNotReady();
       }
-      let finance;
-      try {
-        finance = input.finance.getCloseEvidence(input.database.db, visitId);
-      } catch {
-        opdNotReady();
-      }
-      if (!finance || finance.charge.id !== context.closure.chargeId) opdNotReady();
+      const financeValidation = input.finance.getCloseEvidence(input.database.db, visitId);
+      if (financeValidation.kind !== "VALID") opdNotReady();
+      const finance = financeValidation.evidence;
+      if (finance.charge.id !== context.closure.chargeId) opdNotReady();
       const closureResolution = context.closure.paymentId !== null
         ? finance.payment && !finance.adjustment && finance.payment.id === context.closure.paymentId
         : context.closure.waiverAdjustmentId !== null && finance.adjustment && !finance.payment && finance.adjustment.id === context.closure.waiverAdjustmentId;

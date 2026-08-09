@@ -434,6 +434,7 @@ describe("finance checkout routes", () => {
           displayName: "พญ. เส้นทางการเงิน",
         },
         finalizedAt: "2026-08-03T00:00:00.000Z",
+        contentHash: "9d23815dffbf6ec66a231a62bbb2f4e2f5306e466774c511e8c9b3b2792173ab",
       },
       lines: [{
         id: "legacy-task2-line",

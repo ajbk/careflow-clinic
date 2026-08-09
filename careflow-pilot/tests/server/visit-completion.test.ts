@@ -14,6 +14,7 @@ type CompletionFixture = Awaited<ReturnType<typeof createTestApp>> & {
 interface CheckoutData {
   charge: { id: string } | null;
   visit: { id: string; revision: number; status: string; closedAt: string | null };
+  netDueBaht: number;
 }
 
 function sequence(prefix: string): () => string {
@@ -25,7 +26,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function fixture(): Promise<CompletionFixture> {
+async function fixture(sourceKind: "NO_MEDICATION" | "ORDER" = "NO_MEDICATION"): Promise<CompletionFixture> {
   const test = await createTestApp({
     clock: () => new Date(NOW),
     idFactory: sequence("visit-completion"),
@@ -79,11 +80,13 @@ async function fixture(): Promise<CompletionFixture> {
       id, visit_id, version, kind, no_medication_reason, revision_reason, supersedes_id,
       signed_by, signed_by_display_name, signed_at, content_hash
     ) VALUES (
-      'completion-decision', 'completion-visit', 1, 'NO_MEDICATION',
-      'ไม่มีข้อบ่งใช้ยา', NULL, NULL, 'completion-doctor', 'พญ. หลักฐาน OPD',
+      'completion-decision', 'completion-visit', 1, '${sourceKind}',
+      ${sourceKind === "NO_MEDICATION" ? "'ไม่มีข้อบ่งใช้ยา'" : "NULL"}, NULL, NULL,
+      'completion-doctor', 'พญ. หลักฐาน OPD',
       '${NOW}', '${HASH}'
     );
   `);
+  if (sourceKind === "ORDER") seedOrderMultiLotEvidence(test);
   return {
     ...test,
     doctorCookie: cookieFrom(await login(test.app, doctor.username, doctor.password)),
@@ -105,7 +108,13 @@ async function close(test: CompletionFixture): Promise<{ closureId: string; cont
     method: "POST",
     url: "/api/checkout/completion-visit/payments/cash",
     headers: { cookie: test.assistantCookie, "idempotency-key": "completion-cash" },
-    payload: { expectedRevisions: { visit: 8 }, payload: { chargeId: charge.id, amountBaht: 100 } },
+    payload: {
+      expectedRevisions: { visit: 8 },
+      payload: {
+        chargeId: charge.id,
+        amountBaht: (finalized.json() as { data: CheckoutData }).data.netDueBaht,
+      },
+    },
   });
   expect(cash.statusCode).toBe(201);
   const paymentId = test.database.sqlite.prepare(
@@ -124,6 +133,167 @@ async function close(test: CompletionFixture): Promise<{ closureId: string; cont
   expect(firstClose.statusCode).toBe(201);
   const data = (firstClose.json() as { data: { id: string; contentHash: string } }).data;
   return { closureId: data.id, contentHash: data.contentHash };
+}
+
+function seedOrderMultiLotEvidence(test: Awaited<ReturnType<typeof createTestApp>>): void {
+  test.database.sqlite.exec(`
+    INSERT INTO medication_order_items (
+      id, medication_decision_id, position, medication_id, medication_revision,
+      display_name_snapshot, strength_snapshot, dosage_form_snapshot, unit_snapshot,
+      quantity, directions_th
+    ) VALUES (
+      'completion-order-multi-lot', 'completion-decision', 0, 'DEMO-MED-001', 1,
+      '[DEMO] ยาทดสอบชนิด A', '500 หน่วยทดสอบ', 'เม็ดทดสอบ', 'เม็ด', 5,
+      'รับประทานหลังอาหาร'
+    );
+    INSERT INTO medication_order_price_snapshots (
+      id, medication_order_item_id, medication_id, medication_revision,
+      unit_price_baht_snapshot, currency, captured_at
+    ) VALUES (
+      'completion-order-price', 'completion-order-multi-lot', 'DEMO-MED-001', 1, 5, 'THB', '${NOW}'
+    );
+    INSERT INTO inventory_lots (
+      id, clinic_id, medication_id, medication_revision, display_name_snapshot,
+      strength_snapshot, dosage_form_snapshot, unit_snapshot, lot_number, expiry_date,
+      supplier_name, status, created_at, created_by
+    ) VALUES
+      ('completion-order-lot-a', 'clinic', 'DEMO-MED-001', 1, '[DEMO] ยาทดสอบชนิด A',
+       '500 หน่วยทดสอบ', 'เม็ดทดสอบ', 'เม็ด', 'OPD-LOT-A', '2027-08-10',
+       'ผู้ขายทดสอบ', 'AVAILABLE', '${NOW}', 'completion-doctor'),
+      ('completion-order-lot-b', 'clinic', 'DEMO-MED-001', 1, '[DEMO] ยาทดสอบชนิด A',
+       '500 หน่วยทดสอบ', 'เม็ดทดสอบ', 'เม็ด', 'OPD-LOT-B', '2027-09-10',
+       'ผู้ขายทดสอบ', 'AVAILABLE', '${NOW}', 'completion-doctor');
+    INSERT INTO inventory_reservations (
+      id, clinic_id, visit_id, medication_decision_id, medication_decision_version,
+      status, created_at, created_by
+    ) VALUES (
+      'completion-order-reservation', 'clinic', 'completion-visit', 'completion-decision', 1,
+      'ACTIVE', '${NOW}', 'completion-doctor'
+    );
+    INSERT INTO inventory_reservation_allocations (
+      id, reservation_id, medication_order_item_id, lot_id, position, quantity,
+      medication_id, lot_number_snapshot, expiry_date_snapshot, unit_snapshot, allocated_at
+    ) VALUES
+      ('completion-order-allocation-a', 'completion-order-reservation',
+       'completion-order-multi-lot', 'completion-order-lot-a', 0, 2, 'DEMO-MED-001',
+       'OPD-LOT-A', '2027-08-10', 'เม็ด', '${NOW}'),
+      ('completion-order-allocation-b', 'completion-order-reservation',
+       'completion-order-multi-lot', 'completion-order-lot-b', 1, 3, 'DEMO-MED-001',
+       'OPD-LOT-B', '2027-09-10', 'เม็ด', '${NOW}');
+    INSERT INTO fulfillment_label_versions (
+      id, clinic_id, visit_id, medication_decision_id, medication_decision_version,
+      version, created_at, created_by, patient_hn_snapshot,
+      patient_display_name_snapshot, clinic_name_snapshot
+    ) VALUES (
+      'completion-order-label', 'clinic', 'completion-visit', 'completion-decision', 1,
+      1, '${NOW}', 'completion-doctor', 'DEMO-000019', 'ผู้ป่วยทดสอบ 000019',
+      'คลินิกชนบท CareFlow Pilot'
+    );
+    INSERT INTO fulfillment_label_items (
+      id, label_version_id, medication_order_item_id, position, medication_id,
+      medication_revision, display_name_snapshot, strength_snapshot, dosage_form_snapshot,
+      quantity, unit_snapshot, directions_th_snapshot, internal_barcode_snapshot
+    ) VALUES (
+      'completion-order-label-item', 'completion-order-label', 'completion-order-multi-lot',
+      0, 'DEMO-MED-001', 1, '[DEMO] ยาทดสอบชนิด A', '500 หน่วยทดสอบ',
+      'เม็ดทดสอบ', 5, 'เม็ด', 'รับประทานหลังอาหาร', 'CF-DEMO-001'
+    );
+    INSERT INTO fulfillment_label_print_events (
+      id, label_version_id, sequence, requested_at, requested_by,
+      renderer_version, media_size_snapshot
+    ) VALUES (
+      'completion-order-print', 'completion-order-label', 1, '${NOW}',
+      'completion-doctor', 'test', '80x100mm'
+    );
+    INSERT INTO fulfillment_preparations (
+      id, clinic_id, visit_id, reservation_id, medication_decision_id,
+      medication_decision_version, label_version_id, revision, status,
+      minimum_print_sequence, created_at, created_by
+    ) VALUES (
+      'completion-order-preparation', 'clinic', 'completion-visit',
+      'completion-order-reservation', 'completion-decision', 1, 'completion-order-label',
+      1, 'ACTIVE', 1, '${NOW}', 'completion-doctor'
+    );
+    UPDATE fulfillment_preparations SET
+      status = 'COMPLETED', revision = 2, completed_at = '${NOW}', completed_by = 'completion-doctor'
+    WHERE id = 'completion-order-preparation';
+    INSERT INTO fulfillment_releases (
+      id, clinic_id, visit_id, medication_decision_id, medication_decision_version,
+      label_version_id, label_print_event_id, preparation_id, preparation_revision,
+      reservation_id, released_at, released_by
+    ) VALUES (
+      'completion-order-release', 'clinic', 'completion-visit', 'completion-decision', 1,
+      'completion-order-label', 'completion-order-print', 'completion-order-preparation', 2,
+      'completion-order-reservation', '${NOW}', 'completion-doctor'
+    );
+    INSERT INTO fulfillment_dispenses (
+      id, clinic_id, visit_id, medication_decision_id, medication_decision_version,
+      label_version_id, preparation_id, release_id, reservation_id, handed_off_at, handed_off_by
+    ) VALUES (
+      'completion-order-dispense', 'clinic', 'completion-visit', 'completion-decision', 1,
+      'completion-order-label', 'completion-order-preparation', 'completion-order-release',
+      'completion-order-reservation', '${NOW}', 'completion-doctor'
+    );
+    INSERT INTO fulfillment_dispense_lines (
+      id, dispense_id, reservation_allocation_id, medication_order_item_id,
+      medication_id, lot_id, quantity, display_name_snapshot, strength_snapshot,
+      dosage_form_snapshot, unit_snapshot, lot_number_snapshot, expiry_date_snapshot,
+      directions_th_snapshot
+    ) VALUES
+      ('completion-order-dispense-line-a', 'completion-order-dispense',
+       'completion-order-allocation-a', 'completion-order-multi-lot', 'DEMO-MED-001',
+       'completion-order-lot-a', 2, '[DEMO] ยาทดสอบชนิด A', '500 หน่วยทดสอบ',
+       'เม็ดทดสอบ', 'เม็ด', 'OPD-LOT-A', '2027-08-10', 'รับประทานหลังอาหาร'),
+      ('completion-order-dispense-line-b', 'completion-order-dispense',
+       'completion-order-allocation-b', 'completion-order-multi-lot', 'DEMO-MED-001',
+       'completion-order-lot-b', 3, '[DEMO] ยาทดสอบชนิด A', '500 หน่วยทดสอบ',
+       'เม็ดทดสอบ', 'เม็ด', 'OPD-LOT-B', '2027-09-10', 'รับประทานหลังอาหาร');
+    INSERT INTO fulfillment_dispense_price_snapshots (
+      id, fulfillment_dispense_line_id, order_price_snapshot_id, medication_id,
+      unit_price_baht_snapshot, currency, captured_at
+    ) VALUES
+      ('completion-order-dispense-price-a', 'completion-order-dispense-line-a',
+       'completion-order-price', 'DEMO-MED-001', 5, 'THB', '${NOW}'),
+      ('completion-order-dispense-price-b', 'completion-order-dispense-line-b',
+       'completion-order-price', 'DEMO-MED-001', 5, 'THB', '${NOW}');
+    UPDATE inventory_reservations SET
+      status = 'CONSUMED', consumed_at = '${NOW}', consumed_by = 'completion-doctor',
+      consumed_dispense_id = 'completion-order-dispense'
+    WHERE id = 'completion-order-reservation';
+  `);
+}
+
+function seedReleasedReservationEvidence(test: CompletionFixture): void {
+  test.database.sqlite.exec(`
+    INSERT INTO medication_order_items (
+      id, medication_decision_id, position, medication_id, medication_revision,
+      display_name_snapshot, strength_snapshot, dosage_form_snapshot, unit_snapshot,
+      quantity, directions_th
+    ) VALUES (
+      'completion-order-item', 'completion-decision', 0, 'DEMO-MED-001', 1,
+      '[DEMO] ยาทดสอบชนิด A', '500 หน่วยทดสอบ', 'เม็ดทดสอบ', 'เม็ด', 1, 'รับประทานตามคำแนะนำ'
+    );
+    INSERT INTO inventory_lots (
+      id, clinic_id, medication_id, medication_revision, display_name_snapshot,
+      strength_snapshot, dosage_form_snapshot, unit_snapshot, lot_number, expiry_date,
+      supplier_name, status, created_at, created_by
+    ) VALUES (
+      'completion-lot', 'clinic', 'DEMO-MED-001', 1, '[DEMO] ยาทดสอบชนิด A',
+      '500 หน่วยทดสอบ', 'เม็ดทดสอบ', 'เม็ด', 'CLOSE-LOT-001', '2027-08-10',
+      'ผู้ขายทดสอบ', 'AVAILABLE', '${NOW}', 'completion-doctor'
+    );
+    INSERT INTO inventory_reservations (
+      id, clinic_id, visit_id, medication_decision_id, medication_decision_version,
+      status, created_at, created_by
+    ) VALUES (
+      'completion-released-reservation', 'clinic', 'completion-visit', 'completion-decision', 1,
+      'ACTIVE', '${NOW}', 'completion-doctor'
+    );
+    UPDATE inventory_reservations SET
+      status = 'RELEASED', released_at = '${NOW}', released_by = 'completion-doctor',
+      release_reason = 'ยกเลิกก่อนปิด Visit'
+    WHERE id = 'completion-released-reservation';
+  `);
 }
 
 describe("Visit completion evidence, privacy, and freeze", () => {
@@ -212,6 +382,64 @@ describe("Visit completion evidence, privacy, and freeze", () => {
     ]);
   });
 
+  it("projects an ORDER dispense split across two lots without collapsing its OPD evidence", async () => {
+    const test = await fixture("ORDER");
+    await close(test);
+    const response = await test.app.inject({
+      method: "GET",
+      url: "/api/visits/completion-visit/opd-card",
+      headers: { cookie: test.doctorCookie },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toMatchObject({
+      medication: {
+        kind: "ORDER",
+        dispense: { id: "completion-order-dispense", handedOffAt: NOW },
+        items: [
+          {
+            dispenseLineId: "completion-order-dispense-line-a",
+            orderItemId: "completion-order-multi-lot",
+            quantity: 2,
+            lotNumber: "OPD-LOT-A",
+            expiryDate: "2027-08-10",
+          },
+          {
+            dispenseLineId: "completion-order-dispense-line-b",
+            orderItemId: "completion-order-multi-lot",
+            quantity: 3,
+            lotNumber: "OPD-LOT-B",
+            expiryDate: "2027-09-10",
+          },
+        ],
+      },
+      charge: {
+        grossTotalBaht: 125,
+        adjustmentTotalBaht: 0,
+        netDueBaht: 125,
+        lines: [
+          { position: 0, lineType: "CONSULTATION", lineTotalBaht: 100 },
+          {
+            position: 1,
+            lineType: "MEDICATION",
+            fulfillmentDispenseLineId: "completion-order-dispense-line-a",
+            quantity: 2,
+            lineTotalBaht: 10,
+          },
+          {
+            position: 2,
+            lineType: "MEDICATION",
+            fulfillmentDispenseLineId: "completion-order-dispense-line-b",
+            quantity: 3,
+            lineTotalBaht: 15,
+          },
+        ],
+        resolution: { kind: "PAYMENT", amountBaht: 125 },
+      },
+    });
+    expect(response.json().data.medication.items).toHaveLength(2);
+    expect(response.json().data.charge.lines).toHaveLength(3);
+  });
+
   it("blocks post-close Visit, clinical, finance, and closure mutation at the database boundary", async () => {
     const test = await fixture();
     await close(test);
@@ -242,5 +470,44 @@ describe("Visit completion evidence, privacy, and freeze", () => {
     expect(test.database.sqlite.prepare(
       "SELECT temperature_c FROM intake_observations WHERE visit_id = 'completion-visit'",
     ).pluck().get()).toBe(36.5);
+  });
+
+  it("blocks inserting a reservation for a Visit after Closure", async () => {
+    const test = await fixture();
+    await close(test);
+    expect(() => test.database.sqlite.prepare(`
+      INSERT INTO inventory_reservations (
+        id, clinic_id, visit_id, medication_decision_id, medication_decision_version,
+        status, created_at, created_by
+      ) VALUES (
+        'completion-illegal-reservation', 'clinic', 'completion-visit', 'completion-decision', 1,
+        'ACTIVE', '${NOW}', 'completion-doctor'
+      )
+    `).run()).toThrow(/reservation|closed|Closure/i);
+  });
+
+  it("blocks deleting a reservation for a Visit after Closure", async () => {
+    const test = await fixture();
+    seedReleasedReservationEvidence(test);
+    await close(test);
+    expect(() => test.database.sqlite.prepare(
+      "DELETE FROM inventory_reservations WHERE id = 'completion-released-reservation'",
+    ).run()).toThrow(/reservation|closed|Closure/i);
+  });
+
+  it("blocks inserting an allocation for a Visit reservation after Closure", async () => {
+    const test = await fixture();
+    seedReleasedReservationEvidence(test);
+    await close(test);
+    expect(() => test.database.sqlite.prepare(`
+      INSERT INTO inventory_reservation_allocations (
+        id, reservation_id, medication_order_item_id, lot_id, position, quantity,
+        medication_id, lot_number_snapshot, expiry_date_snapshot, unit_snapshot, allocated_at
+      ) VALUES (
+        'completion-illegal-allocation', 'completion-released-reservation',
+        'completion-order-item', 'completion-lot', 0, 1, 'DEMO-MED-001',
+        'CLOSE-LOT-001', '2027-08-10', 'เม็ด', '${NOW}'
+      )
+    `).run()).toThrow(/reservation|allocation|closed|Closure/i);
   });
 });

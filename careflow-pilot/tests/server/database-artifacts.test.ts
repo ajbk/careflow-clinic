@@ -83,6 +83,18 @@ function copyMigrationsThrough0015(target: string): string {
   return oldPath;
 }
 
+function copyMigrationsThrough0018(target: string): string {
+  const source = join(process.cwd(), "drizzle");
+  const oldPath = join(target, "drizzle-0018");
+  cpSync(source, oldPath, { recursive: true });
+  rmSync(join(oldPath, "0019_post_close_reservation_guards.sql"), { force: true });
+  const journalPath = join(oldPath, "meta", "_journal.json");
+  const journal = JSON.parse(readFileSync(journalPath, "utf8")) as { entries: Array<{ idx: number }> };
+  journal.entries = journal.entries.filter((entry) => entry.idx < 19);
+  writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+  return oldPath;
+}
+
 const immutableMigrationHashesThrough0017 = {
   "0000_platform.sql": "77dbb1cce19d455be9bb06d4dc5d64de0425b0435f9c70ac63a413fc4ce8c9e6",
   "0001_patient.sql": "55af6b78670f63296ab2e6da9cce84a04613dfd31e5c3cba8534eb5a52e7d96f",
@@ -123,6 +135,101 @@ const immutableMigrationSnapshotHashesThrough0017 = {
   "0016_snapshot.json": "fc1b64e51a5a27bee58879473d5608a6b6471e91ed3654f8669ece2a4af27c79",
   "0017_snapshot.json": "711d49d079ed9bff7cdb96945769e07be506d7ce5ed8f2bf45b0abe7aee7668d",
 } as const;
+
+function seedPopulated0018ClosedReservation(sqlite: Database.Database): void {
+  const now = "2026-08-10T00:00:00.000Z";
+  const hash = "c".repeat(64);
+  sqlite.exec(`
+    INSERT INTO staff_accounts (
+      id, clinic_id, username, display_name, role, password_hash, must_change_password,
+      active, revision, last_password_changed_at, created_at, updated_at
+    ) VALUES (
+      'closure-upgrade-doctor', 'clinic', 'closure-upgrade-doctor', 'พญ. อัปเกรด Closure',
+      'doctor', 'hash', 0, 1, 1, '${now}', '${now}', '${now}'
+    );
+    INSERT INTO patients (
+      id, clinic_id, hn, display_name, phone, birth_date, sex, revision, created_at, updated_at
+    ) VALUES (
+      'closure-upgrade-patient', 'clinic', 'DEMO-000098', 'ผู้ป่วยทดสอบ 000098',
+      '0000000098', '1990-01-01', 'unknown', 1, '${now}', '${now}'
+    );
+    INSERT INTO visits (
+      id, clinic_id, patient_id, status, chief_complaint, revision, arrived_at, started_at, created_by
+    ) VALUES (
+      'closure-upgrade-visit', 'clinic', 'closure-upgrade-patient', 'AWAITING_CHARGE',
+      'ทดสอบอัปเกรด Closure', 7, '${now}', '${now}', 'closure-upgrade-doctor'
+    );
+    INSERT INTO clinical_notes (
+      id, visit_id, version, subjective, objective, assessment, plan, source_draft_revision,
+      signed_by, signed_by_display_name, signed_at, content_hash
+    ) VALUES (
+      'closure-upgrade-note', 'closure-upgrade-visit', 1, 'S', 'O', 'A', 'P', 1,
+      'closure-upgrade-doctor', 'พญ. อัปเกรด Closure', '${now}', '${hash}'
+    );
+    INSERT INTO clinical_note_diagnoses (id, clinical_note_id, position, diagnosis_text)
+    VALUES ('closure-upgrade-diagnosis', 'closure-upgrade-note', 0, 'ทดสอบ');
+    INSERT INTO medication_decisions (
+      id, visit_id, version, kind, no_medication_reason, signed_by,
+      signed_by_display_name, signed_at, content_hash
+    ) VALUES (
+      'closure-upgrade-decision', 'closure-upgrade-visit', 1, 'NO_MEDICATION',
+      'ไม่มีข้อบ่งใช้ยา', 'closure-upgrade-doctor', 'พญ. อัปเกรด Closure', '${now}', '${hash}'
+    );
+    INSERT INTO finance_charges (
+      id, clinic_id, visit_id, source_kind, medication_decision_id,
+      medication_decision_version, fulfillment_dispense_id, clinic_pricing_revision,
+      consultation_fee_baht_snapshot, currency, line_count, finalized_by,
+      finalized_by_display_name, finalized_at, content_hash
+    ) VALUES (
+      'closure-upgrade-charge', 'clinic', 'closure-upgrade-visit', 'NO_MEDICATION',
+      'closure-upgrade-decision', 1, NULL, 1, 100, 'THB', 1,
+      'closure-upgrade-doctor', 'พญ. อัปเกรด Closure', '${now}', '${hash}'
+    );
+    INSERT INTO finance_charge_lines (
+      id, charge_id, position, line_type, description_snapshot, quantity,
+      unit_price_baht, line_total_baht, medication_order_item_id, fulfillment_dispense_line_id
+    ) VALUES (
+      'closure-upgrade-charge-line', 'closure-upgrade-charge', 0, 'CONSULTATION',
+      'ค่าตรวจ', 1, 100, 100, NULL, NULL
+    );
+    UPDATE visits SET status = 'AWAITING_PAYMENT', revision = 8
+    WHERE id = 'closure-upgrade-visit';
+    INSERT INTO finance_payments (
+      id, charge_id, visit_id, method, amount_baht, manual_reference,
+      confirmed_by, confirmed_by_display_name, confirmed_at, content_hash
+    ) VALUES (
+      'closure-upgrade-payment', 'closure-upgrade-charge', 'closure-upgrade-visit',
+      'CASH', 100, NULL, 'closure-upgrade-doctor', 'พญ. อัปเกรด Closure', '${now}', '${hash}'
+    );
+    UPDATE visits SET status = 'READY_TO_CLOSE', revision = 9
+    WHERE id = 'closure-upgrade-visit';
+    INSERT INTO inventory_reservations (
+      id, clinic_id, visit_id, medication_decision_id, medication_decision_version,
+      status, created_at, created_by
+    ) VALUES (
+      'closure-upgrade-reservation', 'clinic', 'closure-upgrade-visit',
+      'closure-upgrade-decision', 1, 'ACTIVE', '${now}', 'closure-upgrade-doctor'
+    );
+    UPDATE inventory_reservations SET
+      status = 'RELEASED', released_at = '${now}', released_by = 'closure-upgrade-doctor',
+      release_reason = 'ยกเลิกก่อนปิด Visit'
+    WHERE id = 'closure-upgrade-reservation';
+    INSERT INTO visit_closures (
+      id, clinic_id, visit_id, visit_revision, charge_id, payment_id, waiver_adjustment_id,
+      clinic_name_snapshot, patient_id_snapshot, patient_hn_snapshot,
+      patient_display_name_snapshot, patient_birth_date_snapshot, patient_sex_snapshot,
+      doctor_id_snapshot, doctor_display_name_snapshot, closed_at, content_hash
+    ) VALUES (
+      'closure-upgrade-closure', 'clinic', 'closure-upgrade-visit', 9,
+      'closure-upgrade-charge', 'closure-upgrade-payment', NULL,
+      'คลินิกชนบท CareFlow Pilot', 'closure-upgrade-patient', 'DEMO-000098',
+      'ผู้ป่วยทดสอบ 000098', '1990-01-01', 'unknown',
+      'closure-upgrade-doctor', 'พญ. อัปเกรด Closure', '${now}', '${hash}'
+    );
+    UPDATE visits SET status = 'CLOSED', revision = 10, closed_at = '${now}'
+    WHERE id = 'closure-upgrade-visit';
+  `);
+}
 
 function seedPopulated0015PricingEvidence(sqlite: Database.Database): void {
   const now = "2026-08-10T00:00:00.000Z";
@@ -303,12 +410,13 @@ it("keeps 0014 immutable and upgrades populated inventory rows with the additive
   const journal = JSON.parse(readFileSync(join(process.cwd(), "drizzle", "meta", "_journal.json"), "utf8")) as {
     entries: Array<{ idx: number; tag: string }>;
   };
-  expect(journal.entries).toHaveLength(19);
+  expect(journal.entries).toHaveLength(20);
   expect(journal.entries[14]).toMatchObject({ idx: 14, tag: "0014_inventory_integrity" });
   expect(journal.entries[15]).toMatchObject({ idx: 15, tag: "0015_inventory_adjustment_source_guard" });
   expect(journal.entries[16]).toMatchObject({ idx: 16, tag: "0016_finance_pricing_snapshots" });
   expect(journal.entries[17]).toMatchObject({ idx: 17, tag: "0017_charge_collection_ledger" });
   expect(journal.entries[18]).toMatchObject({ idx: 18, tag: "0018_visit_closure_integrity" });
+  expect(journal.entries[19]).toMatchObject({ idx: 19, tag: "0019_post_close_reservation_guards" });
 
   const { directory, databasePath } = temporaryDatabase();
   const oldMigrations = copyMigrationsThrough0014(directory);
@@ -343,7 +451,7 @@ it("keeps 0014 immutable and upgrades populated inventory rows with the additive
 
     expect(sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
     expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(19);
+    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(20);
     expect(sqlite.prepare("SELECT id, revision FROM inventory_lots WHERE id = 'upgrade-lot'").get()).toEqual(before.lot);
     expect(
       sqlite
@@ -431,8 +539,8 @@ it("keeps every 0000–0017 SQL and snapshot artifact immutable while upgrading 
     expect(sqlite.prepare("SELECT hash, created_at FROM __drizzle_migrations ORDER BY id").all().slice(0, 16))
       .toEqual(oldMigrationRecords);
     const migrationCount = sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get();
-    expect(migrationCount).toBe(19);
-    if (migrationCount !== 19) return;
+    expect(migrationCount).toBe(20);
+    if (migrationCount !== 20) return;
     for (const table of sourceTables) {
       expect(Buffer.from(JSON.stringify(sqlite.prepare(`SELECT * FROM ${table} ORDER BY id`).all()))).toEqual(before[table]);
     }
@@ -497,10 +605,11 @@ it("adds only the additive 0018 immutable Visit Closure artifacts after frozen h
   const journal = JSON.parse(readFileSync(join(migrationsPath, "meta", "_journal.json"), "utf8")) as {
     entries: Array<{ idx: number; tag: string }>;
   };
-  expect(journal.entries).toHaveLength(19);
+  expect(journal.entries).toHaveLength(20);
   expect(journal.entries[16]).toMatchObject({ idx: 16, tag: "0016_finance_pricing_snapshots" });
   expect(journal.entries[17]).toMatchObject({ idx: 17, tag: "0017_charge_collection_ledger" });
   expect(journal.entries[18]).toMatchObject({ idx: 18, tag: "0018_visit_closure_integrity" });
+  expect(journal.entries[19]).toMatchObject({ idx: 19, tag: "0019_post_close_reservation_guards" });
 
   const { databasePath } = temporaryDatabase();
   const sqlite = new Database(databasePath);
@@ -509,7 +618,7 @@ it("adds only the additive 0018 immutable Visit Closure artifacts after frozen h
     migrate(drizzle(sqlite), { migrationsFolder: migrationsPath });
     expect(sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
     expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
-    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(19);
+    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(20);
     expect(sqlite.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'visit_closures'").pluck().get())
       .toContain("visit_closures_resolution_shape_check");
     expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'visit_closures_visit_id_unique'").get())
@@ -518,6 +627,60 @@ it("adds only the additive 0018 immutable Visit Closure artifacts after frozen h
       .toEqual({ name: "visit_closures_block_update" });
     expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'visits_closed_transition_guard'").get())
       .toEqual({ name: "visits_closed_transition_guard" });
+  } finally {
+    sqlite.close();
+  }
+});
+
+it("keeps 0018 immutable and upgrades populated Closure evidence with additive 0019 guards", () => {
+  const migrationsPath = join(process.cwd(), "drizzle");
+  expect(createHash("sha256").update(readFileSync(join(migrationsPath, "0018_visit_closure_integrity.sql"))).digest("hex"))
+    .toBe("68059f8e06e2051415c632c68efdc3b77aa1ec58beda227d73d32387f8c0ee0a");
+  expect(createHash("sha256").update(readFileSync(join(migrationsPath, "meta", "0018_snapshot.json"))).digest("hex"))
+    .toBe("dc4d4dcb7b4f0c8c69880961aaa970d3e6080670c3581a0d960018a0a0612003");
+  expect(existsSync(join(migrationsPath, "0019_post_close_reservation_guards.sql"))).toBe(true);
+  expect(existsSync(join(migrationsPath, "meta", "0019_snapshot.json"))).toBe(true);
+
+  const { directory, databasePath } = temporaryDatabase();
+  const oldMigrations = copyMigrationsThrough0018(directory);
+  const sqlite = new Database(databasePath);
+  try {
+    sqlite.pragma("foreign_keys = ON");
+    const db = drizzle(sqlite);
+    migrate(db, { migrationsFolder: oldMigrations });
+    seedPopulated0018ClosedReservation(sqlite);
+    const oldMigrationRecords = sqlite.prepare(
+      "SELECT hash, created_at FROM __drizzle_migrations ORDER BY id",
+    ).all();
+    const before = {
+      visit: sqlite.prepare("SELECT * FROM visits WHERE id = 'closure-upgrade-visit'").get(),
+      closure: sqlite.prepare("SELECT * FROM visit_closures WHERE id = 'closure-upgrade-closure'").get(),
+      reservation: sqlite.prepare("SELECT * FROM inventory_reservations WHERE id = 'closure-upgrade-reservation'").get(),
+    };
+
+    migrate(db, { migrationsFolder: migrationsPath });
+
+    expect(sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
+    expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get()).toBe(20);
+    expect(sqlite.prepare("SELECT hash, created_at FROM __drizzle_migrations ORDER BY id").all().slice(0, 19))
+      .toEqual(oldMigrationRecords);
+    expect(sqlite.prepare("SELECT * FROM visits WHERE id = 'closure-upgrade-visit'").get()).toEqual(before.visit);
+    expect(sqlite.prepare("SELECT * FROM visit_closures WHERE id = 'closure-upgrade-closure'").get()).toEqual(before.closure);
+    expect(sqlite.prepare("SELECT * FROM inventory_reservations WHERE id = 'closure-upgrade-reservation'").get())
+      .toEqual(before.reservation);
+    expect(sqlite.prepare(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'trigger' AND name IN (
+        'inventory_reservations_after_closure_block_insert',
+        'inventory_reservations_after_closure_block_delete',
+        'inventory_reservation_allocations_after_closure_block_insert'
+      ) ORDER BY name
+    `).all()).toEqual([
+      { name: "inventory_reservation_allocations_after_closure_block_insert" },
+      { name: "inventory_reservations_after_closure_block_delete" },
+      { name: "inventory_reservations_after_closure_block_insert" },
+    ]);
   } finally {
     sqlite.close();
   }

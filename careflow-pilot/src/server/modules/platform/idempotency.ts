@@ -83,7 +83,7 @@ function parseStoredReference<T>(parsed: unknown): T | null {
 }
 
 export interface SafeReplayStrategy<TResponse, TReference> {
-  store(response: TResponse): TReference;
+  store(response: TResponse, tx: AuditedTransaction): TReference;
   rebuild(tx: AuditedTransaction, reference: TReference): TResponse;
   isLegacyResponse(data: unknown): data is TResponse;
 }
@@ -99,6 +99,8 @@ export function executeIdempotent<T, TReference = never>(input: {
   work: (tx: AuditedTransaction) => CommandWorkResult<T>;
   /** Stores only a safe reference and rebuilds the response on replay. */
   safeReplay?: SafeReplayStrategy<T, TReference>;
+  /** Focused test seam invoked after the idempotency row is inserted, before commit. */
+  afterStore?: () => void;
 }): CommandHttpResult<T> {
   assertValidIdempotencyKey(input.key);
   const hash = requestHash(input.operation, input.requestBody, input.scope);
@@ -135,7 +137,7 @@ export function executeIdempotent<T, TReference = never>(input: {
             if (!input.safeReplay.isLegacyResponse(legacy.data)) {
               throw new Error("Invalid legacy idempotency response for safe replay");
             }
-            const rebuiltReference = input.safeReplay.store(legacy.data);
+            const rebuiltReference = input.safeReplay.store(legacy.data, tx);
             const changed = tx.update(idempotencyRecords)
               .set({
                 responseJson: stableStringify({ type: "safe-replay-reference", reference: rebuiltReference }),
@@ -161,7 +163,7 @@ export function executeIdempotent<T, TReference = never>(input: {
       const result = input.work(tx);
       const body: IdempotentEnvelope<T> = { data: result.data, replayed: false };
       const storedResponse = input.safeReplay
-        ? { type: "safe-replay-reference", reference: input.safeReplay.store(result.data) }
+        ? { type: "safe-replay-reference", reference: input.safeReplay.store(result.data, tx) }
         : body;
       tx.insert(idempotencyRecords)
         .values({
@@ -174,6 +176,7 @@ export function executeIdempotent<T, TReference = never>(input: {
           createdAt: new Date().toISOString(),
         })
         .run();
+      input.afterStore?.();
 
       return { statusCode: result.statusCode, body };
     },
