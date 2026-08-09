@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - The approved design is `docs/superpowers/specs/2026-08-10-careflow-finance-visit-completion-design.md` and is authoritative for Milestone 4.
-- All money is non-negative safe-integer BAHT. DTO/TypeScript names end in `Baht`; physical SQLite columns end in `_baht`. Never accept decimals, floats, client totals, overpayment, underpayment, or rounding.
+- All monetary values are safe-integer BAHT. Prices, quantities, totals, and payments are non-negative; the one signed exception is `finance_charge_adjustments.amount_baht`, whose full-waiver value equals negative gross exactly. DTO/TypeScript names end in `Baht`; physical SQLite columns end in `_baht`. Never accept decimals, floats, client totals, overpayment, underpayment, or rounding.
 - Migrations `0000`–`0015` and their metadata are immutable. Add only `0016`–`0018` and matching Drizzle journal/snapshots.
 - Use the existing caller-owned audited `BEGIN IMMEDIATE` transaction and exact idempotent envelope. Domain evidence, Visit transition, audit, and idempotency response commit or roll back together.
 - Strict Zod contracts reject unknown/prototype keys. First successful POST returns `201`; same-key/same-payload replay returns stored data with `200`; same-key/different-payload returns `IDEMPOTENCY_CONFLICT` without writes.
@@ -118,7 +118,7 @@ createFinanceService({ database, pricing, clock, idFactory }): {
 ```
 
 - `GET /api/checkout/:visitId` requires `finance:read`.
-- `POST /api/checkout/:visitId/charge-finalizations` requires `finance:finalize-charge` and body `{ expectedRevisions: { visit, clinicPricing }, payload: { settlementIntent: "COLLECT" } | { settlementIntent: "FULL_WAIVER", waiverReason } }`.
+- In Task 2, `POST /api/checkout/:visitId/charge-finalizations` requires `finance:finalize-charge` and accepts only `{ expectedRevisions: { visit, clinicPricing }, payload: { settlementIntent: "COLLECT" } }`. Task 3 extends the same strict union with the approved `FULL_WAIVER` variant once adjustment evidence exists.
 
 - [ ] **Step 1: Write RED schema/service tests.** Assert one Charge per Visit, one consultation line, medication line per actual Dispense Line, `lineTotalBaht=quantity*unitPriceBaht`, derived gross `1..100_000_000`, ORDER requires current Dispense/prices, `NO_MEDICATION` has consultation only, source clinic/visit/decision/dispense integrity, append-only rows, content hash determinism, and no stored gross aggregate.
 
@@ -239,10 +239,14 @@ Expected: unavailable route and missing Finance hooks/screen/status fields.
 - Modify: `careflow-pilot/src/server/modules/visit/schema.ts`
 - Modify: `careflow-pilot/src/server/modules/visit/service.ts`
 - Modify: `careflow-pilot/src/server/modules/visit/routes.ts`
+- Modify: `careflow-pilot/src/server/modules/note/service.ts`
 - Modify: `careflow-pilot/src/server/modules/finance/service.ts`
 - Modify: `careflow-pilot/src/server/modules/platform/permissions.ts`
 - Modify: `careflow-pilot/src/server/modules/platform/audit.ts`
 - Create: `careflow-pilot/src/server/workflows/visit-completion.ts`
+- Create: `careflow-pilot/src/server/workflows/visit-completion-routes.ts`
+- Modify: `careflow-pilot/src/server/workflows/clinical.ts`
+- Modify: `careflow-pilot/src/server/workflows/clinical-routes.ts`
 - Modify: `careflow-pilot/src/server/app.ts`
 - Modify: `careflow-pilot/src/server/errors.ts`
 - Modify: `careflow-pilot/src/shared/contracts.ts`
@@ -278,7 +282,7 @@ createVisitCompletionWorkflow({ database, visits, finance, notes, medications, f
 
 - [ ] **Step 4: Run RED.** Run focused server/client commands for the new tests; expect missing migration, workflow, permissions, contracts, route, screen, and print behavior.
 
-- [ ] **Step 5: Implement migration and workflow.** Add immutable `visit_closures`, resolution/source guards, append-only triggers, Closure-before-CLOSED/timestamp/reopen Visit guards. Under one immediate transaction re-read every source, insert Closure with canonical content hash, update Visit once, append `visit.closed`, and store exact replay.
+- [ ] **Step 5: Implement migration and workflow.** Add immutable `visit_closures`, resolution/source guards, append-only triggers, Closure-before-CLOSED/timestamp/reopen Visit guards. Under one immediate transaction re-read every source, insert Closure with canonical content hash, update Visit once, append `visit.closed`, and store exact replay. After Closure, block medication/fulfillment/finance and Visit-state mutation; retain only Doctor-signed Note amendment as a new append-only addendum without changing prior Note or Closure evidence.
 
 - [ ] **Step 6: Implement Doctor-only OPD projection/UI.** Render structured DTO from immutable evidence plus closure snapshots; never store rendered HTML and never expose clinical content in Checkout. Reuse `.opd-card` and `@page opd-card` styles with Doctor-only AuthGate/permission checks.
 
