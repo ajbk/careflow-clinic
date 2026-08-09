@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
@@ -156,6 +156,16 @@ afterEach(() => {
 afterAll(() => server.close());
 
 describe("Thai checkout workflow", () => {
+  it("keeps the current authorized job beside financial evidence in one Checkout grid", async () => {
+    renderCheckout();
+    const evidence = await screen.findByRole("region", { name: "หลักฐานรายการคิดเงิน" });
+    const grid = evidence.closest(".checkout-grid");
+    expect(grid).not.toBeNull();
+    const job = within(grid as HTMLElement).getByRole("region", { name: "งานชำระเงินปัจจุบัน" });
+    expect(within(job).getByRole("button", { name: "ยืนยันยอดเพื่อรับชำระ" })).toBeInTheDocument();
+    expect(evidence.nextElementSibling).toBe(job);
+  });
+
   it("renders immutable server line evidence and exact whole-Baht values without clinical content", async () => {
     renderCheckout();
     expect(await screen.findByRole("heading", { name: "ชำระเงิน" })).toBeInTheDocument();
@@ -232,6 +242,51 @@ describe("Thai checkout workflow", () => {
     ]));
   });
 
+  it("focuses and describes the waiver dialog and traps forward and reverse Tab inside it", async () => {
+    const user = userEvent.setup();
+    renderCheckout();
+    await user.click(await screen.findByRole("button", { name: "ยกเว้นเต็มจำนวน" }));
+    const dialog = screen.getByRole("dialog", { name: "ยกเว้นเต็มจำนวน" });
+    const reason = within(dialog).getByLabelText("เหตุผลการยกเว้น");
+    expect(dialog).toHaveAccessibleDescription("เหตุผลจะถูกบันทึกเป็นหลักฐานการยกเว้นของ Visit นี้");
+    expect(reason).toHaveFocus();
+
+    await user.type(reason, "ช่วยเหลือตามเกณฑ์");
+    await user.tab({ shift: true });
+    expect(within(dialog).getByRole("button", { name: "ยืนยันยกเว้นเต็มจำนวน" })).toHaveFocus();
+    await user.tab();
+    expect(reason).toHaveFocus();
+  });
+
+  it("closes a safe waiver dialog with Escape and restores focus to its opener", async () => {
+    const user = userEvent.setup();
+    renderCheckout();
+    const opener = await screen.findByRole("button", { name: "ยกเว้นเต็มจำนวน" });
+    await user.click(opener);
+    expect(screen.getByRole("dialog", { name: "ยกเว้นเต็มจำนวน" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "ยกเว้นเต็มจำนวน" })).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
+  });
+
+  it("keeps a blocked waiver draft and exposes conflict reload inside the modal", async () => {
+    const user = userEvent.setup();
+    server.use(http.post("/api/checkout/visit-42/charge-finalizations", () => apiError("REVISION_CONFLICT", "ข้อมูลการชำระเงินเปลี่ยนแปลงแล้ว", 409)));
+    renderCheckout();
+    await user.click(await screen.findByRole("button", { name: "ยกเว้นเต็มจำนวน" }));
+    const dialog = screen.getByRole("dialog", { name: "ยกเว้นเต็มจำนวน" });
+    const reason = within(dialog).getByLabelText("เหตุผลการยกเว้น");
+    await user.type(reason, "เกณฑ์ช่วยเหลือผู้ป่วย");
+    await user.click(within(dialog).getByRole("button", { name: "ยืนยันยกเว้นเต็มจำนวน" }));
+    expect(await within(dialog).findByText("ข้อมูลการชำระเงินเปลี่ยนแปลงแล้ว")).toBeInTheDocument();
+    expect(reason).toHaveValue("เกณฑ์ช่วยเหลือผู้ป่วย");
+
+    server.use(http.get("/api/checkout/visit-42", () => HttpResponse.json({ data: { ...previewCheckout, visit: { ...previewCheckout.visit, revision: 8 } } })));
+    await user.click(within(dialog).getByRole("button", { name: "โหลดข้อมูลล่าสุด" }));
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "ยืนยันยกเว้นเต็มจำนวน" })).toBeEnabled());
+    expect(reason).toHaveValue("เกณฑ์ช่วยเหลือผู้ป่วย");
+  });
+
   it("allows an Assistant only the server-authorized exact Cash action", async () => {
     const user = userEvent.setup();
     let body: unknown;
@@ -268,8 +323,9 @@ describe("Thai checkout workflow", () => {
   });
 
   it("renders paid, waived, and closed checkout evidence as read-only summaries", async () => {
-    renderCheckout(paidCheckout);
-    expect(await screen.findByText("รับชำระแล้ว รอแพทย์ปิด Visit")).toBeInTheDocument();
+    renderCheckout(paidCheckout, "doctor");
+    expect(await screen.findByText("หลักฐานการเงินพร้อมแล้ว · การปิด Visit จะเปิดใน Task 5")).toBeInTheDocument();
+    expect(screen.queryByText("รับชำระแล้ว รอแพทย์ปิด Visit")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /ยืนยันรับเงินสด|ยืนยัน PromptPay|ยืนยันยอดเพื่อรับชำระ/ })).not.toBeInTheDocument();
     cleanup();
     renderCheckout(waivedCheckout);
@@ -277,8 +333,28 @@ describe("Thai checkout workflow", () => {
     expect(screen.getAllByText("0 บาท").length).toBeGreaterThan(0);
     cleanup();
     renderCheckout(closedCheckout);
-    expect(await screen.findByText("ปิด Visit แล้ว")).toBeInTheDocument();
+    expect((await screen.findAllByText("ปิด Visit แล้ว")).length).toBeGreaterThan(0);
     expect(screen.queryByRole("link", { name: /บัตร OPD/ })).not.toBeInTheDocument();
+  });
+
+  it("uses Thai presentation labels and truthful role-specific finance copy", async () => {
+    renderCheckout({ ...previewCheckout, allowedActions: [] }, "assistant");
+    expect(await screen.findByText("รอแพทย์ยืนยันยอด")).toBeInTheDocument();
+    expect(screen.getByText("มีคำสั่งยา")).toBeInTheDocument();
+    expect(screen.getAllByText("รอยืนยันยอด").length).toBeGreaterThan(0);
+    expect(screen.queryByText("ORDER")).not.toBeInTheDocument();
+    expect(screen.queryByText("PENDING_CHARGE")).not.toBeInTheDocument();
+    cleanup();
+
+    renderCheckout(paidCheckout, "assistant");
+    expect(await screen.findByText("รับชำระแล้ว รอแพทย์ปิด Visit")).toBeInTheDocument();
+    expect(screen.getByText("รับเงินสดแล้ว")).toBeInTheDocument();
+    expect(screen.queryByText("PAID_CASH")).not.toBeInTheDocument();
+    cleanup();
+
+    renderCheckout(waivedCheckout, "doctor");
+    expect(await screen.findByText("ยกเว้นเต็มจำนวน · ไม่ต้องรับชำระ")).toBeInTheDocument();
+    expect(screen.queryByText("COLLECTION_NOT_REQUIRED")).not.toBeInTheDocument();
   });
 
   it("shows denied and unavailable Checkout states without exposing commands", async () => {

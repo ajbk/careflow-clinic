@@ -1,7 +1,8 @@
-import type { ReactElement } from "react";
-import { useRef, useState } from "react";
+import type { KeyboardEvent, ReactElement } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import type { CheckoutDto } from "../../shared/contracts";
+import { useAuth } from "../auth/AuthProvider";
 import { ActionButton, Card, Field, PageHeader, SectionHeading, StatusBadge, TextAreaField } from "../components/careflow/ui";
 import {
   createApproveFullWaiverAttempt,
@@ -31,11 +32,39 @@ function formatBaht(value: number): string {
 }
 
 function checkoutStatus(data: CheckoutDto): { label: string; tone: "waiting" | "active" | "success" | "neutral" } {
-  if (data.visit.status === "AWAITING_CHARGE") return { label: "รอยืนยันยอด", tone: "waiting" };
-  if (data.visit.status === "AWAITING_PAYMENT") return { label: "รอรับชำระ", tone: "active" };
-  if (data.visit.status === "READY_TO_CLOSE") return { label: "พร้อมปิด Visit", tone: "success" };
-  if (data.visit.status === "CLOSED") return { label: "Visit ปิดแล้ว", tone: "neutral" };
-  return { label: data.visit.status, tone: "neutral" };
+  const labels: Record<CheckoutDto["visit"]["status"], string> = {
+    WAITING: "รอพบแพทย์",
+    CONSULTING: "กำลังตรวจ",
+    AWAITING_PREPARATION: "รอจัดยา",
+    PREPARING: "กำลังจัดยา",
+    AWAITING_RELEASE: "รอแพทย์ปล่อยยา",
+    AWAITING_HANDOFF: "รอส่งมอบยา",
+    AWAITING_ORDER_REVISION: "รอทบทวนคำสั่งยา",
+    AWAITING_CHARGE: "รอยืนยันยอด",
+    AWAITING_PAYMENT: "รอรับชำระ",
+    READY_TO_CLOSE: "พร้อมปิด Visit",
+    CLOSED: "Visit ปิดแล้ว",
+  };
+  if (data.visit.status === "AWAITING_CHARGE") return { label: labels[data.visit.status], tone: "waiting" };
+  if (data.visit.status === "AWAITING_PAYMENT") return { label: labels[data.visit.status], tone: "active" };
+  if (data.visit.status === "READY_TO_CLOSE") return { label: labels[data.visit.status], tone: "success" };
+  return { label: labels[data.visit.status], tone: "neutral" };
+}
+
+function collectionStateLabel(data: CheckoutDto): string {
+  const labels: Record<CheckoutDto["collectionState"], string> = {
+    PENDING_CHARGE: "รอยืนยันยอด",
+    AWAITING_COLLECTION: "รอรับชำระ",
+    PAID_CASH: "รับเงินสดแล้ว",
+    PAID_PROMPTPAY: "ยืนยัน PromptPay แล้ว",
+    COLLECTION_NOT_REQUIRED: "ยกเว้นเต็มจำนวน · ไม่ต้องรับชำระ",
+    CLOSED: "ปิด Visit แล้ว",
+  };
+  return labels[data.collectionState];
+}
+
+function sourceKindLabel(data: CheckoutDto): string {
+  return data.sourceKind === "ORDER" ? "มีคำสั่งยา" : "ไม่มีคำสั่งยา";
 }
 
 function commandMessage(error: unknown): string {
@@ -65,8 +94,7 @@ function CheckoutUnavailable({ error, onReload }: { error: unknown; onReload: ()
   );
 }
 
-function CheckoutEvidence({ data }: { data: CheckoutDto }): ReactElement {
-  const status = checkoutStatus(data);
+function CheckoutEvidence({ data, jobPanel }: { data: CheckoutDto; jobPanel: ReactElement }): ReactElement {
   return (
     <Card className="checkout-card">
       <div className="checkout-grid">
@@ -89,32 +117,157 @@ function CheckoutEvidence({ data }: { data: CheckoutDto }): ReactElement {
             <div className="invoice-total"><dt>ยอดที่ต้องชำระ</dt><dd>{formatBaht(data.netDueBaht)}</dd></div>
           </dl>
         </section>
-        <section className="checkout-state-summary" aria-label="สถานะการชำระเงิน">
-          <SectionHeading title="สถานะการชำระเงิน" description="สถานะและสิทธิ์ที่ระบบอนุญาตสำหรับ Visit นี้" />
-          <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
-          <dl className="checkout-state-meta">
-            <div><dt>Collection</dt><dd>{data.collectionState}</dd></div>
-            <div><dt>Charge</dt><dd>{data.charge ? data.charge.id : "ยังไม่ยืนยันยอด"}</dd></div>
-            <div><dt>Source</dt><dd>{data.sourceKind}</dd></div>
-          </dl>
-        </section>
+        {jobPanel}
       </div>
     </Card>
   );
 }
 
-function ReadOnlyState({ data }: { data: CheckoutDto }): ReactElement | null {
-  if (data.visit.status === "READY_TO_CLOSE") {
-    return <Card className="checkout-card checkout-readonly"><p>รับชำระแล้ว รอแพทย์ปิด Visit</p></Card>;
-  }
-  if (data.visit.status === "CLOSED") {
-    return <Card className="checkout-card checkout-readonly"><p>ปิด Visit แล้ว</p></Card>;
-  }
-  return null;
+interface CheckoutJobPanelProps {
+  data: CheckoutDto;
+  isDoctor: boolean;
+  disabled: boolean;
+  finalizePending: boolean;
+  cashPending: boolean;
+  promptPayPending: boolean;
+  manualReference: string;
+  promptPayError?: string;
+  onFinalize(): void;
+  onOpenWaiver(mode: WaiverMode): void;
+  onCash(): void;
+  onPromptPay(): void;
+  onManualReferenceChange(value: string): void;
+}
+
+function CheckoutJobPanel({
+  data,
+  isDoctor,
+  disabled,
+  finalizePending,
+  cashPending,
+  promptPayPending,
+  manualReference,
+  promptPayError,
+  onFinalize,
+  onOpenWaiver,
+  onCash,
+  onPromptPay,
+  onManualReferenceChange,
+}: CheckoutJobPanelProps): ReactElement {
+  const status = checkoutStatus(data);
+  const hasCollectionAction = can(data, "RECORD_CASH") || can(data, "CONFIRM_PROMPTPAY") || can(data, "APPROVE_FULL_WAIVER");
+
+  return (
+    <section className="checkout-state-summary checkout-job-panel" aria-label="งานชำระเงินปัจจุบัน">
+      <SectionHeading title="งานชำระเงินปัจจุบัน" description="สถานะและงานที่ระบบอนุญาตสำหรับ Visit นี้" />
+      <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
+      <dl className="checkout-state-meta">
+        <div><dt>สถานะรับชำระ</dt><dd>{collectionStateLabel(data)}</dd></div>
+        <div><dt>หลักฐานยอด</dt><dd>{data.charge ? data.charge.id : "ยังไม่ยืนยันยอด"}</dd></div>
+        <div><dt>ที่มารายการ</dt><dd>{sourceKindLabel(data)}</dd></div>
+      </dl>
+      <div className="checkout-job-body">
+        {data.visit.status === "AWAITING_CHARGE" ? (
+          can(data, "FINALIZE_CHARGE") ? (
+            <>
+              <div><h3>ยืนยันยอด</h3><p>ยืนยันจากหลักฐานที่แสดงเพื่อเปิดขั้นตอนรับชำระ หรือยกเว้นเต็มจำนวนในคำสั่งเดียว</p></div>
+              <div className="checkout-action-row">
+                <ActionButton type="button" onClick={onFinalize} disabled={disabled}>{finalizePending ? "กำลังยืนยันยอด…" : "ยืนยันยอดเพื่อรับชำระ"}</ActionButton>
+                <ActionButton type="button" variant="secondary" onClick={() => onOpenWaiver("finalize")} disabled={disabled}>ยกเว้นเต็มจำนวน</ActionButton>
+              </div>
+            </>
+          ) : <p className="field-hint">{isDoctor ? "ระบบยังไม่อนุญาตให้ยืนยันยอด" : "รอแพทย์ยืนยันยอด"}</p>
+        ) : null}
+        {data.visit.status === "AWAITING_PAYMENT" ? (
+          <>
+            <div><h3>รับชำระเงิน</h3><p>ยอดที่ส่งคำสั่งจะใช้ยอดสุทธิจากระบบโดยตรง</p></div>
+            {hasCollectionAction ? <div className="checkout-payment-actions">
+              {can(data, "RECORD_CASH") ? <ActionButton type="button" onClick={onCash} disabled={disabled}>{cashPending ? "กำลังบันทึกเงินสด…" : `ยืนยันรับเงินสด ${formatBaht(data.netDueBaht)}`}</ActionButton> : null}
+              {can(data, "CONFIRM_PROMPTPAY") ? <div className="checkout-promptpay"><Field label="เลขอ้างอิง PromptPay" value={manualReference} error={promptPayError} onChange={(event) => onManualReferenceChange(event.target.value)} disabled={disabled} /><ActionButton type="button" variant="secondary" onClick={onPromptPay} disabled={disabled || !manualReference.trim()}>{promptPayPending ? "กำลังยืนยัน PromptPay…" : "ยืนยัน PromptPay"}</ActionButton></div> : null}
+              {can(data, "APPROVE_FULL_WAIVER") ? <ActionButton type="button" variant="secondary" onClick={() => onOpenWaiver("approve")} disabled={disabled}>ยกเว้นเต็มจำนวน</ActionButton> : null}
+            </div> : <p className="field-hint">รอผู้มีสิทธิ์รับชำระจากระบบ</p>}
+          </>
+        ) : null}
+        {data.visit.status === "READY_TO_CLOSE" ? <p className="checkout-readonly-copy">{isDoctor ? "หลักฐานการเงินพร้อมแล้ว · การปิด Visit จะเปิดใน Task 5" : "รับชำระแล้ว รอแพทย์ปิด Visit"}</p> : null}
+        {data.visit.status === "CLOSED" ? <p className="checkout-readonly-copy">ปิด Visit แล้ว</p> : null}
+        {!(["AWAITING_CHARGE", "AWAITING_PAYMENT", "READY_TO_CLOSE", "CLOSED"] as string[]).includes(data.visit.status) ? <p className="field-hint">ยังไม่ถึงขั้นตอนชำระเงิน</p> : null}
+      </div>
+    </section>
+  );
+}
+
+interface WaiverDialogProps {
+  reason: string;
+  reasonError?: string;
+  commandError?: string;
+  localError: string;
+  blocked: boolean;
+  commandPending: boolean;
+  reloadPending: boolean;
+  onReasonChange(value: string): void;
+  onClose(): void;
+  onSubmit(): void;
+  onReload(): void;
+}
+
+const waiverFocusableSelector = "textarea:not([disabled]), input:not([disabled]), button:not([disabled]), [href], [tabindex]:not([tabindex='-1'])";
+
+function WaiverDialog({ reason, reasonError, commandError, localError, blocked, commandPending, reloadPending, onReasonChange, onClose, onSubmit, onReload }: WaiverDialogProps): ReactElement {
+  const dialogRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    const reasonField = dialog?.querySelector<HTMLTextAreaElement>("#checkout-waiver-reason");
+    (reasonField ?? dialog)?.focus();
+  }, []);
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === "Escape" && !commandPending) {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(waiverFocusableSelector));
+    if (focusable.length === 0) {
+      event.preventDefault();
+      dialog.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
+  return (
+    <div className="dialog-backdrop">
+      <section ref={dialogRef} className="care-card sign-dialog checkout-waiver-dialog" role="dialog" aria-modal="true" aria-labelledby="checkout-waiver-title" aria-describedby="checkout-waiver-description" tabIndex={-1} onKeyDown={handleKeyDown}>
+        <h2 id="checkout-waiver-title">ยกเว้นเต็มจำนวน</h2>
+        <p id="checkout-waiver-description">เหตุผลจะถูกบันทึกเป็นหลักฐานการยกเว้นของ Visit นี้</p>
+        <TextAreaField id="checkout-waiver-reason" name="waiverReason" label="เหตุผลการยกเว้น" value={reason} error={reasonError} onChange={(event) => onReasonChange(event.target.value)} disabled={commandPending || blocked} />
+        {commandError ? <p className="field-error" role="alert">{commandError}</p> : null}
+        {localError ? <p className="field-error" role="alert">{localError}</p> : null}
+        <div className="dialog-actions">
+          {blocked ? <ActionButton type="button" variant="secondary" onClick={onReload} disabled={reloadPending}>{reloadPending ? "กำลังโหลด…" : "โหลดข้อมูลล่าสุด"}</ActionButton> : null}
+          <ActionButton type="button" variant="secondary" onClick={onClose} disabled={commandPending}>ยกเลิก</ActionButton>
+          <ActionButton type="button" onClick={onSubmit} disabled={commandPending || blocked || !reason.trim()}>{commandPending ? "กำลังบันทึก…" : "ยืนยันยกเว้นเต็มจำนวน"}</ActionButton>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 export function CheckoutScreen(): ReactElement {
   const { visitId = "" } = useParams();
+  const auth = useAuth();
   const checkout = useCheckout(visitId);
   const finalize = useFinalizeCharge();
   const approveWaiver = useApproveWaiver();
@@ -125,12 +278,26 @@ export function CheckoutScreen(): ReactElement {
   const approveWaiverAttempt = useRef<SavedAttempt<ApproveFullWaiverAttempt> | null>(null);
   const cashAttempt = useRef<RecordCashAttempt | null>(null);
   const promptPayAttempt = useRef<SavedAttempt<ConfirmPromptPayAttempt> | null>(null);
+  const waiverOpener = useRef<HTMLElement | null>(null);
+  const waiverWasOpen = useRef(false);
   const [waiverMode, setWaiverMode] = useState<WaiverMode | null>(null);
   const [waiverReason, setWaiverReason] = useState("");
   const [manualReference, setManualReference] = useState("");
   const [commandError, setCommandError] = useState<unknown>(null);
   const [blocked, setBlocked] = useState(false);
   const [localError, setLocalError] = useState("");
+
+  useEffect(() => {
+    if (waiverMode) {
+      waiverWasOpen.current = true;
+      return;
+    }
+    if (!waiverWasOpen.current) return;
+    waiverWasOpen.current = false;
+    const opener = waiverOpener.current;
+    waiverOpener.current = null;
+    if (opener?.isConnected) opener.focus();
+  }, [waiverMode]);
 
   const resetAttempts = () => {
     finalizeAttempt.current = null;
@@ -193,9 +360,15 @@ export function CheckoutScreen(): ReactElement {
 
   const openWaiver = (mode: WaiverMode) => {
     if (disabled) return;
+    waiverOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setLocalError("");
     setCommandError(null);
     setWaiverMode(mode);
+  };
+
+  const closeWaiver = () => {
+    if (commandPending) return;
+    setWaiverMode(null);
   };
 
   const submitWaiver = () => {
@@ -264,26 +437,34 @@ export function CheckoutScreen(): ReactElement {
       <PageHeader eyebrow="FINANCE · CHECKOUT" title="ชำระเงิน" description="ตรวจสอบหลักฐานยอดชำระและดำเนินการตามสิทธิ์ที่ระบบอนุญาต" />
       {stale ? <div className="checkout-stale" role="alert"><strong>ข้อมูลการชำระเงินอาจไม่เป็นปัจจุบัน</strong><span>{commandMessage(checkout.error)}</span><ActionButton type="button" variant="secondary" onClick={() => void reload()} disabled={checkout.isFetching}>โหลดข้อมูลล่าสุด</ActionButton></div> : null}
       {(commandError || localError) && !waiverMode ? <div className="checkout-command-error" role="alert"><strong>{localError || commandMessage(commandError)}</strong>{blocked ? <span>คำสั่งถูกระงับจนกว่าจะโหลดข้อมูลล่าสุด</span> : null}{blocked ? <ActionButton type="button" variant="secondary" onClick={() => void reload()} disabled={checkout.isFetching}>โหลดข้อมูลล่าสุด</ActionButton> : null}</div> : null}
-      <CheckoutEvidence data={data} />
-      <ReadOnlyState data={data} />
-      {data.visit.status === "AWAITING_CHARGE" ? (
-        <Card className="checkout-card checkout-actions">
-          <SectionHeading title="ยืนยันยอด" description="ยืนยันยอดจากหลักฐานที่แสดงเพื่อเปิดขั้นตอนรับชำระ หรือยกเว้นเต็มจำนวนในคำสั่งเดียว" />
-          {can(data, "FINALIZE_CHARGE") ? <div className="checkout-action-row"><ActionButton type="button" onClick={submitFinalize} disabled={disabled}>{finalize.isPending ? "กำลังยืนยันยอด…" : "ยืนยันยอดเพื่อรับชำระ"}</ActionButton><ActionButton type="button" variant="secondary" onClick={() => openWaiver("finalize")} disabled={disabled}>ยกเว้นเต็มจำนวน</ActionButton></div> : <p className="field-hint">รอผู้มีสิทธิ์ยืนยันยอดจากระบบ</p>}
-        </Card>
-      ) : null}
-      {data.visit.status === "AWAITING_PAYMENT" ? (
-        <Card className="checkout-card checkout-actions">
-          <SectionHeading title="รับชำระเงิน" description="ยอดที่ส่งคำสั่งจะใช้ยอดสุทธิจากระบบโดยตรง" />
-          <div className="checkout-payment-actions">
-            {can(data, "RECORD_CASH") ? <ActionButton type="button" onClick={submitCash} disabled={disabled}>{recordCash.isPending ? "กำลังบันทึกเงินสด…" : `ยืนยันรับเงินสด ${formatBaht(data.netDueBaht)}`}</ActionButton> : null}
-            {can(data, "CONFIRM_PROMPTPAY") ? <div className="checkout-promptpay"><Field label="เลขอ้างอิง PromptPay" value={manualReference} error={fieldErrors.promptPay} onChange={(event) => { promptPayAttempt.current = null; setManualReference(event.target.value); setCommandError(null); setLocalError(""); }} disabled={disabled} /><ActionButton type="button" variant="secondary" onClick={submitPromptPay} disabled={disabled || !manualReference.trim()}>{confirmPromptPay.isPending ? "กำลังยืนยัน PromptPay…" : "ยืนยัน PromptPay"}</ActionButton></div> : null}
-            {can(data, "APPROVE_FULL_WAIVER") ? <ActionButton type="button" variant="secondary" onClick={() => openWaiver("approve")} disabled={disabled}>ยกเว้นเต็มจำนวน</ActionButton> : null}
-          </div>
-          {!can(data, "RECORD_CASH") && !can(data, "CONFIRM_PROMPTPAY") && !can(data, "APPROVE_FULL_WAIVER") ? <p className="field-hint">รอผู้มีสิทธิ์รับชำระจากระบบ</p> : null}
-        </Card>
-      ) : null}
-      {waiverMode ? <div className="dialog-backdrop"><section className="care-card sign-dialog checkout-waiver-dialog" role="dialog" aria-modal="true" aria-label="ยกเว้นเต็มจำนวน"><h2>ยกเว้นเต็มจำนวน</h2><p>เหตุผลจะถูกบันทึกเป็นหลักฐานการยกเว้นของ Visit นี้</p><TextAreaField label="เหตุผลการยกเว้น" value={waiverReason} error={fieldErrors.waiver} onChange={(event) => { if (waiverMode === "finalize") finalizeWaiverAttempt.current = null; else approveWaiverAttempt.current = null; setWaiverReason(event.target.value); setCommandError(null); setLocalError(""); }} disabled={disabled} />{commandError ? <p className="field-error" role="alert">{commandMessage(commandError)}</p> : null}{localError ? <p className="field-error" role="alert">{localError}</p> : null}<div className="dialog-actions"><ActionButton type="button" variant="secondary" onClick={() => setWaiverMode(null)} disabled={commandPending}>ยกเลิก</ActionButton><ActionButton type="button" onClick={submitWaiver} disabled={disabled || !waiverReason.trim()}>{finalize.isPending || approveWaiver.isPending ? "กำลังบันทึก…" : "ยืนยันยกเว้นเต็มจำนวน"}</ActionButton></div></section></div> : null}
+      <CheckoutEvidence data={data} jobPanel={<CheckoutJobPanel
+        data={data}
+        isDoctor={auth.session?.user.role === "doctor"}
+        disabled={disabled}
+        finalizePending={finalize.isPending}
+        cashPending={recordCash.isPending}
+        promptPayPending={confirmPromptPay.isPending}
+        manualReference={manualReference}
+        promptPayError={fieldErrors.promptPay}
+        onFinalize={submitFinalize}
+        onOpenWaiver={openWaiver}
+        onCash={submitCash}
+        onPromptPay={submitPromptPay}
+        onManualReferenceChange={(value) => { promptPayAttempt.current = null; setManualReference(value); setCommandError(null); setLocalError(""); }}
+      />} />
+      {waiverMode ? <WaiverDialog
+        reason={waiverReason}
+        reasonError={fieldErrors.waiver}
+        commandError={commandError ? commandMessage(commandError) : undefined}
+        localError={localError}
+        blocked={blocked}
+        commandPending={commandPending}
+        reloadPending={checkout.isFetching}
+        onReasonChange={(value) => { if (waiverMode === "finalize") finalizeWaiverAttempt.current = null; else approveWaiverAttempt.current = null; setWaiverReason(value); setCommandError(null); setLocalError(""); }}
+        onClose={closeWaiver}
+        onSubmit={submitWaiver}
+        onReload={() => void reload()}
+      /> : null}
     </div>
   );
 }
