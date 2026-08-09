@@ -71,7 +71,7 @@ async function queueDoctorIntoConsultation(page: Page, hn: string): Promise<void
   await expect(page).toHaveURL(/\/consultations\/[^/]+$/);
 }
 
-async function printCurrentLabel(page: Page, baseURL: string, visitId: string): Promise<void> {
+async function printCurrentLabel(page: Page, baseURL: string, visitId: string, expectedDirections?: string): Promise<void> {
   await page.addInitScript(() => { window.print = () => undefined; });
   await page.goto(`${baseURL}/dispensing/${visitId}/labels`);
   await expect(page.getByText("ขนาดสื่อ 80 × 100 มม.")).toBeVisible();
@@ -82,7 +82,7 @@ async function printCurrentLabel(page: Page, baseURL: string, visitId: string): 
   expect(printedBounds.height).toBeGreaterThanOrEqual(377);
   expect(printedBounds.height).toBeLessThanOrEqual(379);
   expect(printedBounds.scrollHeight).toBeLessThanOrEqual(printedBounds.clientHeight);
-  expect(printedBounds.text).toContain("รับประทานหลังอาหารทันทีตามคำแนะนำของแพทย์ ".repeat(12).slice(0, 500));
+  if (expectedDirections) expect(printedBounds.text).toContain(expectedDirections);
   await page.emulateMedia({ media: "screen" });
   await page.getByRole("button", { name: "บันทึกคำขอพิมพ์และเปิดหน้าต่างพิมพ์" }).click();
   await expect(page.getByText("บันทึกคำขอพิมพ์แล้ว", { exact: false })).toBeVisible();
@@ -97,7 +97,7 @@ test("two browsers complete the signed ORDER through FEFO, release, restart, and
   try {
     await loginAndAcknowledge(assistant, server.baseURL, "assistant");
     const patient = await createQueuedPatient(assistant, "อาการสังเคราะห์สำหรับ E2E ครบวงจร");
-    await reviewAllergy(assistant, firstPatient.hn);
+    await reviewAllergy(assistant, patient.hn);
     await loginAndAcknowledge(doctor, server.baseURL, "doctor");
     await queueDoctorIntoConsultation(doctor, patient.hn);
     await signOrder(doctor, 8, "รับประทานหลังอาหารทันทีตามคำแนะนำของแพทย์ ".repeat(12).slice(0, 500));
@@ -114,7 +114,7 @@ test("two browsers complete the signed ORDER through FEFO, release, restart, and
       expect.objectContaining({ lotId: late.lot.id, quantity: 3 }),
     ]) } } });
 
-    await printCurrentLabel(assistant, server.baseURL, patient.visitId);
+    await printCurrentLabel(assistant, server.baseURL, patient.visitId, "รับประทานหลังอาหารทันทีตามคำแนะนำของแพทย์ ".repeat(12).slice(0, 500));
     await assistant.goto(`${server.baseURL}/dispensing/${patient.visitId}`);
     await assistant.getByLabel("สแกนบาร์โค้ดยา").fill("WRONG-CODE");
     await assistant.getByLabel("สแกนบาร์โค้ดยา").press("Enter");
@@ -173,7 +173,7 @@ test("reject/reprint, stale evidence, inventory safeguards, and role denial rema
     await loginAndAcknowledge(doctor, server.baseURL, "doctor");
     await receiveLot(assistant, { key: "completion-safety", lotNumber: "COMPLETE-SAFETY", expiryDate: "2031-08-10", quantity: 3 });
     const patient = await createQueuedPatient(assistant, "อาการสังเคราะห์สำหรับเส้นทางปฏิเสธ");
-    await reviewAllergy(assistant, secondPatient.hn);
+    await reviewAllergy(assistant, patient.hn);
     await queueDoctorIntoConsultation(doctor, patient.hn);
     await signOrder(doctor, 1);
 
