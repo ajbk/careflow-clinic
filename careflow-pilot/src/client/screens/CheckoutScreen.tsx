@@ -79,6 +79,10 @@ function can(data: CheckoutDto, action: CheckoutDto["allowedActions"][number]): 
   return data.allowedActions.includes(action);
 }
 
+function canUseWaiverMode(data: CheckoutDto, mode: WaiverMode): boolean {
+  return can(data, mode === "finalize" ? "FINALIZE_CHARGE" : "APPROVE_FULL_WAIVER");
+}
+
 function CheckoutUnavailable({ error, onReload }: { error: unknown; onReload: () => void }): ReactElement {
   const denied = isApiError(error) && error.status === 403;
   return (
@@ -201,6 +205,8 @@ interface WaiverDialogProps {
   reasonError?: string;
   commandError?: string;
   localError: string;
+  authorized: boolean;
+  stale: boolean;
   blocked: boolean;
   commandPending: boolean;
   reloadPending: boolean;
@@ -212,8 +218,14 @@ interface WaiverDialogProps {
 
 const waiverFocusableSelector = "textarea:not([disabled]), input:not([disabled]), button:not([disabled]), [href], [tabindex]:not([tabindex='-1'])";
 
-function WaiverDialog({ reason, reasonError, commandError, localError, blocked, commandPending, reloadPending, onReasonChange, onClose, onSubmit, onReload }: WaiverDialogProps): ReactElement {
+function WaiverDialog({ reason, reasonError, commandError, localError, authorized, stale, blocked, commandPending, reloadPending, onReasonChange, onClose, onSubmit, onReload }: WaiverDialogProps): ReactElement {
   const dialogRef = useRef<HTMLElement>(null);
+  const actionDisabled = commandPending || blocked || stale || !authorized;
+  const unavailableMessage = stale
+    ? "ข้อมูลการชำระเงินไม่เป็นปัจจุบัน จึงยังยกเว้นไม่ได้"
+    : !authorized
+      ? "สิทธิ์ยกเว้นเต็มจำนวนไม่พร้อมสำหรับสถานะล่าสุด"
+      : null;
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -252,13 +264,14 @@ function WaiverDialog({ reason, reasonError, commandError, localError, blocked, 
       <section ref={dialogRef} className="care-card sign-dialog checkout-waiver-dialog" role="dialog" aria-modal="true" aria-labelledby="checkout-waiver-title" aria-describedby="checkout-waiver-description" tabIndex={-1} onKeyDown={handleKeyDown}>
         <h2 id="checkout-waiver-title">ยกเว้นเต็มจำนวน</h2>
         <p id="checkout-waiver-description">เหตุผลจะถูกบันทึกเป็นหลักฐานการยกเว้นของ Visit นี้</p>
-        <TextAreaField id="checkout-waiver-reason" name="waiverReason" label="เหตุผลการยกเว้น" value={reason} error={reasonError} onChange={(event) => onReasonChange(event.target.value)} disabled={commandPending || blocked} />
+        <TextAreaField id="checkout-waiver-reason" name="waiverReason" label="เหตุผลการยกเว้น" value={reason} error={reasonError} onChange={(event) => onReasonChange(event.target.value)} disabled={actionDisabled} />
         {commandError ? <p className="field-error" role="alert">{commandError}</p> : null}
         {localError ? <p className="field-error" role="alert">{localError}</p> : null}
+        {unavailableMessage ? <p className="field-hint" role="status">{unavailableMessage}</p> : null}
         <div className="dialog-actions">
-          {blocked ? <ActionButton type="button" variant="secondary" onClick={onReload} disabled={reloadPending}>{reloadPending ? "กำลังโหลด…" : "โหลดข้อมูลล่าสุด"}</ActionButton> : null}
+          {blocked || stale ? <ActionButton type="button" variant="secondary" onClick={onReload} disabled={reloadPending}>{reloadPending ? "กำลังโหลด…" : "โหลดข้อมูลล่าสุด"}</ActionButton> : null}
           <ActionButton type="button" variant="secondary" onClick={onClose} disabled={commandPending}>ยกเลิก</ActionButton>
-          <ActionButton type="button" onClick={onSubmit} disabled={commandPending || blocked || !reason.trim()}>{commandPending ? "กำลังบันทึก…" : "ยืนยันยกเว้นเต็มจำนวน"}</ActionButton>
+          <ActionButton type="button" onClick={onSubmit} disabled={actionDisabled || !reason.trim()}>{commandPending ? "กำลังบันทึก…" : "ยืนยันยกเว้นเต็มจำนวน"}</ActionButton>
         </div>
       </section>
     </div>
@@ -339,6 +352,7 @@ export function CheckoutScreen(): ReactElement {
   }
 
   const data = checkout.data;
+  const waiverAuthorized = waiverMode ? canUseWaiverMode(data, waiverMode) : false;
   const fieldErrors = {
     waiver: fieldError(commandError, waiverMode === "finalize" ? "payload.waiverReason" : "payload.reason"),
     promptPay: fieldError(commandError, "payload.manualReference"),
@@ -359,7 +373,7 @@ export function CheckoutScreen(): ReactElement {
   };
 
   const openWaiver = (mode: WaiverMode) => {
-    if (disabled) return;
+    if (disabled || !canUseWaiverMode(data, mode)) return;
     waiverOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setLocalError("");
     setCommandError(null);
@@ -372,7 +386,7 @@ export function CheckoutScreen(): ReactElement {
   };
 
   const submitWaiver = () => {
-    if (disabled || !waiverMode) return;
+    if (disabled || !waiverMode || !waiverAuthorized) return;
     const reason = waiverReason.trim();
     if (!reason) { setLocalError("กรุณาระบุเหตุผลการยกเว้น"); return; }
     setCommandError(null);
@@ -457,6 +471,8 @@ export function CheckoutScreen(): ReactElement {
         reasonError={fieldErrors.waiver}
         commandError={commandError ? commandMessage(commandError) : undefined}
         localError={localError}
+        authorized={waiverAuthorized}
+        stale={stale}
         blocked={blocked}
         commandPending={commandPending}
         reloadPending={checkout.isFetching}

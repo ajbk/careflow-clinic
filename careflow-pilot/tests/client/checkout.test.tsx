@@ -88,6 +88,12 @@ const paidCheckout = {
   closeBlockers: [],
 };
 
+const awaitingPaymentWithoutWaiver = {
+  ...awaitingPaymentCheckout,
+  visit: { ...awaitingPaymentCheckout.visit, revision: 9 },
+  allowedActions: ["RECORD_CASH"],
+};
+
 const waivedCheckout = {
   ...paidCheckout,
   adjustmentTotalBaht: -125,
@@ -285,6 +291,72 @@ describe("Thai checkout workflow", () => {
     await user.click(within(dialog).getByRole("button", { name: "โหลดข้อมูลล่าสุด" }));
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "ยืนยันยกเว้นเต็มจำนวน" })).toBeEnabled());
     expect(reason).toHaveValue("เกณฑ์ช่วยเหลือผู้ป่วย");
+  });
+
+  it.each([
+    {
+      label: "finalize waiver after the Visit becomes ready to close",
+      initialCheckout: previewCheckout,
+      endpoint: "/api/checkout/visit-42/charge-finalizations",
+      refreshedCheckout: paidCheckout,
+    },
+    {
+      label: "post-finalize waiver after APPROVE_FULL_WAIVER is revoked",
+      initialCheckout: awaitingPaymentCheckout,
+      endpoint: "/api/checkout/visit-42/waivers",
+      refreshedCheckout: awaitingPaymentWithoutWaiver,
+    },
+  ])("keeps $label truthful and read-only after conflict reload", async ({ initialCheckout, endpoint, refreshedCheckout }) => {
+    const user = userEvent.setup();
+    let mutationRequests = 0;
+    server.use(http.post(endpoint, () => {
+      mutationRequests += 1;
+      return apiError("REVISION_CONFLICT", "ข้อมูลการชำระเงินเปลี่ยนแปลงแล้ว", 409);
+    }));
+    renderCheckout(initialCheckout);
+    await user.click(await screen.findByRole("button", { name: "ยกเว้นเต็มจำนวน" }));
+    const dialog = screen.getByRole("dialog", { name: "ยกเว้นเต็มจำนวน" });
+    const reason = within(dialog).getByLabelText("เหตุผลการยกเว้น");
+    await user.type(reason, "เกณฑ์ช่วยเหลือผู้ป่วย");
+    await user.click(within(dialog).getByRole("button", { name: "ยืนยันยกเว้นเต็มจำนวน" }));
+    expect(await within(dialog).findByText("ข้อมูลการชำระเงินเปลี่ยนแปลงแล้ว")).toBeInTheDocument();
+
+    server.use(http.get("/api/checkout/visit-42", () => HttpResponse.json({ data: refreshedCheckout })));
+    await user.click(within(dialog).getByRole("button", { name: "โหลดข้อมูลล่าสุด" }));
+    await waitFor(() => expect(reason).toBeDisabled());
+    expect(reason).toHaveValue("เกณฑ์ช่วยเหลือผู้ป่วย");
+    expect(within(dialog).getByRole("button", { name: "ยืนยันยกเว้นเต็มจำนวน" })).toBeDisabled();
+    expect(within(dialog).getByRole("status")).toHaveTextContent("สิทธิ์ยกเว้นเต็มจำนวนไม่พร้อมสำหรับสถานะล่าสุด");
+    const job = screen.getByRole("region", { name: "งานชำระเงินปัจจุบัน" });
+    expect(within(job).queryByRole("button", { name: "ยกเว้นเต็มจำนวน" })).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "ยืนยันยกเว้นเต็มจำนวน" }));
+    expect(mutationRequests).toBe(1);
+  });
+
+  it("keeps an open waiver draft disabled when Checkout becomes stale without sending a command", async () => {
+    const user = userEvent.setup();
+    let mutationRequests = 0;
+    server.use(http.post("/api/checkout/visit-42/charge-finalizations", () => {
+      mutationRequests += 1;
+      return HttpResponse.json({ data: waivedCheckout, replayed: false }, { status: 201 });
+    }));
+    renderCheckout();
+    await user.click(await screen.findByRole("button", { name: "ยกเว้นเต็มจำนวน" }));
+    const dialog = screen.getByRole("dialog", { name: "ยกเว้นเต็มจำนวน" });
+    const reason = within(dialog).getByLabelText("เหตุผลการยกเว้น");
+    await user.type(reason, "เกณฑ์ช่วยเหลือผู้ป่วย");
+
+    server.use(http.get("/api/checkout/visit-42", () => apiError("INTERNAL_ERROR", "ระบบชำระเงินไม่พร้อมใช้งาน", 503)));
+    window.dispatchEvent(new Event("focus"));
+    expect(await screen.findByText("ข้อมูลการชำระเงินอาจไม่เป็นปัจจุบัน")).toBeInTheDocument();
+    expect(reason).toHaveValue("เกณฑ์ช่วยเหลือผู้ป่วย");
+    expect(reason).toBeDisabled();
+    const submit = within(dialog).getByRole("button", { name: "ยืนยันยกเว้นเต็มจำนวน" });
+    expect(submit).toBeDisabled();
+    expect(within(dialog).getByRole("status")).toHaveTextContent("ข้อมูลการชำระเงินไม่เป็นปัจจุบัน จึงยังยกเว้นไม่ได้");
+    expect(within(dialog).getByRole("button", { name: "โหลดข้อมูลล่าสุด" })).toBeInTheDocument();
+    await user.click(submit);
+    expect(mutationRequests).toBe(0);
   });
 
   it("allows an Assistant only the server-authorized exact Cash action", async () => {
