@@ -804,6 +804,13 @@ export const fulfillmentPreparationSchema = z.strictObject({
   revision: z.number().int().min(1),
   status: z.enum(["ACTIVE", "COMPLETED"]),
   confirmations: z.array(fulfillmentConfirmationSchema),
+  minimumPrintSequence: z.number().int().min(1).optional(),
+  latestPrintEventId: fulfillmentIdSchema.nullable().optional(),
+  latestPrintSequence: z.number().int().min(1).nullable().optional(),
+}).superRefine((preparation, context) => {
+  if (preparation?.status === "COMPLETED" && (!preparation.minimumPrintSequence || !preparation.latestPrintEventId || !preparation.latestPrintSequence)) {
+    context.addIssue({ code: "custom", path: ["latestPrintEventId"], message: "Completed preparation must carry the qualifying print evidence" });
+  }
 }).nullable();
 export type FulfillmentPreparationDto = z.infer<typeof fulfillmentPreparationSchema>;
 
@@ -910,19 +917,40 @@ export type FulfillmentAbandonPreparationBody = z.infer<typeof fulfillmentAbando
 
 export const fulfillmentReleaseBodySchema = rejectOwnPrototypeKeys(z.strictObject({
   expectedRevisions: z.strictObject({ visit: z.number().int().min(1), preparation: z.number().int().min(1) }),
-  payload: z.strictObject({ preparationId: fulfillmentIdSchema }),
+  payload: z.strictObject({
+    decisionId: fulfillmentIdSchema,
+    decisionVersion: z.number().int().min(1),
+    labelVersionId: fulfillmentIdSchema,
+    labelPrintEventId: fulfillmentIdSchema,
+    preparationId: fulfillmentIdSchema,
+    reservationId: fulfillmentIdSchema,
+  }),
 }));
 export type FulfillmentReleaseBody = z.infer<typeof fulfillmentReleaseBodySchema>;
 
 export const fulfillmentRejectBodySchema = rejectOwnPrototypeKeys(z.strictObject({
   expectedRevisions: z.strictObject({ visit: z.number().int().min(1), preparation: z.number().int().min(1) }),
-  payload: z.strictObject({ preparationId: fulfillmentIdSchema, reason: fulfillmentTextSchema(500) }),
+  payload: z.strictObject({
+    decisionId: fulfillmentIdSchema,
+    decisionVersion: z.number().int().min(1),
+    labelVersionId: fulfillmentIdSchema,
+    labelPrintEventId: fulfillmentIdSchema,
+    preparationId: fulfillmentIdSchema,
+    reservationId: fulfillmentIdSchema,
+    reason: fulfillmentTextSchema(500),
+  }),
 }));
 export type FulfillmentRejectBody = z.infer<typeof fulfillmentRejectBodySchema>;
 
 export const fulfillmentHandoffBodySchema = rejectOwnPrototypeKeys(z.strictObject({
   expectedRevisions: z.strictObject({ visit: z.number().int().min(1) }),
-  payload: z.strictObject({}),
+  payload: z.strictObject({
+    decisionId: fulfillmentIdSchema,
+    decisionVersion: z.number().int().min(1),
+    labelVersionId: fulfillmentIdSchema,
+    releaseId: fulfillmentIdSchema,
+    reservationId: fulfillmentIdSchema,
+  }),
 }));
 export type FulfillmentHandoffBody = z.infer<typeof fulfillmentHandoffBodySchema>;
 

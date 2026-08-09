@@ -52,6 +52,11 @@ const auditActionPolicyEntries = [
   ["fulfillment.released", "optional"],
   ["fulfillment.rejected", "required"],
   ["fulfillment.handed-off", "optional"],
+  ["preparation.rejected", "required"],
+  ["medication.release-created", "optional"],
+  ["dispense.handoff-confirmed", "optional"],
+  ["inventory.stock-dispensed", "optional"],
+  ["visit.handoff-confirmed", "optional"],
 ] as const;
 
 type AuditActionPolicyEntry = (typeof auditActionPolicyEntries)[number];

@@ -139,11 +139,42 @@ function seedInventoryEvidence(databasePath: string): void {
   }
 }
 
+function seedFulfillmentAuditEvidence(databasePath: string): void {
+  const database = new Database(databasePath);
+  try {
+    const actions = [
+      "label.version-created",
+      "label.print-requested",
+      "preparation.rejected",
+      "fulfillment.released",
+      "fulfillment.rejected",
+      "medication.release-created",
+      "dispense.handoff-confirmed",
+      "inventory.stock-dispensed",
+      "inventory.reservation-released",
+      "visit.handoff-confirmed",
+    ];
+    const insert = database.prepare(`
+      INSERT INTO audit_events (
+        id, clinic_id, actor_id, actor_role, action, entity_type, entity_id,
+        entity_revision, reason, occurred_at, metadata_json
+      ) VALUES (?, 'clinic', 'reset-assistant-001', 'assistant', ?, 'reset', ?, 1, 'reset test', ?, '{}')
+    `);
+    const transaction = database.transaction(() => {
+      actions.forEach((action, index) => insert.run(`reset-fulfillment-audit-${index}`, action, `reset-evidence-${index}`, "2026-08-03T00:00:00.000Z"));
+    });
+    transaction();
+  } finally {
+    database.close();
+  }
+}
+
 describe("guarded synthetic reset", () => {
   it("deletes only synthetic workflow data and preserves accounts/account audit", async () => {
     const fixture = await populatedDatabase();
     seedClinicalEvidence(fixture.databasePath);
     seedInventoryEvidence(fixture.databasePath);
+    seedFulfillmentAuditEvidence(fixture.databasePath);
     const result = reset(fixture.databasePath);
 
     expect(result.code).toBe(0);
@@ -186,7 +217,7 @@ describe("guarded synthetic reset", () => {
       expect(database.prepare("SELECT value FROM clinic_counters WHERE key = 'synthetic_patient'").pluck().get()).toBe(0);
       expect(database.prepare("SELECT count(*) FROM staff_accounts").pluck().get()).toBe(1);
       expect(database.prepare("SELECT count(*) FROM audit_events WHERE action LIKE 'account.%'").pluck().get()).toBe(fixture.accountAuditCount);
-      expect(database.prepare("SELECT count(*) FROM audit_events WHERE action LIKE 'patient.%' OR action LIKE 'visit.%' OR action LIKE 'allergy.%' OR action LIKE 'note.%' OR action LIKE 'medication.%'").pluck().get()).toBe(0);
+      expect(database.prepare("SELECT count(*) FROM audit_events WHERE action LIKE 'patient.%' OR action LIKE 'visit.%' OR action LIKE 'allergy.%' OR action LIKE 'note.%' OR action LIKE 'medication.%' OR action LIKE 'inventory.%' OR action LIKE 'label.%' OR action LIKE 'preparation.%' OR action LIKE 'fulfillment.%' OR action LIKE 'dispense.%'").pluck().get()).toBe(0);
       expect(Number(fixture.accountAuditCount)).toBeGreaterThan(0);
       expect(() => database.prepare("DELETE FROM audit_events WHERE action LIKE 'account.%'").run()).toThrow("append-only");
       expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);

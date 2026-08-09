@@ -19,6 +19,9 @@ const allocation = { id: "allocation-1", orderItemId: "item-1", lotId: "lot-earl
 const basePickList = { visit, patient, medicationDecision: { id: "decision-1", version: 1, kind: "ORDER" as const }, label, reservation: null, preparation: null, release: null, dispense: null, allowedActions: ["START_PREPARATION", "PRINT_LABEL"] as const };
 const preparingPickList = { ...basePickList, visit: { ...visit, status: "PREPARING" as const, revision: 10 }, reservation: { id: "reservation-1", allocations: [allocation] }, preparation: { id: "preparation-1", revision: 1, status: "ACTIVE" as const, confirmations: [] }, allowedActions: ["PRINT_LABEL", "CONFIRM_ALLOCATION", "COMPLETE_PREPARATION", "ABANDON_PREPARATION"] as const };
 const confirmedPickList = { ...preparingPickList, preparation: { ...preparingPickList.preparation, confirmations: [{ allocationId: allocation.id, orderItemId: allocation.orderItemId, lotId: allocation.lotId, method: "BARCODE" as const, barcode: "PARA-500" }] } };
+const completedPreparation = { ...preparingPickList.preparation, revision: 2, status: "COMPLETED" as const, minimumPrintSequence: 1, latestPrintEventId: "print-1", latestPrintSequence: 1, confirmations: confirmedPickList.preparation.confirmations };
+const releasePickList = { ...basePickList, visit: { ...visit, status: "AWAITING_RELEASE" as const, revision: 11 }, reservation: { id: "reservation-1", allocations: [allocation] }, preparation: completedPreparation, allowedActions: ["RELEASE", "REJECT"] as const };
+const handoffPickList = { ...basePickList, visit: { ...visit, status: "AWAITING_HANDOFF" as const, revision: 12 }, reservation: { id: "reservation-1", allocations: [allocation] }, preparation: completedPreparation, release: { id: "release-1", reservationId: "reservation-1" }, allowedActions: ["HANDOFF"] as const };
 let currentPickList: unknown = basePickList;
 
 function session(role: "assistant" | "doctor" = "assistant", permissions = ["fulfillment:read", "fulfillment:prepare", "label:print"]) {
@@ -195,6 +198,51 @@ describe("Preparation and label workflow", () => {
     cleanup();
     renderDispensing("/dispensing/visit-42", "doctor", ["fulfillment:read", "fulfillment:release"]);
     expect(await screen.findByRole("button", { name: "ปล่อยยา" })).toBeEnabled();
+  });
+
+  it("pins every reviewed artifact and preserves a Doctor rejection reason in the client command", async () => {
+    const user = userEvent.setup();
+    let body: { payload?: Record<string, unknown> } | undefined;
+    server.resetHandlers(
+      http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: releasePickList })),
+      http.post("/api/dispensing/visit-42/reject", async ({ request }) => {
+        body = await request.json() as { payload?: Record<string, unknown> };
+        return HttpResponse.json({ data: { ...basePickList, visit: { ...visit, status: "AWAITING_PREPARATION" as const, revision: 12 }, allowedActions: ["START_PREPARATION"] }, replayed: false }, { status: 201 });
+      }),
+    );
+    renderDispensing("/dispensing/visit-42", "doctor", ["fulfillment:read", "fulfillment:release"]);
+    await user.type(await screen.findByLabelText("เหตุผลการปฏิเสธ"), "  ฉลากไม่ตรง  ");
+    await user.click(screen.getByRole("button", { name: "ปฏิเสธการจัดยา" }));
+    await waitFor(() => expect(body).toEqual(expect.objectContaining({ payload: {
+      decisionId: "decision-1", decisionVersion: 1, labelVersionId: "label-1", labelPrintEventId: "print-1", preparationId: "preparation-1", reservationId: "reservation-1", reason: "ฉลากไม่ตรง",
+    } })));
+  });
+
+  it("allows Assistant and Doctor handoff but sends one exact command while the first submit is pending", async () => {
+    const user = userEvent.setup();
+    let requests = 0;
+    let resolveRequest!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => { resolveRequest = resolve; });
+    let body: { payload?: Record<string, unknown> } | undefined;
+    server.resetHandlers(
+      http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: handoffPickList })),
+      http.post("/api/dispensing/visit-42/handoff", async ({ request }) => {
+        requests += 1;
+        body = await request.json() as { payload?: Record<string, unknown> };
+        return pending;
+      }),
+    );
+    renderDispensing("/dispensing/visit-42", "assistant", ["fulfillment:read", "fulfillment:handoff"]);
+    const button = await screen.findByRole("button", { name: "ยืนยันส่งมอบยา" });
+    await user.click(button);
+    await user.click(button);
+    expect(requests).toBe(1);
+    expect(button).toBeDisabled();
+    expect(body).toEqual(expect.objectContaining({ payload: {
+      decisionId: "decision-1", decisionVersion: 1, labelVersionId: "label-1", releaseId: "release-1", reservationId: "reservation-1",
+    } }));
+    resolveRequest(new Response(JSON.stringify({ data: { ...handoffPickList, visit: { ...handoffPickList.visit, status: "AWAITING_CHARGE" as const, revision: 13 }, release: handoffPickList.release, dispense: { id: "dispense-1", reservationId: "reservation-1", lines: [{ allocationId: "allocation-1", orderItemId: "item-1", lotId: "lot-early", quantity: 10 }] }, allowedActions: [] }, replayed: false }), { status: 201, headers: { "Content-Type": "application/json" } }));
+    await waitFor(() => expect(screen.getByText("จัดยาและส่งมอบแล้ว")).toBeInTheDocument());
   });
 
   it("hides preparation commands when the Assistant has only read permission", async () => {

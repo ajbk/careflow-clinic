@@ -36,7 +36,7 @@ describe("SQLite boundary", () => {
     ).toBe("careflow-pilot");
     expect(
       handle.sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get(),
-    ).toBe(12);
+    ).toBe(13);
     expect(
       handle.sqlite
         .prepare(

@@ -53,17 +53,17 @@ export function registerFulfillmentRoutes(input: { app: FastifyInstance; databas
   });
   input.app.post("/api/dispensing/:visitId/release", async (request, reply) => {
     const actor = requireActor(request, "fulfillment:release"); const body = fulfillmentReleaseBodySchema.parse(request.body); const id = visitId(request);
-    const result = executeIdempotent({ db: input.database.db, actor, key: key(request), operation: "fulfillment.release.v1", scope: id, requestBody: body, work: (tx) => ({ statusCode: 201, data: input.fulfillment.releaseForVisit(tx, actor, id, body.expectedRevisions.visit, body.expectedRevisions.preparation, body.payload.preparationId) }) });
+    const result = executeIdempotent({ db: input.database.db, actor, key: key(request), operation: "fulfillment.release.v1", scope: id, requestBody: body, work: (tx) => ({ statusCode: 201, data: input.fulfillment.releaseForVisit(tx, actor, id, body.expectedRevisions.visit, body.expectedRevisions.preparation, body.payload) }) });
     return reply.code(result.body.replayed ? 200 : result.statusCode).send(result.body);
   });
   input.app.post("/api/dispensing/:visitId/reject", async (request, reply) => {
     const actor = requireActor(request, "fulfillment:release"); const body = fulfillmentRejectBodySchema.parse(request.body); const id = visitId(request);
-    const result = executeIdempotent({ db: input.database.db, actor, key: key(request), operation: "fulfillment.reject.v1", scope: id, requestBody: body, work: (tx) => ({ statusCode: 201, data: input.fulfillment.rejectForVisit(tx, actor, id, body.expectedRevisions.visit, body.expectedRevisions.preparation, body.payload.preparationId, body.payload.reason) }) });
+    const result = executeIdempotent({ db: input.database.db, actor, key: key(request), operation: "fulfillment.reject.v1", scope: id, requestBody: body, work: (tx) => ({ statusCode: 201, data: input.fulfillment.rejectForVisit(tx, actor, id, body.expectedRevisions.visit, body.expectedRevisions.preparation, body.payload) }) });
     return reply.code(result.body.replayed ? 200 : result.statusCode).send(result.body);
   });
   input.app.post("/api/dispensing/:visitId/handoff", async (request, reply) => {
     const actor = requireActor(request, "fulfillment:handoff"); const body = fulfillmentHandoffBodySchema.parse(request.body); const id = visitId(request);
-    const result = executeIdempotent({ db: input.database.db, actor, key: key(request), operation: "fulfillment.handoff.v1", scope: id, requestBody: body, work: (tx) => ({ statusCode: 201, data: input.fulfillment.handoffForVisit(tx, actor, id, body.expectedRevisions.visit) }) });
+    const result = executeIdempotent({ db: input.database.db, actor, key: key(request), operation: "fulfillment.handoff.v1", scope: id, requestBody: body, work: (tx) => ({ statusCode: 201, data: input.fulfillment.handoffForVisit(tx, actor, id, body.expectedRevisions.visit, body.payload) }) });
     return reply.code(result.body.replayed ? 200 : result.statusCode).send(result.body);
   });
 }

@@ -85,6 +85,13 @@
       "when": 1786232111159,
       "tag": "0011_dispense_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1786233352972,
+      "tag": "0012_inventory_revision",
+      "breakpoints": true
     }
   ]
 }

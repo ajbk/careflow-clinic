@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type {
   Actor,
   InventoryPickListDto,
@@ -20,7 +20,7 @@ import { ApiError } from "../../errors.js";
 import { createMedicationService, type MedicationService } from "../medication/service.js";
 import { medicationDecisions, medicationOrderItems, medications } from "../medication/schema.js";
 import { patients } from "../patient/schema.js";
-import { assertExpectedRevision, type AppDatabase, type AppTransaction } from "../platform/index.js";
+import { appendAuditEvent, assertExpectedRevision, type AppDatabase, type AppTransaction, type AuditedTransaction } from "../platform/index.js";
 import { staffAccounts } from "../platform/schema.js";
 import { visits } from "../visit/schema.js";
 import {
@@ -67,13 +67,21 @@ export interface InventoryService {
     reason: string,
   ): InventoryReservationDto | null;
   consumeReservationForDispense(
-    tx: AppTransaction,
+    tx: AuditedTransaction,
     actor: Actor,
     input: {
       visitId: string;
       reservationId: string;
       dispenseId: string;
-      lines: Array<{ id: string; lotId: string; quantity: number }>;
+      decisionId: string;
+      decisionVersion: number;
+      labelVersionId: string;
+      labelPrintEventId: string;
+      releaseId: string;
+      preparationId: string;
+      previousStatus: string;
+      nextStatus: string;
+      lines: Array<{ id: string; reservationAllocationId: string; lotId: string; quantity: number; lotNumberSnapshot: string; unitSnapshot: string }>;
     },
   ): void;
 }
@@ -522,6 +530,7 @@ export function createInventoryService(input: InventoryServiceOptions): Inventor
         clinicId: "clinic",
         medicationId: medication.id,
         medicationRevision: medication.revision,
+        revision: 1,
         displayNameSnapshot: medication.displayName,
         strengthSnapshot: medication.strengthText,
         dosageFormSnapshot: medication.dosageFormText,
@@ -756,11 +765,18 @@ export function createInventoryService(input: InventoryServiceOptions): Inventor
         throw reservationError("รายการจองยาไม่ครบสำหรับการส่งมอบ");
       }
       const linesById = new Map(input.lines.map((line) => [line.id, line]));
+      const linesByAllocationId = new Map(input.lines.map((line) => [line.reservationAllocationId, line]));
       const allocationTotals = new Map<string, number>();
       for (const allocation of allocations) allocationTotals.set(allocation.lotId, (allocationTotals.get(allocation.lotId) ?? 0) + allocation.quantity);
       const lineTotals = new Map<string, number>();
       for (const line of input.lines) lineTotals.set(line.lotId, (lineTotals.get(line.lotId) ?? 0) + line.quantity);
-      if ([...allocationTotals.entries()].some(([lotId, quantity]) => lineTotals.get(lotId) !== quantity) || linesById.size !== input.lines.length) {
+      if ([...allocationTotals.entries()].some(([lotId, quantity]) => lineTotals.get(lotId) !== quantity)
+        || linesById.size !== input.lines.length
+        || linesByAllocationId.size !== input.lines.length
+        || allocations.some((allocation) => {
+          const line = linesByAllocationId.get(allocation.id);
+          return !line || line.lotId !== allocation.lotId || line.quantity !== allocation.quantity || line.lotNumberSnapshot !== allocation.lotNumberSnapshot || line.unitSnapshot !== allocation.unitSnapshot;
+        })) {
         throw reservationError("รายการส่งมอบไม่ตรงกับรายการจองยา");
       }
       const date = clinicDate(clock());
@@ -772,11 +788,20 @@ export function createInventoryService(input: InventoryServiceOptions): Inventor
         }
       }
       const now = clock().toISOString();
-      tx.insert(inventoryStockMovements).values(input.lines.map((line) => ({
+      const movements = input.lines.map((line) => ({
         id: nextInventoryId(), clinicId: "clinic", lotId: line.lotId, movementType: "DISPENSE" as const,
         quantityDelta: -line.quantity, sourceType: "DISPENSE" as const, sourceId: line.id,
         reason: "", occurredAt: now, actorId: actor.id,
-      }))).run();
+      }));
+      tx.insert(inventoryStockMovements).values(movements).run();
+      for (const [index, movement] of movements.entries()) {
+        const line = input.lines[index];
+        appendAuditEvent({ tx, actor, id: `audit:inventory.stock-dispensed:${movement.id}`, action: "inventory.stock-dispensed", entityType: "inventory_stock_movement", entityId: movement.id, entityRevision: 1, reason: null, occurredAt: now, metadata: { visitId: input.visitId, dispenseId: input.dispenseId, dispenseLineId: line.id, allocationId: line.reservationAllocationId, decisionId: input.decisionId, decisionVersion: input.decisionVersion, labelVersionId: input.labelVersionId, labelPrintEventId: input.labelPrintEventId, releaseId: input.releaseId, preparationId: input.preparationId, reservationId: input.reservationId, previousStatus: input.previousStatus, nextStatus: input.nextStatus, lotId: line.lotId, lotNumber: line.lotNumberSnapshot, lotNumberSnapshot: line.lotNumberSnapshot, quantity: line.quantity, unit: line.unitSnapshot, quantityDelta: movement.quantityDelta, allocations: [{ allocationId: line.reservationAllocationId, lotId: line.lotId, lotNumber: line.lotNumberSnapshot, lotNumberSnapshot: line.lotNumberSnapshot, quantity: line.quantity, unit: line.unitSnapshot }] } });
+      }
+      for (const lotId of allocationTotals.keys()) {
+        const changedLot = tx.update(inventoryLots).set({ revision: sql`${inventoryLots.revision} + 1` }).where(eq(inventoryLots.id, lotId)).run();
+        if (changedLot.changes !== 1) throw reservationError("ล็อตยาถูกเปลี่ยนแปลงแล้ว");
+      }
       const changed = tx.update(inventoryReservations).set({
         status: "CONSUMED", consumedAt: now, consumedBy: actor.id, consumedDispenseId: input.dispenseId,
       }).where(and(eq(inventoryReservations.id, reservation.id), eq(inventoryReservations.status, "ACTIVE"))).run();

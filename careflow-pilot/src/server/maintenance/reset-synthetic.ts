@@ -14,6 +14,22 @@ import {
 export const RESET_CONFIRMATION = "RESET-SYNTHETIC-PILOT";
 export { MAINTENANCE_LOCK_SUFFIX };
 
+// These prefixes are the complete synthetic clinical trail. Account and
+// maintenance audit records are deliberately outside this predicate and are
+// preserved across a reset.
+const syntheticAuditPredicate = [
+  "action LIKE 'patient.%'",
+  "action LIKE 'visit.%'",
+  "action LIKE 'allergy.%'",
+  "action LIKE 'note.%'",
+  "action LIKE 'medication.%'",
+  "action LIKE 'inventory.%'",
+  "action LIKE 'label.%'",
+  "action LIKE 'preparation.%'",
+  "action LIKE 'fulfillment.%'",
+  "action LIKE 'dispense.%'",
+].join(" OR ");
+
 const expectedTables = new Set([
   "__drizzle_migrations",
   "audit_events",
@@ -319,7 +335,7 @@ function verifyReset(sqlite: Database.Database): void {
     fail("Clinical append-only triggers were not restored");
   }
   const clinicalAuditCount = sqlite
-    .prepare("SELECT count(*) FROM audit_events WHERE action LIKE 'patient.%' OR action LIKE 'visit.%' OR action LIKE 'allergy.%' OR action LIKE 'note.%' OR action LIKE 'medication.%' OR action LIKE 'inventory.%'")
+    .prepare(`SELECT count(*) FROM audit_events WHERE ${syntheticAuditPredicate}`)
     .pluck()
     .get();
   if (Number(clinicalAuditCount) !== 0) fail("Synthetic reset left clinical Audit rows");
@@ -409,7 +425,7 @@ export function runResetSyntheticData(deps: ResetSyntheticDependencies): number 
     sqlite.exec("DELETE FROM intake_observations;");
     sqlite.exec("DELETE FROM visits;");
     sqlite.exec("DELETE FROM patients;");
-    sqlite.exec("DELETE FROM audit_events WHERE action LIKE 'patient.%' OR action LIKE 'visit.%' OR action LIKE 'allergy.%' OR action LIKE 'note.%' OR action LIKE 'medication.%' OR action LIKE 'inventory.%';");
+    sqlite.exec(`DELETE FROM audit_events WHERE ${syntheticAuditPredicate};`);
     sqlite.exec("UPDATE clinic_counters SET value = 0 WHERE key = 'synthetic_patient';");
     restoreAuditTriggers(sqlite);
     restoreClinicalTriggers(sqlite);

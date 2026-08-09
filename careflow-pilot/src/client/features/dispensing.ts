@@ -69,21 +69,36 @@ export function createAbandonPreparationAttempt(data: FulfillmentPickListDto, re
 
 function requiredCompletedPreparation(data: FulfillmentPickListDto) {
   if (!data.preparation || data.preparation.status !== "COMPLETED") throw new Error("A completed preparation is required");
+  if (!data.medicationDecision || data.medicationDecision.kind !== "ORDER" || !data.label || !data.reservation || !data.preparation.latestPrintEventId) throw new Error("The reviewed release chain is incomplete");
   return data.preparation;
 }
 
 export function createReleaseAttempt(data: FulfillmentPickListDto): ReleaseAttempt {
   const preparation = requiredCompletedPreparation(data);
-  return createCommandAttempt({ visit: data.visit.revision, preparation: preparation.revision }, { preparationId: preparation.id });
+  const printEventId = preparation.latestPrintEventId;
+  if (!printEventId) throw new Error("A qualifying print event is required");
+  return createCommandAttempt({ visit: data.visit.revision, preparation: preparation.revision }, {
+    decisionId: data.medicationDecision!.id, decisionVersion: data.medicationDecision!.version, labelVersionId: data.label!.id,
+    labelPrintEventId: printEventId, preparationId: preparation.id, reservationId: data.reservation!.id,
+  });
 }
 
 export function createRejectAttempt(data: FulfillmentPickListDto, reason: string): RejectAttempt {
   const preparation = requiredCompletedPreparation(data);
-  return createCommandAttempt({ visit: data.visit.revision, preparation: preparation.revision }, { preparationId: preparation.id, reason: reason.trim() });
+  const printEventId = preparation.latestPrintEventId;
+  if (!printEventId) throw new Error("A qualifying print event is required");
+  return createCommandAttempt({ visit: data.visit.revision, preparation: preparation.revision }, {
+    decisionId: data.medicationDecision!.id, decisionVersion: data.medicationDecision!.version, labelVersionId: data.label!.id,
+    labelPrintEventId: printEventId, preparationId: preparation.id, reservationId: data.reservation!.id, reason: reason.trim(),
+  });
 }
 
 export function createHandoffAttempt(data: FulfillmentPickListDto): HandoffAttempt {
-  return createCommandAttempt({ visit: data.visit.revision }, {});
+  if (!data.medicationDecision || data.medicationDecision.kind !== "ORDER" || !data.label || !data.release || !data.reservation) throw new Error("The reviewed handoff chain is incomplete");
+  return createCommandAttempt({ visit: data.visit.revision }, {
+    decisionId: data.medicationDecision.id, decisionVersion: data.medicationDecision.version, labelVersionId: data.label.id,
+    releaseId: data.release.id, reservationId: data.reservation.id,
+  });
 }
 
 function invalidateAfterCommand(queryClient: ReturnType<typeof useQueryClient>, visitId: string, data: FulfillmentPickListDto): void {
