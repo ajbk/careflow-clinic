@@ -2,9 +2,9 @@
 
 > **PILOT — ข้อมูลสังเคราะห์เท่านั้น ห้ามกรอกข้อมูลผู้ป่วยจริง**
 
-This is a runnable local, single-host pilot for the CareFlow rural-clinic workflow. It is deliberately limited to synthetic Patient generation, Intake, a shared Queue, the Doctor Consultation workspace, fulfillment, and medication inventory. The enabled clinical slice records an append-only Allergy review, a SOAP Note and diagnosis draft, then an immutable signed clinical Note and exactly one synthetic medication decision: `ORDER` from the four repository-seeded `[DEMO]` medicines, or `NO_MEDICATION` with a reason.
+This is a runnable local, single-host pilot for the CareFlow rural-clinic workflow. It is deliberately limited to synthetic Patient generation, Intake, a shared Queue, the Doctor Consultation workspace, fulfillment, medication inventory, Charge collection, Visit closure, and a Doctor-only OPD Card. The enabled clinical slice records an append-only Allergy review, a SOAP Note and diagnosis draft, then an immutable signed clinical Note and exactly one synthetic medication decision: `ORDER` from the four repository-seeded `[DEMO]` medicines, or `NO_MEDICATION` with a reason.
 
-Signing an `ORDER` moves the Visit to `รอจัดยา`; signing `NO_MEDICATION` moves it to `รอคิดเงิน`. For an `ORDER`, the enabled Milestone 3 path is: immutable Label → FEFO reservation → barcode/manual preparation evidence → Doctor release or reject → Assistant handoff → append-only per-lot stock-out → `รอคิดเงิน`. Rejecting preparation releases the reservation and requires a new print request before a later release. Assistants can receive or quarantine synthetic lots; Doctors can receive, release quarantine, and make a reasoned stock correction against a recorded movement. Signed hashes, revisions, fulfillment evidence, Queue/dashboard status, and inventory survive a restart because they are stored in the local SQLite file.
+Signing an `ORDER` moves the Visit to `รอจัดยา`; signing `NO_MEDICATION` moves it to `รอคิดเงิน`. For an `ORDER`, the enabled Milestone 4 path is: immutable Label → FEFO reservation → barcode/manual preparation evidence → Doctor release or reject → Assistant handoff → append-only per-lot stock-out → Doctor Charge finalization → one Cash, PromptPay, or full-waiver resolution → Doctor Visit closure → Doctor-only A4 OPD Card. A `NO_MEDICATION` Visit can be finalized directly for collection or atomically finalized with a full waiver. Rejecting preparation releases the reservation and requires a new print request before a later release. Assistants can receive or quarantine synthetic lots; Doctors can receive, release quarantine, and make a reasoned stock correction against a recorded movement. Signed hashes, revisions, pricing snapshots, finance evidence, closure evidence, Queue/dashboard status, and inventory survive a restart because they are stored in the local SQLite file.
 
 ## Quick start (Node 22)
 
@@ -41,6 +41,8 @@ npm start
 4. In Browser A, open `คลังยา`, choose `รับยาเข้าคลัง`, search `DEMO`, select a seeded medication, enter a positive quantity, a unique lot number, a future expiry date, and a synthetic supplier, then confirm the dashboard shows the new quantity and status.
 5. In Browser A, open the Visit’s `จัดยา` link, start FEFO preparation, open the current 80 × 100 mm label and record a print request, then confirm every allocated item by barcode (or provide a reason for manual confirmation). Complete preparation.
 6. In Browser B, open the same `จัดยา` link and either release it or reject it with a reason. After release, Browser A confirms handoff; the Visit becomes `รอคิดเงิน` and inventory stock movements record the exact allocated lots. A rejected preparation returns to `รอจัดยา`; start it again and record a new label print request before release.
+7. In Browser B, open `ชำระเงิน` for the Visit and confirm the immutable integer-Baht Charge. Browser A may record only the displayed Cash amount. Browser B may confirm PromptPay with a synthetic reference or approve a reasoned full waiver; exactly one collection resolution is allowed.
+8. In Browser B, close the resolved Visit and open its OPD Card. The A4 card is Doctor-only and prints without application chrome. The closed Visit disappears from the active Queue; Browser A cannot open the OPD URL or its API data.
 
 The browser is not an authority for Patient or Visit state; the server database is. Never enter real clinical prose, real medication directions, or real Patient identity in this rehearsal.
 
@@ -76,6 +78,6 @@ npm run test:e2e
 
 The E2E fixture creates a temporary synthetic-only SQLite file and two isolated browser contexts; it never reads credentials from `.env`.
 
-## Explicitly unavailable
+## Milestone 4 and explicit limits
 
-Finance/payment, Visit close, backup/restore, deployment, HTTPS/Caddy, external integrations, analytics, and real Patient data are **disabled** for this local pilot. Milestone 3 enables synthetic-only inventory receipt/quarantine/correction and the clinical fulfillment path through `รอคิดเงิน`; it does not collect payment or close a Visit. The database reset command is a synthetic-data maintenance tool, not a backup or deployment mechanism.
+Synthetic Milestone 4 is complete: immutable pricing snapshots, Charge collection, full waiver, Visit close, and the Doctor-only A4 OPD Card are enabled only for this synthetic local pilot. Backup/restore, deployment, HTTPS/Caddy, external integrations, analytics, receipts/tax, QR/bank integration, partial collection, price-management UI, and all real-data use are **disabled**. The database reset command is a synthetic-data maintenance tool, not a backup or deployment mechanism. Never enter real Patient data, and do not treat this pilot as a clinical, billing, backup, or deployment system.

@@ -69,6 +69,8 @@ export interface MedicationServiceOptions {
   database: DatabaseHandle;
   clock?: () => Date;
   idFactory?: () => string;
+  /** Test seam: prove an enclosing signed-Order transaction rolls back after price snapshots. */
+  afterPriceSnapshotWrite?: (stage: "ORDER") => void;
 }
 
 type MedicationRow = typeof medications.$inferSelect;
@@ -414,6 +416,7 @@ export function createMedicationService(input: MedicationServiceOptions): Medica
         quantity: item.quantity, directionsTh: item.directionsTh,
       }))).run();
       snapshotOrderPrices(tx, signed.id);
+      input.afterPriceSnapshotWrite?.("ORDER");
       appendAuditEvent({
         tx, actor, id: idFactory(), action: "medication.decision-signed", entityType: "medication_decision",
         entityId: signed.id, entityRevision: signed.version, reason: null, occurredAt: signed.signedAt,
@@ -482,6 +485,7 @@ export function createMedicationService(input: MedicationServiceOptions): Medica
         quantity: item.quantity, directionsTh: item.directionsTh,
       }))).run();
       snapshotOrderPrices(tx, signed.id);
+      input.afterPriceSnapshotWrite?.("ORDER");
       appendAuditEvent({
         tx, actor, id: idFactory(), action: "medication.decision-revised", entityType: "medication_decision",
         entityId: signed.id, entityRevision: signed.version, reason,

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
@@ -280,6 +280,31 @@ describe("Thai checkout workflow", () => {
     expect(within(dialog).getByRole("button", { name: "ยืนยันยกเว้นเต็มจำนวน" })).toHaveFocus();
     await user.tab();
     expect(reason).toHaveFocus();
+  });
+
+  it("falls back to dialog.focus() when pending waiver controls leave Tab with no focusable target", async () => {
+    const user = userEvent.setup();
+    let resolveCommand!: (response: Response) => void;
+    server.use(http.post("/api/checkout/visit-42/charge-finalizations", () => new Promise<Response>((resolve) => {
+      resolveCommand = resolve;
+    })));
+    renderCheckout();
+    await user.click(await screen.findByRole("button", { name: "ยกเว้นเต็มจำนวน" }));
+    const dialog = screen.getByRole("dialog", { name: "ยกเว้นเต็มจำนวน" });
+    await user.type(within(dialog).getByLabelText("เหตุผลการยกเว้น"), "ช่วยเหลือตามเกณฑ์");
+    await user.click(within(dialog).getByRole("button", { name: "ยืนยันยกเว้นเต็มจำนวน" }));
+    await waitFor(() => expect(within(dialog).getByLabelText("เหตุผลการยกเว้น")).toBeDisabled());
+    expect(within(dialog).getByRole("button", { name: "ยกเลิก" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "กำลังบันทึก…" })).toBeDisabled();
+    expect(dialog.querySelectorAll("textarea:not([disabled]), input:not([disabled]), button:not([disabled]), [href], [tabindex]:not([tabindex='-1'])")).toHaveLength(0);
+
+    const focus = vi.spyOn(dialog, "focus");
+    const tab = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Tab" });
+    fireEvent(dialog, tab);
+    expect(tab.defaultPrevented).toBe(true);
+    expect(focus).toHaveBeenCalledOnce();
+    expect(dialog).toHaveFocus();
+    resolveCommand(new Response(JSON.stringify({ data: waivedCheckout, replayed: false }), { status: 201, headers: { "Content-Type": "application/json" } }));
   });
 
   it("closes a safe waiver dialog with Escape and restores focus to its opener", async () => {

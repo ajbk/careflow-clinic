@@ -107,7 +107,7 @@ function copyMigrationsThrough0019(target: string): string {
   return oldPath;
 }
 
-const immutableMigrationHashesThrough0017 = {
+const immutableMigrationHashesThrough0020 = {
   "0000_platform.sql": "77dbb1cce19d455be9bb06d4dc5d64de0425b0435f9c70ac63a413fc4ce8c9e6",
   "0001_patient.sql": "55af6b78670f63296ab2e6da9cce84a04613dfd31e5c3cba8534eb5a52e7d96f",
   "0002_visit_intake.sql": "74ef1bbd67666b7666cf999823a646bf1ba0810a07c4ec35e9026113edaf4c20",
@@ -126,9 +126,12 @@ const immutableMigrationHashesThrough0017 = {
   "0015_inventory_adjustment_source_guard.sql": "d3e98f9e0c0bea611a3198a5d892d0fd321ceeee36ec62c901b7f653f64300c2",
   "0016_finance_pricing_snapshots.sql": "642b751216a26a0ab0736ddcc812dd70177cba69402c5eb674bd1ae296a28d48",
   "0017_charge_collection_ledger.sql": "a393193c46b255b16e6af37cd6ccf7015083660a9089222ce84cd229690f3d38",
+  "0018_visit_closure_integrity.sql": "68059f8e06e2051415c632c68efdc3b77aa1ec58beda227d73d32387f8c0ee0a",
+  "0019_post_close_reservation_guards.sql": "31c6be4917adbe0d0758ff615ecdbde680649137ae9da5031b9f16c330d0f5e1",
+  "0020_post_close_replace_guards.sql": "d346745b4810751cbc8306ddcf424f61932e144f9e4576139ac3dd0ddb106128",
 } as const;
 
-const immutableMigrationSnapshotHashesThrough0017 = {
+const immutableMigrationSnapshotHashesThrough0020 = {
   "0000_snapshot.json": "61925e834bd4f002e75d36d2dfe8517c7ac30cfde5f43c1de874ac305559bed6",
   "0001_snapshot.json": "b8f94f95c24f38b16179369fd1b93475a9c0e925a08b5444f1e70dc7f379322c",
   "0002_snapshot.json": "b2387cf5b7f9e4334c2d7699004d867f52c13edb0ea21fa6fca5c6c00387269f",
@@ -146,6 +149,9 @@ const immutableMigrationSnapshotHashesThrough0017 = {
   "0015_snapshot.json": "a1a5d84d0ec6ae46ebfce19d4752717b4742628148fc27605a23b842c08fbd75",
   "0016_snapshot.json": "fc1b64e51a5a27bee58879473d5608a6b6471e91ed3654f8669ece2a4af27c79",
   "0017_snapshot.json": "711d49d079ed9bff7cdb96945769e07be506d7ce5ed8f2bf45b0abe7aee7668d",
+  "0018_snapshot.json": "dc4d4dcb7b4f0c8c69880961aaa970d3e6080670c3581a0d960018a0a0612003",
+  "0019_snapshot.json": "35e76769c409004c834576039582ddebc134b688c5848a13fd44a9d5b245e19b",
+  "0020_snapshot.json": "0751a33f012a9fb417ed1f51127fb19a03dae4979ef4272dd527b7ff8a09064d",
 } as const;
 
 function seedPopulated0018ClosedReservation(sqlite: Database.Database): void {
@@ -668,17 +674,17 @@ it("keeps 0014 immutable and upgrades populated inventory rows with the additive
   }
 });
 
-it("keeps every 0000–0017 SQL and snapshot artifact immutable while upgrading populated pricing evidence", () => {
-  for (const [file, expectedHash] of Object.entries(immutableMigrationHashesThrough0017)) {
+it("keeps every 0000–0020 SQL and snapshot identity immutable while upgrading populated evidence through 0020", () => {
+  for (const [file, expectedHash] of Object.entries(immutableMigrationHashesThrough0020)) {
     expect(createHash("sha256").update(readFileSync(join(process.cwd(), "drizzle", file))).digest("hex")).toBe(expectedHash);
   }
-  for (const [file, expectedHash] of Object.entries(immutableMigrationSnapshotHashesThrough0017)) {
+  for (const [file, expectedHash] of Object.entries(immutableMigrationSnapshotHashesThrough0020)) {
     expect(createHash("sha256").update(readFileSync(join(process.cwd(), "drizzle", "meta", file))).digest("hex")).toBe(expectedHash);
   }
   const journal = JSON.parse(readFileSync(join(process.cwd(), "drizzle", "meta", "_journal.json"), "utf8")) as {
     entries: Array<{ idx: number; tag: string }>;
   };
-  expect(journal.entries.slice(0, 18).map(({ idx, tag }) => ({ idx, tag }))).toEqual([
+  expect(journal.entries.map(({ idx, tag }) => ({ idx, tag }))).toEqual([
     { idx: 0, tag: "0000_platform" },
     { idx: 1, tag: "0001_patient" },
     { idx: 2, tag: "0002_visit_intake" },
@@ -697,6 +703,9 @@ it("keeps every 0000–0017 SQL and snapshot artifact immutable while upgrading 
     { idx: 15, tag: "0015_inventory_adjustment_source_guard" },
     { idx: 16, tag: "0016_finance_pricing_snapshots" },
     { idx: 17, tag: "0017_charge_collection_ledger" },
+    { idx: 18, tag: "0018_visit_closure_integrity" },
+    { idx: 19, tag: "0019_post_close_reservation_guards" },
+    { idx: 20, tag: "0020_post_close_replace_guards" },
   ]);
 
   const { directory, databasePath } = temporaryDatabase();

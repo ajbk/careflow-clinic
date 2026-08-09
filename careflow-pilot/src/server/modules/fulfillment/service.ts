@@ -43,6 +43,8 @@ export interface FulfillmentServiceOptions {
   inventory: InventoryService;
   clock?: () => Date;
   idFactory?: () => string;
+  /** Test seam: prove an enclosing handoff transaction rolls back after price snapshots. */
+  afterPriceSnapshotWrite?: (stage: "DISPENSE") => void;
 }
 
 function invalidState(messageTh: string): never { throw new ApiError({ code: "INVALID_STATE", messageTh }); }
@@ -474,6 +476,7 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
       });
       tx.insert(fulfillmentDispenseLines).values(lines).run();
       snapshotDispensePrices(tx, dispenseId);
+      input.afterPriceSnapshotWrite?.("DISPENSE");
       input.inventory.consumeReservationForDispense(tx, actor, { visitId, reservationId: reservation.id, dispenseId, decisionId: decision.id, decisionVersion: decision.version, labelVersionId: label.id, labelPrintEventId: release.labelPrintEventId, releaseId: release.id, preparationId: prep.id, occurredAt: now, previousStatus: visit.status, nextStatus: "AWAITING_CHARGE", lines: lines.map((line) => ({ id: line.id, reservationAllocationId: line.reservationAllocationId, lotId: line.lotId, quantity: line.quantity, lotNumberSnapshot: line.lotNumberSnapshot, unitSnapshot: line.unitSnapshot })) });
       const changed = tx.update(visits).set({ status: "AWAITING_CHARGE", revision: visit.revision + 1 }).where(and(eq(visits.id, visitId), eq(visits.status, "AWAITING_HANDOFF"), eq(visits.revision, visit.revision))).run();
       if (changed.changes !== 1) invalidState("Visit ถูกเปลี่ยนแปลงแล้ว");

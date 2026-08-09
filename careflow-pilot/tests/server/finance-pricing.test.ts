@@ -229,6 +229,36 @@ describe("integer-Baht price masters and immutable snapshots", () => {
     expect(() => value.sqlite.prepare("UPDATE medications SET unit_price_baht = 6 WHERE id = 'DEMO-MED-001'").run()).toThrow(/revision increment/i);
   });
 
+  it("rejects a direct order price snapshot whose immutable source does not match", () => {
+    const value = database();
+    seedDoctorAndVisit(value, { visitId: "price-source-guard-visit", patientSuffix: "44" });
+    value.sqlite.exec(`
+      INSERT INTO medication_decisions (
+        id, visit_id, version, kind, no_medication_reason, revision_reason, supersedes_id,
+        signed_by, signed_by_display_name, signed_at, content_hash
+      ) VALUES (
+        'price-source-guard-decision', 'price-source-guard-visit', 1, 'ORDER', NULL, NULL, NULL,
+        'price-doctor', 'พญ. ราคาทดสอบ', '${NOW}', '${"b".repeat(64)}'
+      );
+      INSERT INTO medication_order_items (
+        id, medication_decision_id, position, medication_id, medication_revision,
+        display_name_snapshot, strength_snapshot, dosage_form_snapshot, unit_snapshot, quantity, directions_th
+      ) VALUES (
+        'price-source-guard-item', 'price-source-guard-decision', 0, 'DEMO-MED-001', 1,
+        '[DEMO] ยาทดสอบชนิด A', '500 หน่วยทดสอบ', 'เม็ดทดสอบ', 'เม็ด', 1, 'ทดสอบ source guard'
+      );
+    `);
+
+    expect(() => value.sqlite.prepare(`
+      INSERT INTO medication_order_price_snapshots (
+        id, medication_order_item_id, medication_id, medication_revision,
+        unit_price_baht_snapshot, currency, captured_at
+      ) VALUES ('price-source-guard-invalid', 'price-source-guard-item', 'DEMO-MED-001', 1, 6, 'THB', ?)
+    `).run(NOW)).toThrow(/source is invalid/i);
+    expect(value.sqlite.prepare("SELECT count(*) FROM medication_order_price_snapshots WHERE medication_order_item_id = 'price-source-guard-item'").pluck().get())
+      .toBe(0);
+  });
+
   it("creates exactly one order snapshot per signed ORDER item and none for NO_MEDICATION", async () => {
     const pricing = await loadPricing();
     expect(pricing).not.toBeNull();
@@ -351,5 +381,75 @@ describe("integer-Baht price masters and immutable snapshots", () => {
     expect(() => value.sqlite.prepare("UPDATE fulfillment_dispense_price_snapshots SET unit_price_baht_snapshot = 99").run())
       .toThrow(/append-only/i);
     expect(() => value.sqlite.prepare("DELETE FROM fulfillment_dispense_price_snapshots").run()).toThrow(/append-only/i);
+  });
+
+  it("rolls back signed ORDER and multi-lot handoff evidence when snapshot persistence aborts", () => {
+    const value = database();
+    const ids = sequence("price-snapshot-abort");
+    seedDoctorAndVisit(value, { visitId: "price-snapshot-abort-order", patientSuffix: "45" });
+    seedOrderDraft(value, {
+      id: "price-snapshot-abort-order-draft",
+      visitId: "price-snapshot-abort-order",
+      medicationIds: ["DEMO-MED-001"],
+    });
+
+    const abortingMedication = createMedicationService({
+      database: value,
+      clock: () => new Date(NOW),
+      idFactory: ids,
+      afterPriceSnapshotWrite: (stage) => {
+        if (stage === "ORDER") throw new Error("abort after order price snapshot");
+      },
+    });
+    expect(() => runAuditedTransaction({
+      db: value.db,
+      actor: doctor(),
+      work: (tx) => abortingMedication.signDecisionDraft(tx, doctor(), "price-snapshot-abort-order", 1),
+    })).toThrow("abort after order price snapshot");
+    expect(value.sqlite.prepare("SELECT count(*) FROM medication_decisions WHERE visit_id = 'price-snapshot-abort-order'").pluck().get()).toBe(0);
+    expect(value.sqlite.prepare("SELECT count(*) FROM medication_order_items WHERE medication_decision_id LIKE 'price-snapshot-abort%'").pluck().get()).toBe(0);
+    expect(value.sqlite.prepare("SELECT count(*) FROM medication_order_price_snapshots").pluck().get()).toBe(0);
+    expect(value.sqlite.prepare("SELECT status FROM visits WHERE id = 'price-snapshot-abort-order'").get()).toEqual({ status: "AWAITING_PREPARATION" });
+
+    seedDoctorAndVisit(value, { visitId: "price-handoff-visit", patientSuffix: "46", status: "AWAITING_HANDOFF" });
+    seedOrderDraft(value, {
+      id: "price-snapshot-abort-handoff-draft",
+      visitId: "price-handoff-visit",
+      medicationIds: ["DEMO-MED-001"],
+    });
+    const signingMedication = createMedicationService({ database: value, clock: () => new Date(NOW), idFactory: ids });
+    const signed = runAuditedTransaction({
+      db: value.db,
+      actor: doctor(),
+      work: (tx) => signingMedication.signDecisionDraft(tx, doctor(), "price-handoff-visit", 1),
+    });
+    const orderItem = value.sqlite.prepare("SELECT id FROM medication_order_items WHERE medication_decision_id = ?").get(signed.id) as { id: string };
+    seedReadyHandoff(value, { decisionId: signed.id, orderItemId: orderItem.id });
+    const inventory = createInventoryService({ database: value, clock: () => new Date(NOW), idFactory: ids });
+    const abortingFulfillment = createFulfillmentService({
+      database: value,
+      inventory,
+      clock: () => new Date(NOW),
+      idFactory: ids,
+      afterPriceSnapshotWrite: (stage) => {
+        if (stage === "DISPENSE") throw new Error("abort after dispense price snapshot");
+      },
+    });
+    expect(() => runAuditedTransaction({
+      db: value.db,
+      actor: doctor(),
+      work: (tx) => abortingFulfillment.handoffForVisit(tx, doctor(), "price-handoff-visit", 1, {
+        decisionId: signed.id,
+        decisionVersion: 1,
+        labelVersionId: "price-label",
+        releaseId: "price-release",
+        reservationId: "price-reservation",
+      }),
+    })).toThrow("abort after dispense price snapshot");
+    expect(value.sqlite.prepare("SELECT count(*) FROM fulfillment_dispenses WHERE visit_id = 'price-handoff-visit'").pluck().get()).toBe(0);
+    expect(value.sqlite.prepare("SELECT count(*) FROM fulfillment_dispense_lines").pluck().get()).toBe(0);
+    expect(value.sqlite.prepare("SELECT count(*) FROM fulfillment_dispense_price_snapshots").pluck().get()).toBe(0);
+    expect(value.sqlite.prepare("SELECT count(*) FROM inventory_stock_movements WHERE movement_type = 'DISPENSE'").pluck().get()).toBe(0);
+    expect(value.sqlite.prepare("SELECT status FROM visits WHERE id = 'price-handoff-visit'").get()).toEqual({ status: "AWAITING_HANDOFF" });
   });
 });

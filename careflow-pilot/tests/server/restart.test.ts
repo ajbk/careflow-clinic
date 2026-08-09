@@ -14,7 +14,7 @@ afterEach(async () => {
 });
 
 describe("real-file restart boundary", () => {
-  it("preserves sessions, intake evidence, revisions, and audit IDs across a close/reopen", async () => {
+  it("preserves sessions, signed ORDER prices, and multi-lot DISPENSE prices across real-file restarts", async () => {
     const directory = mkdtempSync(join(tmpdir(), "careflow-restart-"));
     const databasePath = join(directory, "careflow.sqlite");
     cleanups.push(() => rmSync(directory, { recursive: true, force: true }));
@@ -197,12 +197,18 @@ describe("real-file restart boundary", () => {
       db: secondDatabase,
       config: firstConfig,
       clock: () => new Date("2026-08-03T00:00:00.000Z"),
-      idFactory: () => "restart-after-request",
+      idFactory: (() => {
+        let index = 0;
+        return () => `restart-after-${++index}`;
+      })(),
     });
     await secondApp.ready();
+    let secondClosed = false;
     cleanups.push(async () => {
-      await secondApp.close();
-      secondDatabase.close();
+      if (!secondClosed) {
+        await secondApp.close();
+        secondDatabase.close();
+      }
     });
 
     const workspaceAfter = await secondApp.inject({
@@ -245,5 +251,224 @@ describe("real-file restart boundary", () => {
     expect(secondDatabase.db.select().from(auditEvents).all().map((event) => event.entityId)).toEqual(
       expect.arrayContaining([patient.id, visitId]),
     );
+
+    const orderPricesAfterFirstRestart = secondDatabase.sqlite.prepare(`
+      SELECT snapshot.id AS order_price_snapshot_id, snapshot.medication_order_item_id, snapshot.medication_id, snapshot.medication_revision,
+        snapshot.unit_price_baht_snapshot, snapshot.currency, item.quantity
+      FROM medication_order_price_snapshots AS snapshot
+      INNER JOIN medication_order_items AS item ON item.id = snapshot.medication_order_item_id
+      WHERE item.medication_decision_id = ?
+      ORDER BY snapshot.id
+    `).all(beforeEvidence.decision.id) as Array<{ order_price_snapshot_id: string }>;
+    expect(orderPricesAfterFirstRestart).toEqual([{
+      order_price_snapshot_id: expect.any(String),
+      medication_order_item_id: expect.any(String),
+      medication_id: "DEMO-MED-001",
+      medication_revision: 1,
+      unit_price_baht_snapshot: 5,
+      currency: "THB",
+      quantity: 3,
+    }]);
+    const orderPriceSnapshotId = orderPricesAfterFirstRestart[0]?.order_price_snapshot_id;
+    if (!orderPriceSnapshotId) throw new Error("Signed ORDER price snapshot was not persisted");
+
+    for (const [key, lotNumber, expiryDate, quantity] of [
+      ["restart-receipt-early", "RESTART-EARLY", "2030-08-10", 1],
+      ["restart-receipt-late", "RESTART-LATE", "2030-08-20", 2],
+    ] as const) {
+      const receipt = await secondApp.inject({
+        method: "POST",
+        url: "/api/inventory/receipts",
+        headers: { cookie: assistantCookie, "idempotency-key": key },
+        payload: {
+          expectedRevisions: { medication: 1 },
+          payload: {
+            medicationId: "DEMO-MED-001",
+            quantity,
+            lotNumber,
+            expiryDate,
+            supplierName: "ผู้จำหน่ายทดสอบการรีสตาร์ต",
+            note: "หลักฐานหลายล็อตหลังเปิดฐานข้อมูลใหม่",
+          },
+        },
+      });
+      expect(receipt.statusCode).toBe(201);
+    }
+    const labelResponse = await secondApp.inject({
+      method: "GET",
+      url: `/api/dispensing/${visitId}/labels`,
+      headers: { cookie: assistantCookie },
+    });
+    expect(labelResponse.statusCode).toBe(200);
+    const label = labelResponse.json().data;
+    const reservationStart = await secondApp.inject({
+      method: "POST",
+      url: `/api/dispensing/${visitId}/reservations`,
+      headers: { cookie: assistantCookie, "idempotency-key": "restart-multi-lot-reservation" },
+      payload: {
+        expectedRevisions: { visit: 3, medicationDecision: 1 },
+        payload: { labelVersionId: label.id },
+      },
+    });
+    expect(reservationStart.statusCode).toBe(201);
+    const reservationData = reservationStart.json().data;
+    expect(reservationData.reservation.allocations.map((allocation: { lotNumberSnapshot: string; quantity: number }) => ({
+      lotNumber: allocation.lotNumberSnapshot,
+      quantity: allocation.quantity,
+    }))).toEqual([
+      { lotNumber: "RESTART-EARLY", quantity: 1 },
+      { lotNumber: "RESTART-LATE", quantity: 2 },
+    ]);
+    const printed = await secondApp.inject({
+      method: "POST",
+      url: `/api/dispensing/${visitId}/labels/${reservationData.label.id}/print-events`,
+      headers: { cookie: assistantCookie, "idempotency-key": "restart-multi-lot-print" },
+      payload: {
+        expectedRevisions: { visit: 4 },
+        payload: { rendererVersion: "restart-test", decisionVersion: reservationData.medicationDecision.version },
+      },
+    });
+    expect(printed.statusCode).toBe(201);
+    let preparation = reservationData.preparation;
+    for (const allocation of reservationData.reservation.allocations) {
+      const labelItem = reservationData.label.items.find((item: { orderItemId: string }) => item.orderItemId === allocation.orderItemId);
+      expect(labelItem).toBeDefined();
+      const confirmation = await secondApp.inject({
+        method: "POST",
+        url: `/api/dispensing/${visitId}/preparation-confirmations`,
+        headers: { cookie: assistantCookie, "idempotency-key": `restart-confirm-${allocation.id}` },
+        payload: {
+          expectedRevisions: { visit: 4, preparation: preparation.revision },
+          payload: {
+            method: "BARCODE",
+            preparationId: preparation.id,
+            allocationId: allocation.id,
+            barcode: labelItem?.internalBarcode,
+          },
+        },
+      });
+      expect(confirmation.statusCode).toBe(201);
+      preparation = confirmation.json().data.preparation;
+    }
+    const completed = await secondApp.inject({
+      method: "POST",
+      url: `/api/dispensing/${visitId}/complete-preparation`,
+      headers: { cookie: assistantCookie, "idempotency-key": "restart-multi-lot-complete" },
+      payload: {
+        expectedRevisions: { visit: 4, preparation: preparation.revision },
+        payload: { preparationId: preparation.id, reservationId: reservationData.reservation.id },
+      },
+    });
+    expect(completed.statusCode).toBe(201);
+    const released = await secondApp.inject({
+      method: "POST",
+      url: `/api/dispensing/${visitId}/release`,
+      headers: { cookie: doctorCookie, "idempotency-key": "restart-multi-lot-release" },
+      payload: {
+        expectedRevisions: { visit: 5, preparation: completed.json().data.preparation.revision },
+        payload: {
+          decisionId: reservationData.medicationDecision.id,
+          decisionVersion: reservationData.medicationDecision.version,
+          labelVersionId: reservationData.label.id,
+          labelPrintEventId: printed.json().data.preparation.latestPrintEventId,
+          preparationId: preparation.id,
+          reservationId: reservationData.reservation.id,
+        },
+      },
+    });
+    expect(released.statusCode).toBe(201);
+    const handedOff = await secondApp.inject({
+      method: "POST",
+      url: `/api/dispensing/${visitId}/handoff`,
+      headers: { cookie: assistantCookie, "idempotency-key": "restart-multi-lot-handoff" },
+      payload: {
+        expectedRevisions: { visit: 6 },
+        payload: {
+          decisionId: reservationData.medicationDecision.id,
+          decisionVersion: reservationData.medicationDecision.version,
+          labelVersionId: reservationData.label.id,
+          releaseId: released.json().data.release.id,
+          reservationId: reservationData.reservation.id,
+        },
+      },
+    });
+    expect(handedOff.statusCode).toBe(201);
+    expect(handedOff.json().data.visit).toMatchObject({ status: "AWAITING_CHARGE", revision: 7 });
+    const dispensePricesBeforeSecondRestart = secondDatabase.sqlite.prepare(`
+      SELECT line.lot_number_snapshot, snapshot.medication_id, snapshot.unit_price_baht_snapshot,
+        snapshot.currency, snapshot.order_price_snapshot_id
+      FROM fulfillment_dispense_price_snapshots AS snapshot
+      INNER JOIN fulfillment_dispense_lines AS line ON line.id = snapshot.fulfillment_dispense_line_id
+      INNER JOIN fulfillment_dispenses AS dispense ON dispense.id = line.dispense_id
+      WHERE dispense.visit_id = ?
+      ORDER BY line.lot_number_snapshot
+    `).all(visitId);
+    expect(dispensePricesBeforeSecondRestart).toEqual([
+      {
+        lot_number_snapshot: "RESTART-EARLY",
+        medication_id: "DEMO-MED-001",
+        unit_price_baht_snapshot: 5,
+        currency: "THB",
+        order_price_snapshot_id: orderPriceSnapshotId,
+      },
+      {
+        lot_number_snapshot: "RESTART-LATE",
+        medication_id: "DEMO-MED-001",
+        unit_price_baht_snapshot: 5,
+        currency: "THB",
+        order_price_snapshot_id: orderPriceSnapshotId,
+      },
+    ]);
+    const checkoutBeforeSecondRestart = await secondApp.inject({
+      method: "GET",
+      url: `/api/checkout/${visitId}`,
+      headers: { cookie: doctorCookie },
+    });
+    expect(checkoutBeforeSecondRestart.statusCode).toBe(200);
+    expect(checkoutBeforeSecondRestart.json().data).toMatchObject({
+      visit: { status: "AWAITING_CHARGE", revision: 7 },
+      grossTotalBaht: 115,
+      netDueBaht: 115,
+    });
+
+    await secondApp.close();
+    secondDatabase.close();
+    secondClosed = true;
+
+    const thirdDatabase = openDatabase(databasePath);
+    const thirdApp = await buildApp({
+      db: thirdDatabase,
+      config: firstConfig,
+      clock: () => new Date("2026-08-03T00:00:00.000Z"),
+      idFactory: (() => {
+        let index = 0;
+        return () => `restart-third-${++index}`;
+      })(),
+    });
+    await thirdApp.ready();
+    cleanups.push(async () => {
+      await thirdApp.close();
+      thirdDatabase.close();
+    });
+    expect(thirdDatabase.sqlite.prepare(`
+      SELECT line.lot_number_snapshot, snapshot.medication_id, snapshot.unit_price_baht_snapshot,
+        snapshot.currency, snapshot.order_price_snapshot_id
+      FROM fulfillment_dispense_price_snapshots AS snapshot
+      INNER JOIN fulfillment_dispense_lines AS line ON line.id = snapshot.fulfillment_dispense_line_id
+      INNER JOIN fulfillment_dispenses AS dispense ON dispense.id = line.dispense_id
+      WHERE dispense.visit_id = ?
+      ORDER BY line.lot_number_snapshot
+    `).all(visitId)).toEqual(dispensePricesBeforeSecondRestart);
+    const checkoutAfterSecondRestart = await thirdApp.inject({
+      method: "GET",
+      url: `/api/checkout/${visitId}`,
+      headers: { cookie: doctorCookie },
+    });
+    expect(checkoutAfterSecondRestart.statusCode).toBe(200);
+    expect(checkoutAfterSecondRestart.json().data).toMatchObject({
+      visit: { status: "AWAITING_CHARGE", revision: 7 },
+      grossTotalBaht: 115,
+      netDueBaht: 115,
+    });
   });
 });
