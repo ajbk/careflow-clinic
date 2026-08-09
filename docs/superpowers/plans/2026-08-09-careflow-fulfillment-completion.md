@@ -218,7 +218,7 @@
 - [ ] **Step 4: Run complete verification fresh.** From careflow-pilot run npm test, npm run lint, npm run typecheck, npm run build, npm run test:e2e, and git diff --check. Record exact pass counts, build result, migration upgrade result, and any non-blocking bundle warnings.
 - [ ] **Step 5: Review requirements line by line.** Confirm PRD criteria for ORDER/NO_MEDICATION, invalidation, barcode/manual evidence, FEFO/race/rollback, idempotency, restart, role denial, audit, print size, and adjustment/quarantine are each covered by a named test or persisted evidence.
 - [ ] **Step 6: Request a final GPT-5.6 Sol Max read-only review.** Give the reviewer the spec, plan, implementation reports, full diff, migration upgrade evidence, and fresh verification output. Fix every Critical/Important finding through a focused RED→GREEN loop and scoped re-review.
-- [ ] **Step 7: Update the ledger and commit documentation.** Record the complete path, routes, migrations 0009–0014, permissions, audit actions, pass counts, and deferred Milestone 4 boundary. Commit documentation/test evidence with test: cover fulfillment completion pilot flow.
+- [ ] **Step 7: Update the ledger and commit documentation.** Record the complete path, routes, migrations 0009–0015 (0015 is the additive inventory correction-source guard; 0014 remains immutable), permissions, audit actions, pass counts, and deferred Milestone 4 boundary. Commit documentation/test evidence with test: cover fulfillment completion pilot flow.
 - [ ] **Step 8: Stop for user acceptance.** Report what is implemented, what was verified, the final Sol Max verdict, and that Finance & Close remains the next milestone. Do not start Milestone 4 without a new user request.
 
 ## Execution and review protocol
