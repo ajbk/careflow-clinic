@@ -265,6 +265,7 @@ export const checkoutDtoSchema = z.strictObject({
     startedAt: z.string().datetime().nullable(),
     closedAt: z.string().datetime().nullable(),
   }),
+  clinicPricingRevision: z.number().int().safe().min(1),
   sourceKind: z.enum(["ORDER", "NO_MEDICATION"]),
   charge: checkoutChargeSchema.nullable(),
   lines: z.array(checkoutLineSchema).min(1).max(21),
@@ -767,6 +768,8 @@ export const dashboardTodayResponseSchema = z.strictObject({
     awaitingRelease: z.number().int().min(0),
     awaitingHandoff: z.number().int().min(0),
     awaitingCharge: z.number().int().min(0),
+    awaitingPayment: z.number().int().min(0),
+    readyToClose: z.number().int().min(0),
     updatedAt: z.string().datetime(),
   }),
 });

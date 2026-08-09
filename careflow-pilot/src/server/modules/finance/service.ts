@@ -607,6 +607,7 @@ function checkoutFromEvidence(
       closedAt: context.visit.closedAt,
     },
     sourceKind: evidence.charge.sourceKind,
+    clinicPricingRevision: evidence.charge.clinicPricingRevision,
     charge: {
       id: evidence.charge.id,
       sourceKind: evidence.charge.sourceKind,
@@ -816,6 +817,7 @@ export function createFinanceService(input: FinanceServiceOptions): FinanceServi
       patient: context.patient,
       visit: context.visit,
       sourceKind: quote.sourceKind,
+      clinicPricingRevision: pricingRevision,
       charge: null,
       lines: quote.lines.map(quoteLineToCheckoutLine),
       grossTotalBaht: quote.grossTotalBaht,

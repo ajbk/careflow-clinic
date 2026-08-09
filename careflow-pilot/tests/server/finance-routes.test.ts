@@ -130,6 +130,7 @@ describe("finance checkout routes", () => {
     if (assistantPreview.statusCode !== 200) return;
     expect(assistantPreview.json().data).toMatchObject({
       visit: { id: "finance-route-visit", status: "AWAITING_CHARGE", revision: 7 },
+      clinicPricingRevision: 1,
       grossTotalBaht: 100,
       collectionState: "PENDING_CHARGE",
     });
@@ -204,6 +205,7 @@ describe("finance checkout routes", () => {
       replayed: false,
       data: {
         visit: { status: "READY_TO_CLOSE", revision: 8 },
+        clinicPricingRevision: 1,
         grossTotalBaht: 100,
         adjustmentTotalBaht: -100,
         netDueBaht: 0,
@@ -315,6 +317,7 @@ describe("finance checkout routes", () => {
       replayed: false,
       data: {
         visit: { status: "AWAITING_PAYMENT", revision: 8 },
+        clinicPricingRevision: 1,
         grossTotalBaht: 100,
         adjustmentTotalBaht: 0,
         netDueBaht: 100,
@@ -415,6 +418,7 @@ describe("finance checkout routes", () => {
         closedAt: null,
       },
       sourceKind: "NO_MEDICATION",
+      clinicPricingRevision: 1,
       charge: {
         id: "legacy-task2-charge",
         sourceKind: "NO_MEDICATION",

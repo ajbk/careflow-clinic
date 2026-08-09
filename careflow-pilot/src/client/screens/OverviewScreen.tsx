@@ -59,20 +59,23 @@ const pendingMetrics = [
   { key: "awaitingRelease", label: "รอแพทย์ปล่อยยา", detail: "รอแพทย์ตรวจทาน" },
   { key: "awaitingHandoff", label: "รอส่งมอบยา", detail: "พร้อมส่งมอบแก่ผู้ป่วย" },
   { key: "awaitingCharge", label: "รอคิดเงิน", detail: "รอขั้นตอนคิดเงิน" },
+  { key: "awaitingPayment", label: "รอรับชำระ", detail: "รอบันทึกการชำระ" },
+  { key: "readyToClose", label: "พร้อมปิด Visit", detail: "รับชำระแล้ว" },
 ] as const;
 
 function queueStatus(status: string): { label: string; tone: "waiting" | "active" } {
   if (status === "CONSULTING") return { label: "กำลังตรวจ", tone: "active" };
   return {
-    label: ({ WAITING: "รอพบแพทย์", AWAITING_ORDER_REVISION: "รอทบทวนคำสั่งยา", AWAITING_PREPARATION: "รอจัดยา", PREPARING: "กำลังจัดยา", AWAITING_RELEASE: "รอแพทย์ปล่อยยา", AWAITING_HANDOFF: "รอส่งมอบยา", AWAITING_CHARGE: "รอคิดเงิน" } as Record<string, string>)[status] ?? status,
+    label: ({ WAITING: "รอพบแพทย์", AWAITING_ORDER_REVISION: "รอทบทวนคำสั่งยา", AWAITING_PREPARATION: "รอจัดยา", PREPARING: "กำลังจัดยา", AWAITING_RELEASE: "รอแพทย์ปล่อยยา", AWAITING_HANDOFF: "รอส่งมอบยา", AWAITING_CHARGE: "รอคิดเงิน", AWAITING_PAYMENT: "รอรับชำระ", READY_TO_CLOSE: "พร้อมปิด Visit" } as Record<string, string>)[status] ?? status,
     tone: "waiting",
   };
 }
 
 const dispensingStatuses = new Set(["AWAITING_PREPARATION", "PREPARING", "AWAITING_RELEASE", "AWAITING_HANDOFF"]);
 
-function journeyHref(status: string, visitId: string, isDoctor: boolean, canFulfillment: boolean): string {
+function journeyHref(status: string, visitId: string, isDoctor: boolean, canFulfillment: boolean, canFinanceRead: boolean): string {
   if (canFulfillment && dispensingStatuses.has(status)) return `/dispensing/${visitId}`;
+  if (canFinanceRead && ["AWAITING_PAYMENT", "READY_TO_CLOSE"].includes(status)) return `/checkout/${visitId}`;
   if (isDoctor && ["WAITING", "CONSULTING", "AWAITING_ORDER_REVISION"].includes(status)) return `/consultations/${visitId}`;
   return "/queue";
 }
@@ -97,13 +100,14 @@ export function OverviewScreen(): ReactElement {
   }
 
   const metrics = dashboard.data;
-  const activeRows = queue.data?.slice(0, 6) ?? [];
+  const activeRows = queue.data?.filter((item) => item.visit.status !== "CLOSED").slice(0, 6) ?? [];
   const queueError = queue.error ? errorState(queue.error) : null;
   const queueLoading = queue.isPending && !queue.data && !queue.error;
   const hasCachedQueue = Array.isArray(queue.data);
   const queueStale = Boolean(queue.error && hasCachedQueue && !(isApiError(queue.error) && queue.error.status === 403));
   const isDoctor = auth.session?.user.role === "doctor";
   const canFulfillment = auth.session?.permissions.includes("fulfillment:read") ?? false;
+  const canFinanceRead = auth.session?.permissions.includes("finance:read") ?? false;
   const roleAction = isDoctor
     ? {
         header: { to: "/queue", label: "ไปยังคิวตรวจ", icon: UsersRound },
@@ -136,7 +140,7 @@ export function OverviewScreen(): ReactElement {
       />
 
       <section className="metric-grid" aria-label="สรุปสถานะคลินิก">
-        {pendingMetrics.map((metric, index) => <Card className={`metric-card metric-card-${["mint", "blue", "warm", "neutral", "blue", "rose", "mint", "neutral"][index]}`} key={metric.key}><div className="metric-value-group"><span className="metric-label">{metric.label}</span><strong>{metrics[metric.key]}</strong><small>{metric.detail}</small></div></Card>)}
+        {pendingMetrics.map((metric, index) => <Card className={`metric-card metric-card-${["mint", "blue", "warm", "neutral", "blue", "rose", "mint", "neutral", "warm", "mint"][index]}`} key={metric.key}><div className="metric-value-group"><span className="metric-label">{metric.label}</span><strong>{metrics[metric.key]}</strong><small>{metric.detail}</small></div></Card>)}
       </section>
 
       <div className="overview-grid">
@@ -150,7 +154,7 @@ export function OverviewScreen(): ReactElement {
               {activeRows.map((item) => {
                 const status = queueStatus(item.visit.status);
                 return (
-                  <Link className="journey-row" key={item.visit.id} to={journeyHref(item.visit.status, item.visit.id, isDoctor, canFulfillment)} aria-label={`${item.patient.displayName} ${status.label}`}>
+                  <Link className="journey-row" key={item.visit.id} to={journeyHref(item.visit.status, item.visit.id, isDoctor, canFulfillment, canFinanceRead)} aria-label={`${item.patient.displayName} ${status.label}`}>
                     <span className="journey-time">{formatThaiDateTime(item.visit.arrivedAt)}</span>
                     <span className="journey-person"><strong>{item.patient.displayName}</strong><small>{item.chiefComplaint}</small></span>
                     <StatusBadge tone={status.tone}>{status.label}</StatusBadge>

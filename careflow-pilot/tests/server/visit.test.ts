@@ -533,6 +533,8 @@ describe("shared Intake, Queue, and consultation workflow", () => {
         awaitingRelease: 0,
         awaitingHandoff: 0,
         awaitingCharge: 0,
+        awaitingPayment: 0,
+        readyToClose: 0,
         updatedAt: "2026-08-03T00:00:00.000Z",
       },
     });
@@ -540,7 +542,7 @@ describe("shared Intake, Queue, and consultation workflow", () => {
 
   it("counts each committed pending state and excludes closed Visits from Dashboard", async () => {
     const test = await fixture();
-    const statuses = ["WAITING", "CONSULTING", "AWAITING_ORDER_REVISION", "AWAITING_PREPARATION", "PREPARING", "AWAITING_RELEASE", "AWAITING_HANDOFF", "AWAITING_CHARGE", "CLOSED"];
+    const statuses = ["WAITING", "CONSULTING", "AWAITING_ORDER_REVISION", "AWAITING_PREPARATION", "PREPARING", "AWAITING_RELEASE", "AWAITING_HANDOFF", "AWAITING_CHARGE", "AWAITING_PAYMENT", "READY_TO_CLOSE", "CLOSED"];
     for (const [index, status] of statuses.entries()) {
       const patient = await createPatient(test.app, test.assistantCookie, `dashboard-state-patient-${status}`);
       const created = await submitIntake(
@@ -554,8 +556,34 @@ describe("shared Intake, Queue, and consultation workflow", () => {
       method: "GET", url: "/api/dashboard/today", headers: { cookie: test.assistantCookie },
     });
     expect(dashboard.json().data).toMatchObject({
-      waiting: 1, consulting: 1, awaitingOrderRevision: 1, awaitingPreparation: 1, preparing: 1, awaitingRelease: 1, awaitingHandoff: 1, awaitingCharge: 1,
+      waiting: 1, consulting: 1, awaitingOrderRevision: 1, awaitingPreparation: 1, preparing: 1, awaitingRelease: 1, awaitingHandoff: 1, awaitingCharge: 1, awaitingPayment: 1, readyToClose: 1,
     });
+  });
+
+  it("keeps finance states in the active queue without granting a clinical-open action", async () => {
+    const test = await fixture();
+    const paymentPatient = await createPatient(test.app, test.assistantCookie, "finance-queue-payment-patient");
+    const readyPatient = await createPatient(test.app, test.assistantCookie, "finance-queue-ready-patient");
+    const closedPatient = await createPatient(test.app, test.assistantCookie, "finance-queue-closed-patient");
+    const paymentVisit = await submitIntake(test.app, test.assistantCookie, paymentPatient.json().data.id, "finance-queue-payment-visit");
+    const readyVisit = await submitIntake(test.app, test.assistantCookie, readyPatient.json().data.id, "finance-queue-ready-visit");
+    const closedVisit = await submitIntake(test.app, test.assistantCookie, closedPatient.json().data.id, "finance-queue-closed-visit");
+    const paymentVisitId = paymentVisit.json().data.visit.id as string;
+    const readyVisitId = readyVisit.json().data.visit.id as string;
+    const closedVisitId = closedVisit.json().data.visit.id as string;
+    test.database.sqlite.prepare("UPDATE visits SET status = 'AWAITING_PAYMENT', revision = 8 WHERE id = ?").run(paymentVisitId);
+    test.database.sqlite.prepare("UPDATE visits SET status = 'READY_TO_CLOSE', revision = 9 WHERE id = ?").run(readyVisitId);
+    test.database.sqlite.prepare("UPDATE visits SET status = 'CLOSED', revision = 10 WHERE id = ?").run(closedVisitId);
+
+    const doctorQueue = await test.app.inject({ method: "GET", url: "/api/queue", headers: { cookie: test.doctorCookie } });
+    expect(doctorQueue.statusCode).toBe(200);
+    const rows = doctorQueue.json().data as Array<{ visit: { id: string; status: string }; allowedActions: string[] }>;
+    expect(rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ visit: expect.objectContaining({ id: paymentVisitId, status: "AWAITING_PAYMENT" }), allowedActions: [] }),
+      expect.objectContaining({ visit: expect.objectContaining({ id: readyVisitId, status: "READY_TO_CLOSE" }), allowedActions: [] }),
+    ]));
+    expect(rows.map((row) => row.visit.id)).not.toContain(closedVisitId);
+    expect(rows.some((row) => row.allowedActions.includes("OPEN_CONSULTATION"))).toBe(false);
   });
 
   it("returns a committed Workspace aggregate and a stable 404 for unknown Visits", async () => {

@@ -243,6 +243,7 @@ describe("Preparation and label workflow", () => {
     } }));
     resolveRequest(new Response(JSON.stringify({ data: { ...handoffPickList, visit: { ...handoffPickList.visit, status: "AWAITING_CHARGE" as const, revision: 13 }, release: handoffPickList.release, dispense: { id: "dispense-1", reservationId: "reservation-1", lines: [{ allocationId: "allocation-1", orderItemId: "item-1", lotId: "lot-early", quantity: 10 }] }, allowedActions: [] }, replayed: false }), { status: 201, headers: { "Content-Type": "application/json" } }));
     await waitFor(() => expect(screen.getByText("จัดยาและส่งมอบแล้ว")).toBeInTheDocument());
+    expect(screen.getByRole("link", { name: "ไปหน้าชำระเงิน" })).toHaveAttribute("href", "/checkout/visit-42");
   });
 
   it("hides preparation commands when the Assistant has only read permission", async () => {

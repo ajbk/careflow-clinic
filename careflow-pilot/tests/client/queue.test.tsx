@@ -92,6 +92,21 @@ const pendingItems = [
     visit: { ...consultingItem.visit, id: "visit-charge", status: "AWAITING_CHARGE" as const, revision: 14 },
     allowedActions: ["OPEN_CONSULTATION"] as const,
   },
+  {
+    ...consultingItem,
+    visit: { ...consultingItem.visit, id: "visit-payment", status: "AWAITING_PAYMENT" as const, revision: 15 },
+    allowedActions: [] as const,
+  },
+  {
+    ...consultingItem,
+    visit: { ...consultingItem.visit, id: "visit-ready", status: "READY_TO_CLOSE" as const, revision: 16 },
+    allowedActions: [] as const,
+  },
+  {
+    ...consultingItem,
+    visit: { ...consultingItem.visit, id: "visit-closed", status: "CLOSED" as const, revision: 17 },
+    allowedActions: [] as const,
+  },
 ];
 
 const workspace = {
@@ -138,8 +153,8 @@ function session(role: "assistant" | "doctor") {
       },
       clinic: { id: "clinic", name: "คลินิกทดสอบ" },
       permissions: role === "doctor"
-        ? ["patient:read", "visit:read-queue", "visit:start-consultation", "clinical:read", "clinical:save-draft", "clinical:sign", "clinical:amend", "patient:update-allergy", "medication:read-catalog", "medication:sign-decision", "fulfillment:read"]
-        : ["patient:read", "visit:read-queue", "fulfillment:read"],
+        ? ["patient:read", "visit:read-queue", "visit:start-consultation", "clinical:read", "clinical:save-draft", "clinical:sign", "clinical:amend", "patient:update-allergy", "medication:read-catalog", "medication:sign-decision", "fulfillment:read", "finance:read"]
+        : ["patient:read", "visit:read-queue", "fulfillment:read", "finance:read"],
       pilotAcknowledgedAt: "2026-08-03T00:00:00.000Z",
       mustChangePassword: false,
       idleExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
@@ -166,7 +181,7 @@ beforeEach(() => {
   server.resetHandlers(
     http.get("/api/auth/session", () => HttpResponse.json(session("doctor"))),
     http.get("/api/queue", () => HttpResponse.json({ data: [waitingItem] })),
-    http.get("/api/dashboard/today", () => HttpResponse.json({ data: { waiting: 1, consulting: 0, awaitingOrderRevision: 0, awaitingPreparation: 0, preparing: 0, awaitingRelease: 0, awaitingHandoff: 0, awaitingCharge: 0, updatedAt: "2026-08-03T01:00:00.000Z" } })),
+    http.get("/api/dashboard/today", () => HttpResponse.json({ data: { waiting: 1, consulting: 0, awaitingOrderRevision: 0, awaitingPreparation: 0, preparing: 0, awaitingRelease: 0, awaitingHandoff: 0, awaitingCharge: 0, awaitingPayment: 0, readyToClose: 0, updatedAt: "2026-08-03T01:00:00.000Z" } })),
     http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: workspace })),
   );
 });
@@ -254,7 +269,7 @@ describe("connected shared queue workflow", () => {
     expect(screen.getByLabelText("สารที่แพ้")).toHaveValue("ยา A");
   });
 
-  it("keeps Assistant Queue clinical-link free across all five server states", async () => {
+  it("keeps Assistant Queue clinical-link free while preserving finance links from active server states", async () => {
     server.use(
       http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))),
       http.get("/api/queue", () => HttpResponse.json({ data: pendingItems.map((item) => ({ ...item, allowedActions: item.visit.status === "WAITING" ? ["REVIEW_ALLERGY"] : [] })) })),
@@ -267,9 +282,14 @@ describe("connected shared queue workflow", () => {
     expect(screen.getByRole("heading", { name: "รอทบทวนคำสั่งยา" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "รอจัดยา" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "รอคิดเงิน" })).toBeInTheDocument();
-    for (const item of pendingItems) {
+    expect(screen.getByRole("heading", { name: "รอรับชำระ" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "พร้อมปิด Visit" })).toBeInTheDocument();
+    for (const item of pendingItems.filter((item) => item.visit.status !== "CLOSED")) {
       expect(within(screen.getByRole("article", { name: new RegExp(item.visit.id) })).queryByRole("link", { name: "เปิดห้องตรวจ" })).not.toBeInTheDocument();
     }
+    expect(within(screen.getByRole("article", { name: /visit-payment/ })).getByRole("link", { name: "ไปหน้าชำระเงิน" })).toHaveAttribute("href", "/checkout/visit-payment");
+    expect(within(screen.getByRole("article", { name: /visit-ready/ })).getByRole("link", { name: "ไปหน้าชำระเงิน" })).toHaveAttribute("href", "/checkout/visit-ready");
+    expect(screen.queryByRole("article", { name: /visit-closed/ })).not.toBeInTheDocument();
   });
 
   it("uses the Queue revisions and one idempotent attempt for Assistant Allergy review", async () => {
@@ -339,17 +359,21 @@ describe("connected shared queue workflow", () => {
     expect(workspaceRequests).toBe(0);
   });
 
-  it("routes operational pending states to dispensing and clinical states to the Doctor room", async () => {
+  it("routes operational, clinical, and finance states to their truthful workflows", async () => {
     server.use(http.get("/api/queue", () => HttpResponse.json({ data: pendingItems })));
     renderRoute("/queue");
-    for (const item of pendingItems.filter((item) => item.visit.status !== "WAITING")) {
+    for (const item of pendingItems.filter((item) => item.visit.status !== "WAITING" && item.visit.status !== "CLOSED")) {
       const row = within(await screen.findByRole("article", { name: new RegExp(item.visit.id) }));
       if (["AWAITING_PREPARATION", "PREPARING", "AWAITING_RELEASE", "AWAITING_HANDOFF"].includes(item.visit.status)) {
         expect(row.getByRole("link", { name: /การจัดยา|ปล่อยยา|ส่งมอบยา/ })).toHaveAttribute("href", `/dispensing/${item.visit.id}`);
+      } else if (["AWAITING_PAYMENT", "READY_TO_CLOSE"].includes(item.visit.status)) {
+        expect(row.getByRole("link", { name: "ไปหน้าชำระเงิน" })).toHaveAttribute("href", `/checkout/${item.visit.id}`);
+        expect(row.queryByRole("link", { name: "เปิดห้องตรวจ" })).not.toBeInTheDocument();
       } else {
         expect(row.getByRole("link", { name: "เปิดห้องตรวจ" })).toHaveAttribute("href", `/consultations/${item.visit.id}`);
       }
     }
+    expect(screen.queryByRole("article", { name: /visit-closed/ })).not.toBeInTheDocument();
   });
 
   it("disables Assistant Allergy review while cached Queue data is stale", async () => {
@@ -553,11 +577,13 @@ describe("connected shared queue workflow", () => {
     expect(within(row).getByText(/เริ่มตรวจ/)).toBeInTheDocument();
   });
 
-  it("shows live Overview counts and marks unsupported medication, payment, and stock cards unavailable", async () => {
+  it("shows live Overview finance counts alongside the active clinic workflow", async () => {
     renderRoute("/overview");
     expect(await screen.findByRole("heading", { name: "ภาพรวมคลินิก" })).toBeInTheDocument();
     expect((await screen.findAllByText("รอตรวจ")).length).toBeGreaterThan(0);
     expect((await screen.findAllByText("กำลังตรวจ")).length).toBeGreaterThan(0);
+    expect(screen.getByText("รอรับชำระ")).toBeInTheDocument();
+    expect(screen.getByText("พร้อมปิด Visit")).toBeInTheDocument();
     expect(screen.queryByText(/ยังไม่พร้อมใน Pilot/)).not.toBeInTheDocument();
     expect(screen.queryByText(/฿|บาท|คงเหลือ/)).not.toBeInTheDocument();
   });

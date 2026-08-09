@@ -288,6 +288,7 @@ describe("immutable finance charge finalization", () => {
 
     const preview = service.getCheckout(doctor(), "finance-order-visit");
     expect(preview.charge).toBeNull();
+    expect(preview).toMatchObject({ clinicPricingRevision: 1 });
     expect(preview.lines.map((line) => ({
       lineType: line.lineType,
       quantity: line.quantity,
@@ -308,6 +309,7 @@ describe("immutable finance charge finalization", () => {
     });
     expect(finalized).toMatchObject({
       visit: { id: "finance-order-visit", status: "AWAITING_PAYMENT", revision: 8 },
+      clinicPricingRevision: 1,
       grossTotalBaht: 125,
       adjustmentTotalBaht: 0,
       netDueBaht: 125,

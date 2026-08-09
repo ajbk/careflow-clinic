@@ -15,8 +15,8 @@ function completeSession(role: "assistant" | "doctor") {
       },
       clinic: { id: "clinic", name: "คลินิกทดสอบ" },
       permissions: role === "doctor"
-        ? ["patient:read", "visit:read-queue", "visit:start-consultation", "inventory:read", "inventory:receive", "fulfillment:read"]
-        : ["patient:read", "visit:read-queue", "visit:submit-intake", "inventory:read", "inventory:receive", "fulfillment:read"],
+        ? ["patient:read", "visit:read-queue", "visit:start-consultation", "inventory:read", "inventory:receive", "fulfillment:read", "finance:read"]
+        : ["patient:read", "visit:read-queue", "visit:submit-intake", "inventory:read", "inventory:receive", "fulfillment:read", "finance:read"],
       pilotAcknowledgedAt: "2026-08-03T00:00:00.000Z",
       mustChangePassword: false,
       idleExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
@@ -30,7 +30,23 @@ function renderRoleApp(path: string, role: "assistant" | "doctor") {
     if (requestPath === "/api/auth/session") return new Response(JSON.stringify(completeSession(role)), { status: 200 });
     if (requestPath === "/api/queue") return new Response(JSON.stringify({ data: [] }), { status: 200 });
     if (requestPath === "/api/dashboard/today") {
-      return new Response(JSON.stringify({ data: { waiting: 0, consulting: 0, awaitingOrderRevision: 0, awaitingPreparation: 0, preparing: 0, awaitingRelease: 0, awaitingHandoff: 0, awaitingCharge: 0, updatedAt: "2026-08-03T01:00:00.000Z" } }), { status: 200 });
+      return new Response(JSON.stringify({ data: { waiting: 0, consulting: 0, awaitingOrderRevision: 0, awaitingPreparation: 0, preparing: 0, awaitingRelease: 0, awaitingHandoff: 0, awaitingCharge: 0, awaitingPayment: 0, readyToClose: 0, updatedAt: "2026-08-03T01:00:00.000Z" } }), { status: 200 });
+    }
+    if (requestPath === "/api/checkout/visit-42") {
+      return new Response(JSON.stringify({ data: {
+        patient: { id: "patient-42", hn: "DEMO-000042", displayName: "ผู้ป่วยสังเคราะห์ 000042", birthDate: "1990-01-01", sex: "unknown" },
+        visit: { id: "visit-42", status: "AWAITING_CHARGE", revision: 7, arrivedAt: "2026-08-03T01:00:00.000Z", startedAt: "2026-08-03T01:15:00.000Z", closedAt: null },
+        clinicPricingRevision: 1,
+        sourceKind: "NO_MEDICATION",
+        charge: null,
+        lines: [{ id: null, position: 0, lineType: "CONSULTATION", descriptionSnapshot: "ค่าตรวจ", quantity: 1, unitPriceBaht: 100, lineTotalBaht: 100, medicationOrderItemId: null, fulfillmentDispenseLineId: null }],
+        grossTotalBaht: 100,
+        adjustmentTotalBaht: 0,
+        netDueBaht: 100,
+        collectionState: "PENDING_CHARGE",
+        allowedActions: ["FINALIZE_CHARGE"],
+        closeBlockers: ["charge"],
+      } }), { status: 200 });
     }
     throw new Error(`Unexpected request: ${requestPath}`);
   }));
@@ -107,13 +123,15 @@ describe("pilot router", () => {
   it.each([
     ["assistant", "รับผู้ป่วย", "/intake"],
     ["doctor", "ไปยังคิวตรวจ", "/queue"],
-  ] as const)("shows all five pending-work counts with the %s primary action", async (role, action, path) => {
+  ] as const)("shows all active-work counts with the %s primary action", async (role, action, path) => {
     renderRoleApp("/overview", role);
     expect(await screen.findByText("รอพบแพทย์")).toBeInTheDocument();
     expect(screen.getByText("กำลังตรวจ")).toBeInTheDocument();
     expect(screen.getByText("รอทบทวนคำสั่งยา")).toBeInTheDocument();
     expect(screen.getByText("รอจัดยา")).toBeInTheDocument();
     expect(screen.getByText("รอคิดเงิน")).toBeInTheDocument();
+    expect(screen.getByText("รอรับชำระ")).toBeInTheDocument();
+    expect(screen.getByText("พร้อมปิด Visit")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: action })).toHaveAttribute("href", path);
     expect(screen.queryByText(/฿|บาท|คงเหลือ|แนวโน้ม|รายเดือน/)).not.toBeInTheDocument();
   });
@@ -188,6 +206,26 @@ describe("pilot router", () => {
       throw new Error(`Unexpected request: ${path}`);
     }));
     render(<AppProviders><RouterProvider router={createMemoryRouter(appRoutes, { initialEntries: ["/dispensing/visit-42/labels"] })} /></AppProviders>);
+    expect(await screen.findByText("ไม่มีสิทธิ์ใช้งาน")).toBeInTheDocument();
+    expect(requests).toEqual(["/api/auth/session"]);
+  });
+
+  it("replaces the checkout placeholder with the Finance screen for a finance-readable Doctor", async () => {
+    renderRoleApp("/checkout/visit-42", "doctor");
+    expect(await screen.findByRole("heading", { name: "ชำระเงิน" })).toBeInTheDocument();
+    expect(screen.queryByText("ยังไม่พร้อมใน Pilot")).not.toBeInTheDocument();
+  });
+
+  it("denies a finance-restricted checkout route before requesting Checkout evidence", async () => {
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input); requests.push(path);
+      if (path === "/api/auth/session") {
+        return new Response(JSON.stringify({ data: { ...completeSession("assistant").data, permissions: ["patient:read", "visit:read-queue"] } }), { status: 200 });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    render(<AppProviders><RouterProvider router={createMemoryRouter(appRoutes, { initialEntries: ["/checkout/visit-42"] })} /></AppProviders>);
     expect(await screen.findByText("ไม่มีสิทธิ์ใช้งาน")).toBeInTheDocument();
     expect(requests).toEqual(["/api/auth/session"]);
   });

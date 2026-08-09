@@ -48,7 +48,7 @@ export interface VisitService {
   listQueue(actor: Actor): QueueItemDto[];
   getDashboardToday(): {
     waiting: number; consulting: number; awaitingOrderRevision: number;
-    awaitingPreparation: number; preparing: number; awaitingRelease: number; awaitingHandoff: number; awaitingCharge: number; updatedAt: string;
+    awaitingPreparation: number; preparing: number; awaitingRelease: number; awaitingHandoff: number; awaitingCharge: number; awaitingPayment: number; readyToClose: number; updatedAt: string;
   };
   getVisitSummary(visitId: string): VisitSummaryDto | null;
   getWorkspaceBase(visitId: string): VisitWorkspaceBaseDto;
@@ -108,10 +108,15 @@ export interface VisitService {
 type VisitRow = typeof visits.$inferSelect;
 type IntakeRow = typeof intakeObservations.$inferSelect;
 
-const pendingStatuses = ["WAITING", "CONSULTING", "AWAITING_ORDER_REVISION", "AWAITING_PREPARATION", "PREPARING", "AWAITING_RELEASE", "AWAITING_HANDOFF", "AWAITING_CHARGE"] as const;
+const activeQueueStatuses = ["WAITING", "CONSULTING", "AWAITING_ORDER_REVISION", "AWAITING_PREPARATION", "PREPARING", "AWAITING_RELEASE", "AWAITING_HANDOFF", "AWAITING_CHARGE", "AWAITING_PAYMENT", "READY_TO_CLOSE"] as const;
+const clinicalWorkspaceStatuses = ["WAITING", "CONSULTING", "AWAITING_ORDER_REVISION", "AWAITING_PREPARATION", "PREPARING", "AWAITING_RELEASE", "AWAITING_HANDOFF", "AWAITING_CHARGE"] as const;
 
-function isPendingStatus(status: string): status is (typeof pendingStatuses)[number] {
-  return (pendingStatuses as readonly string[]).includes(status);
+function isActiveQueueStatus(status: string): status is (typeof activeQueueStatuses)[number] {
+  return (activeQueueStatuses as readonly string[]).includes(status);
+}
+
+function isClinicalWorkspaceStatus(status: string): status is (typeof clinicalWorkspaceStatuses)[number] {
+  return (clinicalWorkspaceStatuses as readonly string[]).includes(status);
 }
 
 function notFound(messageTh = "ไม่พบข้อมูลที่ร้องขอ"): ApiError {
@@ -144,7 +149,7 @@ function toQueuePatient(patient: PatientDto): QueueItemDto["patient"] {
 function allowedActions(actor: Actor, status: string): QueueItemDto["allowedActions"] {
   if (status === "WAITING") return actor.role === "doctor"
     ? ["START_CONSULTATION", "REVIEW_ALLERGY"] : ["REVIEW_ALLERGY"];
-  return actor.role === "doctor" && isPendingStatus(status) ? ["OPEN_CONSULTATION"] : [];
+  return actor.role === "doctor" && isClinicalWorkspaceStatus(status) ? ["OPEN_CONSULTATION"] : [];
 }
 
 function toQueueItem(
@@ -154,7 +159,7 @@ function toQueueItem(
   allergy: AllergyAssessmentDto,
   actor: Actor,
 ): QueueItemDto {
-  if (!isPendingStatus(visit.status)) throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่รองรับคิวนี้" });
+  if (!isActiveQueueStatus(visit.status)) throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่รองรับคิวนี้" });
   return {
     visit: {
       id: visit.id,
@@ -313,8 +318,8 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
       const rows = input.database.db
         .select()
         .from(visits)
-        .where(and(eq(visits.clinicId, "clinic"), inArray(visits.status, pendingStatuses)))
-        .orderBy(sql`CASE ${visits.status} WHEN 'WAITING' THEN 0 WHEN 'CONSULTING' THEN 1 WHEN 'AWAITING_ORDER_REVISION' THEN 2 WHEN 'AWAITING_PREPARATION' THEN 3 WHEN 'PREPARING' THEN 4 WHEN 'AWAITING_RELEASE' THEN 5 WHEN 'AWAITING_HANDOFF' THEN 6 ELSE 7 END`, asc(visits.arrivedAt), asc(visits.id))
+        .where(and(eq(visits.clinicId, "clinic"), inArray(visits.status, activeQueueStatuses)))
+        .orderBy(sql`CASE ${visits.status} WHEN 'WAITING' THEN 0 WHEN 'CONSULTING' THEN 1 WHEN 'AWAITING_ORDER_REVISION' THEN 2 WHEN 'AWAITING_PREPARATION' THEN 3 WHEN 'PREPARING' THEN 4 WHEN 'AWAITING_RELEASE' THEN 5 WHEN 'AWAITING_HANDOFF' THEN 6 WHEN 'AWAITING_CHARGE' THEN 7 WHEN 'AWAITING_PAYMENT' THEN 8 ELSE 9 END`, asc(visits.arrivedAt), asc(visits.id))
         .all();
       const patientMap = input.patients.getPatientsByIds(rows.map((row) => row.patientId));
       const allergyMap = input.patients.getAllergyAssessments(rows.map((row) => row.patientId));
@@ -334,7 +339,7 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
         .where(
           and(
             eq(visits.clinicId, "clinic"),
-            inArray(visits.status, pendingStatuses),
+            inArray(visits.status, activeQueueStatuses),
             sql`${visits.arrivedAt} >= ${start}`,
             sql`${visits.arrivedAt} < ${end}`,
           ),
@@ -349,6 +354,8 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
         awaitingRelease: rows.filter((row) => row.status === "AWAITING_RELEASE").length,
         awaitingHandoff: rows.filter((row) => row.status === "AWAITING_HANDOFF").length,
         awaitingCharge: rows.filter((row) => row.status === "AWAITING_CHARGE").length,
+        awaitingPayment: rows.filter((row) => row.status === "AWAITING_PAYMENT").length,
+        readyToClose: rows.filter((row) => row.status === "READY_TO_CLOSE").length,
         updatedAt: now.toISOString(),
       };
     },
@@ -383,7 +390,7 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
         .where(and(eq(staffAccounts.id, observation.recordedBy), eq(staffAccounts.clinicId, "clinic")))
         .get();
       if (!recorder) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "ไม่พบผู้บันทึก Intake" });
-      if (!isPendingStatus(visit.status)) {
+      if (!isClinicalWorkspaceStatus(visit.status)) {
         throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่รองรับห้องทำงานนี้" });
       }
       return {
