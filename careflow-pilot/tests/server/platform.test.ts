@@ -115,6 +115,7 @@ describe("role permissions", () => {
       "label:print",
       "fulfillment:handoff",
       "finance:read",
+      "finance:record-cash",
       ],
       doctor: [
         "patient:read",
@@ -142,6 +143,9 @@ describe("role permissions", () => {
       "inventory:adjust",
       "finance:read",
       "finance:finalize-charge",
+      "finance:record-cash",
+      "finance:confirm-promptpay",
+      "finance:waive",
       ],
     });
   });

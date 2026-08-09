@@ -45,9 +45,29 @@ export interface FinanceService {
     visitId: string,
     command: FinalizeChargeBody,
   ): CheckoutDto;
+  approveFullWaiver(
+    tx: AppTransaction,
+    actor: Actor,
+    visitId: string,
+    command: ApproveFullWaiverCommand,
+  ): CheckoutDto;
+  recordCash(
+    tx: AppTransaction,
+    actor: Actor,
+    visitId: string,
+    command: RecordCashCommand,
+  ): CheckoutDto;
+  confirmPromptPay(
+    tx: AppTransaction,
+    actor: Actor,
+    visitId: string,
+    command: ConfirmPromptPayCommand,
+  ): CheckoutDto;
   readResolution(tx: AppTransaction, visitId: string): FinanceResolution;
   /** Rebuilds a safe idempotency replay from immutable Charge evidence only. */
   rebuildFinalization(tx: AppTransaction, reference: ChargeFinalizeReplayReference): CheckoutDto;
+  /** Rebuilds a terminal collection replay from pinned immutable evidence. */
+  rebuildCollection(tx: AppTransaction, reference: FinanceCollectionReplayReference): CheckoutDto;
 }
 
 export interface FinanceServiceOptions {
@@ -71,6 +91,38 @@ export interface ChargeFinalizeReplayProjection {
   collectionState: CheckoutDto["collectionState"];
   allowedActions: CheckoutDto["allowedActions"];
   closeBlockers: CheckoutDto["closeBlockers"];
+}
+
+export interface ApproveFullWaiverCommand {
+  chargeId: string;
+  reason: string;
+  expectedVisitRevision: number;
+}
+
+export interface RecordCashCommand {
+  chargeId: string;
+  amountBaht: number;
+  expectedVisitRevision: number;
+}
+
+export interface ConfirmPromptPayCommand {
+  chargeId: string;
+  amountBaht: number;
+  manualReference: string;
+  expectedVisitRevision: number;
+}
+
+type TerminalFinanceResolution = Extract<
+  FinanceResolution,
+  { kind: "COLLECTION_NOT_REQUIRED" } | { kind: "PAYMENT" }
+>;
+
+export interface FinanceCollectionReplayReference {
+  chargeId: string;
+  resolution: TerminalFinanceResolution;
+  patient: CheckoutDto["patient"];
+  visit: CheckoutDto["visit"];
+  projection: ChargeFinalizeReplayProjection;
 }
 
 interface CheckoutContext {
@@ -118,6 +170,29 @@ interface ChargeHashPayload {
   finalizedAt: string;
 }
 
+interface AdjustmentHashPayload {
+  id: string;
+  chargeId: string;
+  kind: "FULL_WAIVER";
+  amountBaht: number;
+  reason: string;
+  approvedBy: string;
+  approvedByDisplayName: string;
+  approvedAt: string;
+}
+
+interface PaymentHashPayload {
+  id: string;
+  chargeId: string;
+  visitId: string;
+  method: "CASH" | "PROMPTPAY";
+  amountBaht: number;
+  manualReference: string | null;
+  confirmedBy: string;
+  confirmedByDisplayName: string;
+  confirmedAt: string;
+}
+
 const financeReadableStatuses = new Set([
   "AWAITING_CHARGE",
   "AWAITING_PAYMENT",
@@ -146,8 +221,60 @@ function chargeAlreadyFinalized(): ApiError {
   });
 }
 
+function waiverNotAllowed(): ApiError {
+  return new ApiError({
+    code: "WAIVER_NOT_ALLOWED",
+    messageTh: "Visit นี้ไม่อนุญาตให้ยกเว้นค่าบริการ",
+  });
+}
+
+function paymentAmountMismatch(): ApiError {
+  return new ApiError({
+    code: "PAYMENT_AMOUNT_MISMATCH",
+    messageTh: "จำนวนเงินรับชำระไม่ตรงกับยอดสุทธิ",
+  });
+}
+
+function paymentAlreadyRecorded(): ApiError {
+  return new ApiError({
+    code: "PAYMENT_ALREADY_RECORDED",
+    messageTh: "Visit นี้มีหลักฐานการรับชำระหรือยกเว้นแล้ว",
+  });
+}
+
+function validationFailed(field: string, messageTh: string): ApiError {
+  return new ApiError({
+    code: "VALIDATION_FAILED",
+    messageTh: "ข้อมูลไม่ถูกต้อง กรุณาตรวจสอบแล้วลองใหม่",
+    fieldErrors: { [field]: messageTh },
+  });
+}
+
 function assertSafeBaht(value: number, minimum: number, maximum: number): boolean {
   return Number.isSafeInteger(value) && value >= minimum && value <= maximum;
+}
+
+function isTrimmedText(value: unknown, maximum: number): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= maximum && value === value.trim();
+}
+
+function normalizeRequiredText(value: unknown, maximum: number, field: string): string {
+  if (typeof value !== "string") throw validationFailed(field, "ต้องระบุข้อมูล");
+  const normalized = value.trim();
+  if (normalized.length < 1 || normalized.length > maximum) {
+    throw validationFailed(field, "ต้องระบุข้อมูลที่ถูกต้อง");
+  }
+  return normalized;
+}
+
+function normalizeChargeId(value: unknown): string {
+  return normalizeRequiredText(value, 120, "payload.chargeId");
+}
+
+function assertPaymentAmount(value: unknown): asserts value is number {
+  if (typeof value !== "number" || !assertSafeBaht(value, 1, 100_000_000)) {
+    throw validationFailed("payload.amountBaht", "จำนวนเงินบาทต้องเป็นจำนวนเต็ม 1–100000000");
+  }
 }
 
 function readCheckoutContext(tx: FinanceReadTransaction, visitId: string): CheckoutContext {
@@ -237,6 +364,18 @@ function chargeHash(header: ChargeHashPayload, lines: ChargeHashLine[]): string 
     .digest("hex");
 }
 
+function adjustmentHash(adjustment: AdjustmentHashPayload): string {
+  return createHash("sha256")
+    .update(stableStringify({ adjustment }))
+    .digest("hex");
+}
+
+function paymentHash(payment: PaymentHashPayload): string {
+  return createHash("sha256")
+    .update(stableStringify({ payment }))
+    .digest("hex");
+}
+
 function hashLine(line: typeof financeChargeLines.$inferSelect | (ChargeQuoteLine & { id: string })): ChargeHashLine {
   return {
     id: line.id,
@@ -267,6 +406,35 @@ function hashHeader(charge: typeof financeCharges.$inferSelect): ChargeHashPaylo
     finalizedBy: charge.finalizedBy,
     finalizedByDisplayName: charge.finalizedByDisplayName,
     finalizedAt: charge.finalizedAt,
+  };
+}
+
+function hashAdjustment(
+  adjustment: typeof financeChargeAdjustments.$inferSelect | AdjustmentHashPayload,
+): AdjustmentHashPayload {
+  return {
+    id: adjustment.id,
+    chargeId: adjustment.chargeId,
+    kind: adjustment.kind,
+    amountBaht: adjustment.amountBaht,
+    reason: adjustment.reason,
+    approvedBy: adjustment.approvedBy,
+    approvedByDisplayName: adjustment.approvedByDisplayName,
+    approvedAt: adjustment.approvedAt,
+  };
+}
+
+function hashPayment(payment: typeof financePayments.$inferSelect | PaymentHashPayload): PaymentHashPayload {
+  return {
+    id: payment.id,
+    chargeId: payment.chargeId,
+    visitId: payment.visitId,
+    method: payment.method,
+    amountBaht: payment.amountBaht,
+    manualReference: payment.manualReference,
+    confirmedBy: payment.confirmedBy,
+    confirmedByDisplayName: payment.confirmedByDisplayName,
+    confirmedAt: payment.confirmedAt,
   };
 }
 
@@ -332,6 +500,34 @@ function readChargeEvidence(
   ) {
     throw incompleteChargeSource();
   }
+  if (
+    adjustment && (
+      adjustment.kind !== "FULL_WAIVER" ||
+      adjustment.amountBaht !== -grossTotalBaht ||
+      !isTrimmedText(adjustment.reason, 500) ||
+      !isTrimmedText(adjustment.approvedByDisplayName, 200) ||
+      adjustment.contentHash !== adjustmentHash(hashAdjustment(adjustment))
+    )
+  ) {
+    throw incompleteChargeSource();
+  }
+  const promptPayReferenceIsValid = payment?.method === "PROMPTPAY" &&
+    isTrimmedText(payment.manualReference, 100);
+  if (
+    payment && (
+      payment.visitId !== charge.visitId ||
+      !assertSafeBaht(payment.amountBaht, 1, 100_000_000) ||
+      payment.amountBaht !== netDueBaht ||
+      !isTrimmedText(payment.confirmedByDisplayName, 200) ||
+      (payment.method === "CASH" && payment.manualReference !== null) ||
+      (payment.method === "PROMPTPAY" && !promptPayReferenceIsValid) ||
+      (payment.method !== "CASH" && payment.method !== "PROMPTPAY") ||
+      payment.contentHash !== paymentHash(hashPayment(payment))
+    )
+  ) {
+    throw incompleteChargeSource();
+  }
+  if (adjustment && payment) throw incompleteChargeSource();
   return { charge, lines, grossTotalBaht, adjustmentTotalBaht, netDueBaht, adjustment, payment };
 }
 
@@ -349,10 +545,22 @@ function collectionState(
 function allowedActions(
   actor: Actor,
   visit: CheckoutDto["visit"],
-  hasCharge: boolean,
+  evidence: PersistedChargeEvidence | undefined,
 ): CheckoutDto["allowedActions"] {
-  if (!hasCharge && visit.status === "AWAITING_CHARGE" && hasPermission(actor, "finance:finalize-charge")) {
+  if (!evidence && visit.status === "AWAITING_CHARGE" && hasPermission(actor, "finance:finalize-charge")) {
     return ["FINALIZE_CHARGE"];
+  }
+  if (
+    evidence &&
+    visit.status === "AWAITING_PAYMENT" &&
+    !evidence.adjustment &&
+    !evidence.payment
+  ) {
+    const actions: CheckoutDto["allowedActions"] = [];
+    if (hasPermission(actor, "finance:waive")) actions.push("APPROVE_FULL_WAIVER");
+    if (hasPermission(actor, "finance:record-cash")) actions.push("RECORD_CASH");
+    if (hasPermission(actor, "finance:confirm-promptpay")) actions.push("CONFIRM_PROMPTPAY");
+    return actions;
   }
   return [];
 }
@@ -377,7 +585,7 @@ function checkoutFromEvidence(
     adjustmentTotalBaht: evidence.adjustmentTotalBaht,
     netDueBaht: evidence.netDueBaht,
     collectionState: collectionState(context.visit, evidence),
-    allowedActions: allowedActions(actor, context.visit, true),
+    allowedActions: allowedActions(actor, context.visit, evidence),
     closeBlockers: closeBlockers(context.visit, evidence),
   };
   return {
@@ -436,18 +644,110 @@ function replayCheckoutFromEvidence(
     adjustmentTotalBaht: 0,
     netDueBaht: evidence.grossTotalBaht,
     collectionState: "AWAITING_COLLECTION",
-    allowedActions: [],
+    allowedActions: allowedActions(
+      { id: evidence.charge.finalizedBy, role: "doctor", displayName: evidence.charge.finalizedByDisplayName },
+      reference.visit,
+      evidence,
+    ),
     closeBlockers: ["collection"],
   } satisfies ChargeFinalizeReplayProjection;
-  // A replay is the original post-finalization response. Use reference-pinned
-  // visit/patient/projection fields and immutable Charge/Lines rather than
-  // current master or later collection evidence. The fallback is the only
-  // Task 2 finalization outcome and keeps pre-projection references replayable.
+  // A replay uses reference-pinned visit/patient/projection fields and immutable
+  // Charge/Line evidence rather than current master or later collection evidence.
+  // The fallback keeps references written before projections replayable.
   return checkoutFromEvidence(
     { id: evidence.charge.finalizedBy, role: "doctor", displayName: evidence.charge.finalizedByDisplayName },
     { clinicId: evidence.charge.clinicId, patient: reference.patient, visit: reference.visit },
     evidence,
     projection,
+  );
+}
+
+function revisionConflict(visit: typeof visits.$inferSelect): ApiError {
+  return new ApiError({
+    code: "REVISION_CONFLICT",
+    messageTh: "Visit ถูกเปลี่ยนแปลงแล้ว",
+    currentRevisions: { visit: visit.revision },
+  });
+}
+
+function assertPendingCollection(
+  tx: AppTransaction,
+  visitId: string,
+  chargeId: string,
+  expectedVisitRevision: number,
+  operation: "WAIVER" | "PAYMENT",
+): { visit: typeof visits.$inferSelect; evidence: PersistedChargeEvidence } {
+  const visit = tx.select().from(visits).where(eq(visits.id, visitId)).get();
+  if (!visit) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit ที่ร้องขอ" });
+  const evidence = readChargeEvidence(tx, { chargeId });
+  if (!evidence || evidence.charge.visitId !== visitId) {
+    if (operation === "WAIVER") throw waiverNotAllowed();
+    throw financeNotReady();
+  }
+  if (evidence.adjustment || evidence.payment) {
+    if (operation === "WAIVER") throw waiverNotAllowed();
+    throw paymentAlreadyRecorded();
+  }
+  if (visit.status !== "AWAITING_PAYMENT") {
+    if (operation === "WAIVER") throw waiverNotAllowed();
+    throw financeNotReady();
+  }
+  if (visit.revision !== expectedVisitRevision) throw revisionConflict(visit);
+  return { visit, evidence };
+}
+
+function transitionToReadyToClose(
+  tx: AppTransaction,
+  visit: typeof visits.$inferSelect,
+  operation: "WAIVER" | "PAYMENT",
+): void {
+  const changed = tx.update(visits)
+    .set({ status: "READY_TO_CLOSE", revision: visit.revision + 1 })
+    .where(and(
+      eq(visits.id, visit.id),
+      eq(visits.status, "AWAITING_PAYMENT"),
+      eq(visits.revision, visit.revision),
+    ))
+    .run();
+  if (changed.changes === 1) return;
+  const current = tx.select().from(visits).where(eq(visits.id, visit.id)).get();
+  if (current && current.revision !== visit.revision) throw revisionConflict(current);
+  if (operation === "WAIVER") throw waiverNotAllowed();
+  throw paymentAlreadyRecorded();
+}
+
+function replayCollectionFromEvidence(
+  tx: FinanceReadTransaction,
+  reference: FinanceCollectionReplayReference,
+): CheckoutDto {
+  const evidence = readChargeEvidence(tx, { chargeId: reference.chargeId });
+  if (!evidence || evidence.charge.visitId !== reference.visit.id) {
+    throw new Error("Idempotency collection reference does not match immutable Charge evidence");
+  }
+  const expectedCollectionState = reference.resolution.kind === "COLLECTION_NOT_REQUIRED"
+    ? "COLLECTION_NOT_REQUIRED"
+    : reference.resolution.method === "CASH" ? "PAID_CASH" : "PAID_PROMPTPAY";
+  if (
+    reference.resolution.kind === "COLLECTION_NOT_REQUIRED"
+      ? (!evidence.adjustment || evidence.adjustment.id !== reference.resolution.adjustmentId)
+      : (!evidence.payment || evidence.payment.id !== reference.resolution.paymentId || evidence.payment.method !== reference.resolution.method)
+  ) {
+    throw new Error("Idempotency collection resolution does not match immutable evidence");
+  }
+  if (
+    reference.projection.adjustmentTotalBaht !== evidence.adjustmentTotalBaht ||
+    reference.projection.netDueBaht !== evidence.netDueBaht ||
+    reference.projection.collectionState !== expectedCollectionState ||
+    reference.projection.allowedActions.length !== 0 ||
+    reference.projection.closeBlockers.length !== 0
+  ) {
+    throw new Error("Idempotency collection projection does not match immutable evidence");
+  }
+  return checkoutFromEvidence(
+    { id: evidence.charge.finalizedBy, role: "doctor", displayName: evidence.charge.finalizedByDisplayName },
+    { clinicId: evidence.charge.clinicId, patient: reference.patient, visit: reference.visit },
+    evidence,
+    reference.projection,
   );
 }
 
@@ -512,9 +812,50 @@ export function createFinanceService(input: FinanceServiceOptions): FinanceServi
       adjustmentTotalBaht: 0,
       netDueBaht: quote.grossTotalBaht,
       collectionState: "PENDING_CHARGE",
-      allowedActions: allowedActions(actor, context.visit, false),
+      allowedActions: allowedActions(actor, context.visit, undefined),
       closeBlockers: ["charge"],
     };
+  }
+
+  function recordPayment(
+    tx: AppTransaction,
+    actor: Actor,
+    visitId: string,
+    command: RecordCashCommand | ConfirmPromptPayCommand,
+    method: "CASH" | "PROMPTPAY",
+  ): CheckoutDto {
+    const chargeId = normalizeChargeId(command.chargeId);
+    assertPaymentAmount(command.amountBaht);
+    const manualReference = method === "PROMPTPAY"
+      ? normalizeRequiredText(
+        (command as ConfirmPromptPayCommand).manualReference,
+        100,
+        "payload.manualReference",
+      )
+      : null;
+    const { visit, evidence } = assertPendingCollection(
+      tx,
+      visitId,
+      chargeId,
+      command.expectedVisitRevision,
+      "PAYMENT",
+    );
+    if (command.amountBaht !== evidence.netDueBaht) throw paymentAmountMismatch();
+
+    const payment: PaymentHashPayload = {
+      id: idFactory(),
+      chargeId: evidence.charge.id,
+      visitId: visit.id,
+      method,
+      amountBaht: command.amountBaht,
+      manualReference,
+      confirmedBy: actor.id,
+      confirmedByDisplayName: actor.displayName,
+      confirmedAt: clock().toISOString(),
+    };
+    tx.insert(financePayments).values({ ...payment, contentHash: paymentHash(payment) }).run();
+    transitionToReadyToClose(tx, visit, "PAYMENT");
+    return getCheckoutFromTransaction(actor, tx, visitId);
   }
 
   return {
@@ -609,6 +950,44 @@ export function createFinanceService(input: FinanceServiceOptions): FinanceServi
       return getCheckoutFromTransaction(actor, tx, visitId);
     },
 
+    approveFullWaiver(tx, actor, visitId, command) {
+      requirePermission(actor, "finance:waive");
+      const chargeId = normalizeChargeId(command.chargeId);
+      const reason = normalizeRequiredText(command.reason, 500, "payload.reason");
+      const { visit, evidence } = assertPendingCollection(
+        tx,
+        visitId,
+        chargeId,
+        command.expectedVisitRevision,
+        "WAIVER",
+      );
+      const adjustment: AdjustmentHashPayload = {
+        id: idFactory(),
+        chargeId: evidence.charge.id,
+        kind: "FULL_WAIVER",
+        amountBaht: -evidence.grossTotalBaht,
+        reason,
+        approvedBy: actor.id,
+        approvedByDisplayName: actor.displayName,
+        approvedAt: clock().toISOString(),
+      };
+      tx.insert(financeChargeAdjustments)
+        .values({ ...adjustment, contentHash: adjustmentHash(adjustment) })
+        .run();
+      transitionToReadyToClose(tx, visit, "WAIVER");
+      return getCheckoutFromTransaction(actor, tx, visitId);
+    },
+
+    recordCash(tx, actor, visitId, command) {
+      requirePermission(actor, "finance:record-cash");
+      return recordPayment(tx, actor, visitId, command, "CASH");
+    },
+
+    confirmPromptPay(tx, actor, visitId, command) {
+      requirePermission(actor, "finance:confirm-promptpay");
+      return recordPayment(tx, actor, visitId, command, "PROMPTPAY");
+    },
+
     readResolution(tx, visitId) {
       const evidence = readChargeEvidence(tx, { visitId });
       if (!evidence) return { kind: "PENDING_CHARGE" };
@@ -627,6 +1006,10 @@ export function createFinanceService(input: FinanceServiceOptions): FinanceServi
 
     rebuildFinalization(tx, reference) {
       return replayCheckoutFromEvidence(tx, reference);
+    },
+
+    rebuildCollection(tx, reference) {
+      return replayCollectionFromEvidence(tx, reference);
     },
   };
 }

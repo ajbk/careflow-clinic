@@ -62,6 +62,9 @@ export const permissionSchema = z.enum([
   "inventory:adjust",
   "finance:read",
   "finance:finalize-charge",
+  "finance:record-cash",
+  "finance:confirm-promptpay",
+  "finance:waive",
 ]);
 
 export const loginBodySchema = z.strictObject({
@@ -290,6 +293,53 @@ export const finalizeChargeResponseSchema = z.strictObject({
   replayed: z.boolean(),
 });
 export type FinalizeChargeResponse = z.infer<typeof finalizeChargeResponseSchema>;
+
+const collectionExpectedRevisionsSchema = z.strictObject({
+  visit: z.number().int().safe().min(1),
+});
+const waiverReasonSchema = z.string().trim().min(1).max(500);
+const paymentAmountBahtSchema = z.number().int().safe().min(1).max(100_000_000);
+const manualPromptPayReferenceSchema = z.string().trim().min(1).max(100);
+
+export const approveFullWaiverBodySchema = rejectOwnPrototypeKeys(
+  z.strictObject({
+    expectedRevisions: collectionExpectedRevisionsSchema,
+    payload: z.strictObject({
+      chargeId: financeIdSchema,
+      reason: waiverReasonSchema,
+    }),
+  }),
+);
+export type ApproveFullWaiverBody = z.infer<typeof approveFullWaiverBodySchema>;
+
+export const recordCashBodySchema = rejectOwnPrototypeKeys(
+  z.strictObject({
+    expectedRevisions: collectionExpectedRevisionsSchema,
+    payload: z.strictObject({
+      chargeId: financeIdSchema,
+      amountBaht: paymentAmountBahtSchema,
+    }),
+  }),
+);
+export type RecordCashBody = z.infer<typeof recordCashBodySchema>;
+
+export const confirmPromptPayBodySchema = rejectOwnPrototypeKeys(
+  z.strictObject({
+    expectedRevisions: collectionExpectedRevisionsSchema,
+    payload: z.strictObject({
+      chargeId: financeIdSchema,
+      amountBaht: paymentAmountBahtSchema,
+      manualReference: manualPromptPayReferenceSchema,
+    }),
+  }),
+);
+export type ConfirmPromptPayBody = z.infer<typeof confirmPromptPayBodySchema>;
+
+export const collectionResponseSchema = z.strictObject({
+  data: checkoutDtoSchema,
+  replayed: z.boolean(),
+});
+export type CollectionResponse = z.infer<typeof collectionResponseSchema>;
 
 export const financeResolutionSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("PENDING_CHARGE") }),
@@ -1316,6 +1366,9 @@ export const apiErrorCodeSchema = z.enum([
   "CHARGE_SOURCE_INCOMPLETE",
   "PRICE_SNAPSHOT_MISSING",
   "CHARGE_ALREADY_FINALIZED",
+  "WAIVER_NOT_ALLOWED",
+  "PAYMENT_AMOUNT_MISMATCH",
+  "PAYMENT_ALREADY_RECORDED",
   "RATE_LIMITED",
   "INTERNAL_ERROR",
 ]);
