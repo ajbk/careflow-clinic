@@ -87,6 +87,23 @@ function body(visitRevision = 7, clinicPricingRevision = 1) {
 }
 
 describe("finance checkout routes", () => {
+  it("rejects anonymous charge finalization before any finance, audit, or idempotency write", async () => {
+    const test = await fixture();
+    const response = await test.app.inject({
+      method: "POST",
+      url: "/api/checkout/finance-route-visit/charge-finalizations",
+      headers: { "idempotency-key": "finance-anonymous-denied" },
+      payload: body(),
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json().error.code).toBe("AUTH_REQUIRED");
+    expect(countRows(test, "finance_charges")).toBe(0);
+    expect(countRows(test, "finance_charge_lines")).toBe(0);
+    expect(countRows(test, "audit_events")).toBe(0);
+    expect(countRows(test, "idempotency_records")).toBe(0);
+  });
+
   it("requires finance authentication and rejects Assistant charge finalization before service work", async () => {
     const test = await fixture();
     const anonymous = await test.app.inject({ method: "GET", url: "/api/checkout/finance-route-visit" });
@@ -188,6 +205,69 @@ describe("finance checkout routes", () => {
     expect(countRows(test, "finance_charge_lines")).toBe(1);
     expect(countRows(test, "audit_events")).toBe(1);
     expect(countRows(test, "idempotency_records")).toBe(1);
+  });
+
+  it("replays the exact finalization projection after later evidence and from a pre-projection reference", async () => {
+    const test = await fixture();
+    const first = await test.app.inject({
+      method: "POST",
+      url: "/api/checkout/finance-route-visit/charge-finalizations",
+      headers: { cookie: test.doctorCookie, "idempotency-key": "finance-finalize-stable-later" },
+      payload: body(),
+    });
+    expect(first.statusCode).toBe(201);
+    if (first.statusCode !== 201) return;
+    const originalData = first.json().data;
+    const chargeId = originalData.charge.id as string;
+
+    test.database.sqlite.prepare(`
+      INSERT INTO finance_payments (
+        id, charge_id, visit_id, method, amount_baht, manual_reference,
+        confirmed_by, confirmed_by_display_name, confirmed_at, content_hash
+      ) VALUES (
+        'finance-later-payment', ?, 'finance-route-visit', 'CASH', 100, NULL,
+        'finance-route-assistant', 'ผู้ช่วยเส้นทางการเงิน', ?, ?
+      )
+    `).run(chargeId, NOW, HASH);
+    test.database.sqlite.prepare(`
+      UPDATE visits SET status = 'READY_TO_CLOSE', revision = 9
+      WHERE id = 'finance-route-visit' AND status = 'AWAITING_PAYMENT' AND revision = 8
+    `).run();
+
+    const replay = await test.app.inject({
+      method: "POST",
+      url: "/api/checkout/finance-route-visit/charge-finalizations",
+      headers: { cookie: test.doctorCookie, "idempotency-key": "finance-finalize-stable-later" },
+      payload: body(),
+    });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json().replayed).toBe(true);
+    expect(JSON.stringify(replay.json().data)).toBe(JSON.stringify(originalData));
+    expect(countRows(test, "finance_charges")).toBe(1);
+    expect(countRows(test, "finance_payments")).toBe(1);
+    expect(countRows(test, "audit_events")).toBe(1);
+    expect(countRows(test, "idempotency_records")).toBe(1);
+
+    test.database.sqlite.prepare(`
+      UPDATE idempotency_records SET response_json = ?
+      WHERE actor_id = 'finance-route-doctor' AND key = 'finance-finalize-stable-later'
+    `).run(JSON.stringify({
+      type: "safe-replay-reference",
+      reference: {
+        chargeId,
+        patient: originalData.patient,
+        visit: originalData.visit,
+      },
+    }));
+    const legacyReferenceReplay = await test.app.inject({
+      method: "POST",
+      url: "/api/checkout/finance-route-visit/charge-finalizations",
+      headers: { cookie: test.doctorCookie, "idempotency-key": "finance-finalize-stable-later" },
+      payload: body(),
+    });
+    expect(legacyReferenceReplay.statusCode).toBe(200);
+    expect(legacyReferenceReplay.json().replayed).toBe(true);
+    expect(JSON.stringify(legacyReferenceReplay.json().data)).toBe(JSON.stringify(originalData));
   });
 
   it("returns stale Visit and clinic-pricing revisions without creating finance evidence", async () => {

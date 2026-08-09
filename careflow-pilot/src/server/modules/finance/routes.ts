@@ -79,6 +79,13 @@ export function registerFinanceRoutes(input: {
             chargeId: data.charge.id,
             patient: data.patient,
             visit: data.visit,
+            projection: {
+              adjustmentTotalBaht: data.adjustmentTotalBaht,
+              netDueBaht: data.netDueBaht,
+              collectionState: data.collectionState,
+              allowedActions: [...data.allowedActions],
+              closeBlockers: [...data.closeBlockers],
+            },
           };
         },
         rebuild(tx, reference) {

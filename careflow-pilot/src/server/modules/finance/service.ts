@@ -61,6 +61,16 @@ export interface ChargeFinalizeReplayReference {
   chargeId: string;
   patient: CheckoutDto["patient"];
   visit: CheckoutDto["visit"];
+  /** Optional for safe references written before the exact projection was pinned. */
+  projection?: ChargeFinalizeReplayProjection;
+}
+
+export interface ChargeFinalizeReplayProjection {
+  adjustmentTotalBaht: CheckoutDto["adjustmentTotalBaht"];
+  netDueBaht: CheckoutDto["netDueBaht"];
+  collectionState: CheckoutDto["collectionState"];
+  allowedActions: CheckoutDto["allowedActions"];
+  closeBlockers: CheckoutDto["closeBlockers"];
 }
 
 interface CheckoutContext {
@@ -263,6 +273,7 @@ function hashHeader(charge: typeof financeCharges.$inferSelect): ChargeHashPaylo
 function readChargeEvidence(
   tx: FinanceReadTransaction,
   input: { visitId?: string; chargeId?: string },
+  resolutionMode: "CURRENT" | "CHARGE_ONLY" = "CURRENT",
 ): PersistedChargeEvidence | undefined {
   if ((input.visitId === undefined) === (input.chargeId === undefined)) {
     throw new Error("Exactly one Charge identity is required");
@@ -281,16 +292,20 @@ function readChargeEvidence(
     .where(eq(financeChargeLines.chargeId, charge.id))
     .orderBy(asc(financeChargeLines.position), asc(financeChargeLines.id))
     .all();
-  const adjustment = tx
-    .select()
-    .from(financeChargeAdjustments)
-    .where(eq(financeChargeAdjustments.chargeId, charge.id))
-    .get();
-  const payment = tx
-    .select()
-    .from(financePayments)
-    .where(eq(financePayments.chargeId, charge.id))
-    .get();
+  const adjustment = resolutionMode === "CURRENT"
+    ? tx
+      .select()
+      .from(financeChargeAdjustments)
+      .where(eq(financeChargeAdjustments.chargeId, charge.id))
+      .get()
+    : undefined;
+  const payment = resolutionMode === "CURRENT"
+    ? tx
+      .select()
+      .from(financePayments)
+      .where(eq(financePayments.chargeId, charge.id))
+      .get()
+    : undefined;
 
   const grossTotalBaht = lines.reduce((total, line) => total + line.lineTotalBaht, 0);
   const consultationLines = lines.filter((line) => line.lineType === "CONSULTATION");
@@ -356,7 +371,15 @@ function checkoutFromEvidence(
   actor: Actor,
   context: CheckoutContext,
   evidence: PersistedChargeEvidence,
+  pinnedProjection?: ChargeFinalizeReplayProjection,
 ): CheckoutDto {
+  const projection = pinnedProjection ?? {
+    adjustmentTotalBaht: evidence.adjustmentTotalBaht,
+    netDueBaht: evidence.netDueBaht,
+    collectionState: collectionState(context.visit, evidence),
+    allowedActions: allowedActions(actor, context.visit, true),
+    closeBlockers: closeBlockers(context.visit, evidence),
+  };
   return {
     patient: {
       id: context.patient.id,
@@ -393,11 +416,11 @@ function checkoutFromEvidence(
     },
     lines: evidence.lines.map(persistedLineToCheckoutLine),
     grossTotalBaht: evidence.grossTotalBaht,
-    adjustmentTotalBaht: evidence.adjustmentTotalBaht,
-    netDueBaht: evidence.netDueBaht,
-    collectionState: collectionState(context.visit, evidence),
-    allowedActions: allowedActions(actor, context.visit, true),
-    closeBlockers: closeBlockers(context.visit, evidence),
+    adjustmentTotalBaht: projection.adjustmentTotalBaht,
+    netDueBaht: projection.netDueBaht,
+    collectionState: projection.collectionState,
+    allowedActions: projection.allowedActions,
+    closeBlockers: projection.closeBlockers,
   };
 }
 
@@ -405,16 +428,26 @@ function replayCheckoutFromEvidence(
   tx: FinanceReadTransaction,
   reference: ChargeFinalizeReplayReference,
 ): CheckoutDto {
-  const evidence = readChargeEvidence(tx, { chargeId: reference.chargeId });
+  const evidence = readChargeEvidence(tx, { chargeId: reference.chargeId }, "CHARGE_ONLY");
   if (!evidence || evidence.charge.visitId !== reference.visit.id) {
     throw new Error("Idempotency Charge reference does not match immutable evidence");
   }
+  const projection = reference.projection ?? {
+    adjustmentTotalBaht: 0,
+    netDueBaht: evidence.grossTotalBaht,
+    collectionState: "AWAITING_COLLECTION",
+    allowedActions: [],
+    closeBlockers: ["collection"],
+  } satisfies ChargeFinalizeReplayProjection;
   // A replay is the original post-finalization response. Use reference-pinned
-  // visit/patient fields rather than master records that may be edited later.
+  // visit/patient/projection fields and immutable Charge/Lines rather than
+  // current master or later collection evidence. The fallback is the only
+  // Task 2 finalization outcome and keeps pre-projection references replayable.
   return checkoutFromEvidence(
     { id: evidence.charge.finalizedBy, role: "doctor", displayName: evidence.charge.finalizedByDisplayName },
     { clinicId: evidence.charge.clinicId, patient: reference.patient, visit: reference.visit },
     evidence,
+    projection,
   );
 }
 
