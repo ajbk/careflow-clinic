@@ -17,11 +17,13 @@ import type {
 import { visitSummarySchema } from "../../shared/contracts.js";
 import { randomUUID } from "node:crypto";
 import { ApiError } from "../errors.js";
+import { eq } from "drizzle-orm";
 import type { MedicationService } from "../modules/medication/index.js";
 import type { NoteService } from "../modules/note/index.js";
 import type { PatientService } from "../modules/patient/index.js";
 import type { InventoryService } from "../modules/inventory/index.js";
 import type { FulfillmentService } from "../modules/fulfillment/index.js";
+import { fulfillmentDispenses } from "../modules/fulfillment/index.js";
 import { appendAuditEvent, hasPermission, type AuditedTransaction } from "../modules/platform/index.js";
 import type { VisitService } from "../modules/visit/index.js";
 
@@ -314,6 +316,7 @@ export function createClinicalWorkflow(input: {
       const allergy = input.patients.getAllergyAssessment(base.patient.id);
       const signedClinicalNote = input.notes.getSignedNote(visitId);
       const medicationDecision = input.medications.getSignedDecision(visitId);
+      const hasDispense = input.fulfillment.readHandoffChain(visitId).dispense !== null;
       const recentNotes = input.notes.getRecentSignedNotesForPatient(base.patient.id);
       const recentDecisions = input.medications.getRecentSignedDecisionsForPatient(base.patient.id);
       const latestNote = recentNotes[0] ?? null;
@@ -359,7 +362,7 @@ export function createClinicalWorkflow(input: {
         medicationDecision,
         allowedActions: base.visit.status === "WAITING" ? ["START_CONSULTATION", "REVIEW_ALLERGY"]
           : base.visit.status === "CONSULTING" ? ["SAVE_DRAFT", "FINALIZE_CONSULTATION", "REVIEW_ALLERGY"]
-          : ["AMEND_NOTE", "REVISE_MEDICATION_DECISION"],
+          : hasDispense ? ["AMEND_NOTE"] : ["AMEND_NOTE", "REVISE_MEDICATION_DECISION"],
       };
     },
 
@@ -395,6 +398,9 @@ export function createClinicalWorkflow(input: {
     reviseMedicationDecision(tx, actor, visitId, body) {
       if (!hasPermission(actor, "medication:sign-decision")) {
         throw new ApiError({ code: "FORBIDDEN", messageTh: "บัญชีนี้ไม่มีสิทธิ์ดำเนินการ" });
+      }
+      if (tx.select({ id: fulfillmentDispenses.id }).from(fulfillmentDispenses).where(eq(fulfillmentDispenses.visitId, visitId)).get()) {
+        throw new ApiError({ code: "INVALID_STATE", messageTh: "ไม่สามารถแก้ไขคำสั่งยาได้หลังส่งมอบยาแล้ว" });
       }
       const visit = input.visits.assertDecisionRevisionVisit(
         tx, actor, visitId, body.expectedRevisions.visit, body.expectedRevisions.patient,

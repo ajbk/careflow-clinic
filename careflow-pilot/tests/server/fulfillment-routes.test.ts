@@ -458,6 +458,21 @@ describe("authenticated fulfillment reservation routes", () => {
       expect(event).toBeDefined();
       expect(JSON.parse(event?.metadataJson ?? "{}")).toMatchObject({ visitId: "visit-route-001", decisionId: started.medicationDecision.id, decisionVersion: 1, labelVersionId: started.label.id, releaseId: releasedData.release.id, preparationId: preparation.id, reservationId: started.reservation.id, previousStatus: "AWAITING_HANDOFF", nextStatus: "AWAITING_CHARGE", allocations: [{ allocationId: allocation.id, lotId: "lot-route-001", lotNumberSnapshot: "LOT-ROUTE-001", quantity: 3, unit: "เม็ด" }] });
     }
+    const beforeRevision = {
+      decisions: countRows(test, "SELECT count(*) AS count FROM medication_decisions"),
+      invalidations: countRows(test, "SELECT count(*) AS count FROM fulfillment_artifact_invalidations"),
+      audits: countRows(test, "SELECT count(*) AS count FROM audit_events"),
+      idempotency: countRows(test, "SELECT count(*) AS count FROM idempotency_records"),
+      visit: test.database.sqlite.prepare("SELECT status, revision FROM visits WHERE id = 'visit-route-001'").get(),
+      dispense: test.database.sqlite.prepare("SELECT id FROM fulfillment_dispenses WHERE visit_id = 'visit-route-001'").get(),
+      stock: test.database.sqlite.prepare("SELECT sum(quantity_delta) AS quantity FROM inventory_stock_movements WHERE lot_id = 'lot-route-001'").get(),
+    };
+    for (const [key, decision] of [["handoff-revision-order", { kind: "ORDER", items: [{ medicationId: "DEMO-MED-001", medicationRevision: 1, quantity: 3, directionsTh: "คำสั่งใหม่ที่ต้องถูกปฏิเสธ" }] }], ["handoff-revision-none", { kind: "NO_MEDICATION", noMedicationReason: "คำสั่งใหม่ที่ต้องถูกปฏิเสธ" }]] as const) {
+      const revision = await test.app.inject({ method: "POST", url: "/api/visits/visit-route-001/medication-decision-revisions", headers: { cookie: test.doctorCookie, "idempotency-key": key }, payload: { expectedRevisions: { visit: 7, patient: 1, medicationDecision: 1 }, payload: { revisionReason: "ห้ามแก้หลังส่งมอบ", decision } } });
+      expect(revision.statusCode).toBe(409);
+      expect(revision.json().error.code).toBe("INVALID_STATE");
+      expect({ decisions: countRows(test, "SELECT count(*) AS count FROM medication_decisions"), invalidations: countRows(test, "SELECT count(*) AS count FROM fulfillment_artifact_invalidations"), audits: countRows(test, "SELECT count(*) AS count FROM audit_events"), idempotency: countRows(test, "SELECT count(*) AS count FROM idempotency_records"), visit: test.database.sqlite.prepare("SELECT status, revision FROM visits WHERE id = 'visit-route-001'").get(), dispense: test.database.sqlite.prepare("SELECT id FROM fulfillment_dispenses WHERE visit_id = 'visit-route-001'").get(), stock: test.database.sqlite.prepare("SELECT sum(quantity_delta) AS quantity FROM inventory_stock_movements WHERE lot_id = 'lot-route-001'").get() }).toEqual(beforeRevision);
+    }
     const handoffReplay = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/handoff", headers: { cookie: test.assistantCookie, "idempotency-key": "handoff-ok" }, payload: { expectedRevisions: { visit: 6 }, payload: handoffPayload } });
     expect(handoffReplay.statusCode).toBe(200);
     expect(handoffReplay.json()).toMatchObject({ data: handoff.json().data, replayed: true });
