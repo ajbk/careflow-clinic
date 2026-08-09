@@ -237,9 +237,41 @@ test("reject/reprint, stale evidence, inventory safeguards, and role denial rema
       headers: { "idempotency-key": "completion-adjustment" }, data: { expectedRevisions: { lot: quarantineData.revision }, payload: { correctsMovementId: movementId, quantityDelta: -1, reason: "แก้ไขยอดทดสอบ" } },
     });
     expect(adjustment.status()).toBe(201);
+    const immutableEvidenceBeforeRestart = server.database.sqlite.prepare("SELECT count(*) AS count FROM inventory_lot_status_events WHERE lot_id = ?").get(integrityLot.lot.id) as { count: number };
+    const adjustmentEvidenceBeforeRestart = server.database.sqlite.prepare("SELECT count(*) AS count FROM inventory_adjustments WHERE lot_id = ?").get(integrityLot.lot.id) as { count: number };
+    expect(immutableEvidenceBeforeRestart.count).toBe(1);
+    expect(adjustmentEvidenceBeforeRestart.count).toBe(1);
+    await server.restart();
+    expect(server.database.sqlite.prepare("SELECT count(*) AS count FROM inventory_lot_status_events WHERE lot_id = ?").get(integrityLot.lot.id)).toEqual(immutableEvidenceBeforeRestart);
+    expect(server.database.sqlite.prepare("SELECT count(*) AS count FROM inventory_adjustments WHERE lot_id = ?").get(integrityLot.lot.id)).toEqual(adjustmentEvidenceBeforeRestart);
+    expect(server.database.sqlite.prepare("SELECT status FROM inventory_lots WHERE id = ?").get(integrityLot.lot.id)).toEqual({ status: "QUARANTINED" });
   } finally {
     await assistantContext.close();
     await doctorContext.close();
     await server.close();
   }
+});
+
+test("an active reservation is invalidated by a real allergy revision and blocks stale fulfillment actions", async ({ browser }) => {
+  const server = await startPilotServer();
+  const assistantContext = await browser.newContext(); const doctorContext = await browser.newContext();
+  const assistant = await assistantContext.newPage(); const doctor = await doctorContext.newPage();
+  try {
+    await loginAndAcknowledge(assistant, server.baseURL, "assistant");
+    await loginAndAcknowledge(doctor, server.baseURL, "doctor");
+    await receiveLot(assistant, { key: "active-invalidation-stock", lotNumber: "ACTIVE-INVALIDATION", expiryDate: "2032-12-31", quantity: 2 });
+    const patient = await createQueuedPatient(assistant, "ทดสอบการยกเลิกรายการจองจริง");
+    await reviewAllergy(assistant); await queueDoctorIntoConsultation(doctor, patient.hn); await signOrder(doctor, 1);
+    await assistant.goto(`${server.baseURL}/dispensing/${patient.visitId}`); await assistant.getByRole("button", { name: "เริ่มเตรียมยา" }).click();
+    const active = (await (await assistant.request.get(`${server.baseURL}/api/dispensing/${patient.visitId}`)).json()).data as { visit: { revision: number }; patient: { id: string; revision: number }; label: { id: string }; reservation: { id: string }; preparation: { id: string; revision: number } };
+    const invalidated = await doctor.request.post(`${server.baseURL}/api/patients/${active.patient.id}/allergy-revisions`, { headers: { "idempotency-key": "active-reservation-allergy" }, data: { expectedRevisions: { patient: active.patient.revision, visit: active.visit.revision }, payload: { visitId: patient.visitId, state: "PRESENT", items: [{ substance: "ยาทดสอบ", reaction: "ผื่น", severity: "MILD", note: null }], sourceText: "ข้อมูล E2E", reason: "พบประวัติแพ้ยาหลังเริ่มจัดยา" } } });
+    expect(invalidated.status()).toBe(201);
+    expect((await invalidated.json()).data.visit.status).toBe("AWAITING_ORDER_REVISION");
+    const writesBefore = Number((server.database.sqlite.prepare("SELECT count(*) AS count FROM fulfillment_label_print_events").get() as { count: number }).count);
+    const stalePrint = await assistant.request.post(`${server.baseURL}/api/dispensing/${patient.visitId}/labels/${active.label.id}/print-events`, { headers: { "idempotency-key": "active-reservation-stale-print" }, data: { expectedRevisions: { visit: active.visit.revision + 1 }, payload: { rendererVersion: "e2e", decisionVersion: 1 } } });
+    expect(stalePrint.status()).toBe(409); expect((await stalePrint.json()).error.code).toBe("ARTIFACT_STALE");
+    expect(Number((server.database.sqlite.prepare("SELECT count(*) AS count FROM fulfillment_label_print_events").get() as { count: number }).count)).toBe(writesBefore);
+    expect(server.database.sqlite.prepare("SELECT status FROM inventory_reservations WHERE id = ?").get(active.reservation.id)).toEqual({ status: "RELEASED" });
+    expect(Number((server.database.sqlite.prepare("SELECT count(*) AS count FROM fulfillment_artifact_invalidations WHERE visit_id = ?").get(patient.visitId) as { count: number }).count)).toBeGreaterThan(0);
+  } finally { await assistantContext.close(); await doctorContext.close(); await server.close(); }
 });
