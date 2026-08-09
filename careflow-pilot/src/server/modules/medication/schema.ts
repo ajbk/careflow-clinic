@@ -17,6 +17,7 @@ export const medications = sqliteTable(
     internalBarcode: text("internal_barcode"),
     active: integer("active").notNull().default(1),
     revision: integer("revision").notNull().default(1),
+    unitPriceBaht: integer("unit_price_baht").notNull().default(0),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
@@ -28,6 +29,7 @@ export const medications = sqliteTable(
     check("medications_canonical_unit_check", sql`length(${table.canonicalUnit}) BETWEEN 1 AND 100`),
     check("medications_active_check", sql`${table.active} IN (0, 1)`),
     check("medications_revision_check", sql`${table.revision} >= 1`),
+    check("medications_unit_price_baht_check", sql`typeof(${table.unitPriceBaht}) = 'integer' AND ${table.unitPriceBaht} BETWEEN 0 AND 1000000`),
   ],
 );
 

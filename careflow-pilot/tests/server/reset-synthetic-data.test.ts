@@ -108,6 +108,9 @@ function seedClinicalEvidence(databasePath: string): void {
         signed_by, signed_at, content_hash, signed_by_display_name
       ) VALUES ('reset-decision', '${visitId}', 1, 'ORDER', NULL, NULL, NULL, 'reset-assistant-001', '${now}', '${hash}', 'ผู้ช่วยรีเซ็ต');
       INSERT INTO medication_order_items VALUES ('reset-order-item', 'reset-decision', 0, 'DEMO-MED-001', 1, '[DEMO] ยาทดสอบชนิด A', '500 หน่วยทดสอบ', 'เม็ดทดสอบ', 'เม็ด', 1, 'ทดสอบ');
+      INSERT INTO medication_order_price_snapshots (
+        id, medication_order_item_id, medication_id, medication_revision, unit_price_baht_snapshot, currency, captured_at
+      ) VALUES ('reset-order-price-snapshot', 'reset-order-item', 'DEMO-MED-001', 1, 5, 'THB', '${now}');
     `);
   } finally {
     database.close();
@@ -199,6 +202,8 @@ describe("guarded synthetic reset", () => {
         "medication_order_draft_items",
         "medication_decision_drafts",
         "medication_order_items",
+        "medication_order_price_snapshots",
+        "fulfillment_dispense_price_snapshots",
         "medication_decisions",
         "inventory_stock_movements",
         "inventory_adjustments",
@@ -211,12 +216,14 @@ describe("guarded synthetic reset", () => {
       ]) {
         expect(database.prepare(`SELECT count(*) FROM ${table}`).pluck().get()).toBe(0);
       }
-      expect(database.prepare("SELECT id, display_name, active, revision FROM medications ORDER BY id").all()).toEqual([
-        { id: "DEMO-MED-001", display_name: "[DEMO] ยาทดสอบชนิด A", active: 1, revision: 1 },
-        { id: "DEMO-MED-002", display_name: "[DEMO] ยาทดสอบชนิด B", active: 1, revision: 1 },
-        { id: "DEMO-MED-003", display_name: "[DEMO] ยาทดสอบชนิด C", active: 1, revision: 1 },
-        { id: "DEMO-MED-004", display_name: "[DEMO] ยาทดสอบชนิด D", active: 1, revision: 1 },
+      expect(database.prepare("SELECT id, display_name, active, revision, unit_price_baht FROM medications ORDER BY id").all()).toEqual([
+        { id: "DEMO-MED-001", display_name: "[DEMO] ยาทดสอบชนิด A", active: 1, revision: 1, unit_price_baht: 5 },
+        { id: "DEMO-MED-002", display_name: "[DEMO] ยาทดสอบชนิด B", active: 1, revision: 1, unit_price_baht: 10 },
+        { id: "DEMO-MED-003", display_name: "[DEMO] ยาทดสอบชนิด C", active: 1, revision: 1, unit_price_baht: 50 },
+        { id: "DEMO-MED-004", display_name: "[DEMO] ยาทดสอบชนิด D", active: 1, revision: 1, unit_price_baht: 15 },
       ]);
+      expect(database.prepare("SELECT consultation_fee_baht, pricing_revision FROM clinic_config WHERE id = 'clinic'").get())
+        .toEqual({ consultation_fee_baht: 100, pricing_revision: 1 });
       expect(database.prepare("SELECT value FROM clinic_counters WHERE key = 'synthetic_patient'").pluck().get()).toBe(0);
       expect(database.prepare("SELECT count(*) FROM staff_accounts").pluck().get()).toBe(1);
       expect(database.prepare("SELECT count(*) FROM audit_events WHERE action LIKE 'account.%'").pluck().get()).toBe(fixture.accountAuditCount);

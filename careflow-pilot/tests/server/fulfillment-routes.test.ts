@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
+import { medicationOrderPriceSnapshots } from "../../src/server/modules/finance/index.js";
 import { medicationDecisions, medicationOrderItems, medications } from "../../src/server/modules/medication/index.js";
 import { patients } from "../../src/server/modules/patient/index.js";
 import { auditEvents } from "../../src/server/modules/platform/index.js";
@@ -19,6 +20,23 @@ const startPayload = { labelVersionId: "label-route-001" };
 
 function countRows(test: Awaited<ReturnType<typeof fixture>>, sql: string): number {
   return Number((test.database.sqlite.prepare(sql).get() as { count: number }).count);
+}
+
+function seedOrderPriceSnapshot(
+  test: Awaited<ReturnType<typeof createTestApp>>,
+  medicationOrderItemId: string,
+  medication: { id: string; revision: number; unitPriceBaht: number },
+  capturedAt: string,
+): void {
+  test.database.db.insert(medicationOrderPriceSnapshots).values({
+    id: `price-order-${medicationOrderItemId}`,
+    medicationOrderItemId,
+    medicationId: medication.id,
+    medicationRevision: medication.revision,
+    unitPriceBahtSnapshot: medication.unitPriceBaht,
+    currency: "THB",
+    capturedAt,
+  }).run();
 }
 
 afterEach(async () => {
@@ -56,6 +74,7 @@ async function fixture() {
     strengthSnapshot: medication.strengthText, dosageFormSnapshot: medication.dosageFormText,
     unitSnapshot: medication.canonicalUnit, quantity: 3, directionsTh: "รับประทานตามคำสั่งสังเคราะห์",
   }).run();
+  seedOrderPriceSnapshot(test, "order-route-001", medication, now);
   test.database.db.insert(fulfillmentLabelVersions).values({
     id: "label-route-001", clinicId: "clinic", visitId: "visit-route-001", medicationDecisionId: "decision-route-001",
     medicationDecisionVersion: 1, version: 1, createdAt: now, createdBy: doctor.actor.id,
@@ -491,6 +510,7 @@ describe("authenticated fulfillment reservation routes", () => {
       strengthSnapshot: medication.strengthText, dosageFormSnapshot: medication.dosageFormText,
       unitSnapshot: medication.canonicalUnit, quantity: 2, directionsTh: "รับประทานยาสังเคราะห์รายการที่สอง",
     }).run();
+    seedOrderPriceSnapshot(test, "order-route-002", medication, now);
     test.database.db.insert(fulfillmentLabelItems).values({ id: "label-item-route-002", labelVersionId: "label-route-001", medicationOrderItemId: "order-route-002", position: 1, medicationId: medication.id, medicationRevision: medication.revision, displayNameSnapshot: medication.displayName, strengthSnapshot: medication.strengthText, dosageFormSnapshot: medication.dosageFormText, quantity: 2, unitSnapshot: medication.canonicalUnit, directionsThSnapshot: "รับประทานยาสังเคราะห์รายการที่สอง", internalBarcodeSnapshot: medication.internalBarcode ?? "CF-DEMO-002" }).run();
     test.database.db.insert(inventoryReceipts).values({
       id: "receipt-route-002", clinicId: "clinic", supplierName: "ผู้จำหน่ายสังเคราะห์", note: "รับเข้าทดสอบล็อตที่สอง",
@@ -579,6 +599,7 @@ describe("authenticated fulfillment reservation routes", () => {
       strengthSnapshot: medication.strengthText, dosageFormSnapshot: medication.dosageFormText,
       unitSnapshot: medication.canonicalUnit, quantity: 1, directionsTh: "รับประทานยาสังเคราะห์รายการที่สอง",
     }).run();
+    seedOrderPriceSnapshot(test, "order-route-shared-002", medication, "2026-08-03T00:00:00.000Z");
     test.database.db.insert(fulfillmentLabelItems).values({ id: "label-item-route-shared-002", labelVersionId: "label-route-001", medicationOrderItemId: "order-route-shared-002", position: 1, medicationId: medication.id, medicationRevision: medication.revision, displayNameSnapshot: medication.displayName, strengthSnapshot: medication.strengthText, dosageFormSnapshot: medication.dosageFormText, quantity: 1, unitSnapshot: medication.canonicalUnit, directionsThSnapshot: "รับประทานยาสังเคราะห์รายการที่สอง", internalBarcodeSnapshot: medication.internalBarcode ?? "CF-DEMO-001" }).run();
     const start = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/reservations", headers: { cookie: test.assistantCookie, "idempotency-key": "shared-start" }, payload: { expectedRevisions: { visit: 3, medicationDecision: 1 }, payload: startPayload } });
     expect(start.statusCode).toBe(201);

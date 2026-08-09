@@ -113,6 +113,13 @@
       "when": 1786237000000,
       "tag": "0015_inventory_adjustment_source_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1786262158232,
+      "tag": "0016_finance_pricing_snapshots",
+      "breakpoints": true
     }
   ]
 }

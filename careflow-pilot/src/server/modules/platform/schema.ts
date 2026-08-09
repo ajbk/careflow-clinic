@@ -20,6 +20,8 @@ export const clinicConfig = sqliteTable(
     name: text("name").notNull(),
     timezone: text("timezone").notNull(),
     syntheticOnly: integer("synthetic_only").notNull(),
+    consultationFeeBaht: integer("consultation_fee_baht").notNull().default(100),
+    pricingRevision: integer("pricing_revision").notNull().default(1),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
@@ -28,6 +30,8 @@ export const clinicConfig = sqliteTable(
     check("clinic_config_name_check", sql`length(trim(${table.name})) BETWEEN 1 AND 120`),
     check("clinic_config_timezone_check", sql`${table.timezone} = 'Asia/Bangkok'`),
     check("clinic_config_synthetic_only_check", sql`${table.syntheticOnly} = 1`),
+    check("clinic_config_consultation_fee_baht_check", sql`typeof(${table.consultationFeeBaht}) = 'integer' AND ${table.consultationFeeBaht} BETWEEN 1 AND 1000000`),
+    check("clinic_config_pricing_revision_check", sql`typeof(${table.pricingRevision}) = 'integer' AND ${table.pricingRevision} >= 1`),
   ],
 );
 

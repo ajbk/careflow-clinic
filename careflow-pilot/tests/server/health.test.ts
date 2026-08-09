@@ -36,11 +36,11 @@ describe("SQLite boundary", () => {
     ).toBe("careflow-pilot");
     expect(
       handle.sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get(),
-    ).toBe(16);
+    ).toBe(17);
     expect(
       handle.sqlite
         .prepare(
-          "SELECT id, name, timezone, synthetic_only, created_at, updated_at FROM clinic_config WHERE id = 'clinic'",
+          "SELECT id, name, timezone, synthetic_only, consultation_fee_baht, pricing_revision, created_at, updated_at FROM clinic_config WHERE id = 'clinic'",
         )
         .get(),
     ).toEqual({
@@ -48,9 +48,17 @@ describe("SQLite boundary", () => {
       name: "คลินิกชนบท CareFlow Pilot",
       timezone: "Asia/Bangkok",
       synthetic_only: 1,
+      consultation_fee_baht: 100,
+      pricing_revision: 1,
       created_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/),
       updated_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/),
     });
+    expect(handle.sqlite.prepare("SELECT id, unit_price_baht FROM medications ORDER BY id").all()).toEqual([
+      { id: "DEMO-MED-001", unit_price_baht: 5 },
+      { id: "DEMO-MED-002", unit_price_baht: 10 },
+      { id: "DEMO-MED-003", unit_price_baht: 50 },
+      { id: "DEMO-MED-004", unit_price_baht: 15 },
+    ]);
     const timestamps = handle.sqlite
       .prepare("SELECT created_at, updated_at FROM clinic_config WHERE id = 'clinic'")
       .get() as { created_at: string; updated_at: string };

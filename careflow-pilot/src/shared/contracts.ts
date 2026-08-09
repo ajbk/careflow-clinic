@@ -150,6 +150,16 @@ export const medicationSchema = z.strictObject({
 });
 export type MedicationDto = z.infer<typeof medicationSchema>;
 
+export const consultationFeeBahtSchema = z.number().int().safe().min(1).max(1_000_000);
+export const unitPriceBahtSchema = z.number().int().safe().min(0).max(1_000_000);
+export const priceSnapshotSchema = z.strictObject({
+  unitPriceBaht: unitPriceBahtSchema,
+  currency: z.literal("THB"),
+  sourceMedicationId: z.string().regex(/^DEMO-MED-\d{3}$/),
+  sourceMedicationRevision: z.number().int().safe().min(1),
+});
+export type PriceSnapshot = z.infer<typeof priceSnapshotSchema>;
+
 export const medicationSearchQuerySchema = z.strictObject({
   q: z.string()
     .trim()

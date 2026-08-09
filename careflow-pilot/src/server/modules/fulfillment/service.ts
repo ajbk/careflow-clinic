@@ -12,6 +12,7 @@ import { medicationDecisions, medicationOrderItems, medications } from "../medic
 import { patients } from "../patient/schema.js";
 import { appendAuditEvent, assertExpectedRevision, type AppDatabase, type AppTransaction, type AuditedTransaction } from "../platform/index.js";
 import { clinicConfig } from "../platform/schema.js";
+import { snapshotDispensePrices } from "../finance/pricing.js";
 import { visits } from "../visit/schema.js";
 import {
   fulfillmentArtifactInvalidations, fulfillmentLabelItems, fulfillmentLabelPrintEvents, fulfillmentLabelVersions,
@@ -472,6 +473,7 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
         return { id: nextId(), dispenseId, reservationAllocationId: allocation.id, medicationOrderItemId: item.id, medicationId: allocation.medicationId, lotId: allocation.lotId, quantity: allocation.quantity, displayNameSnapshot: item.displayNameSnapshot, strengthSnapshot: item.strengthSnapshot, dosageFormSnapshot: item.dosageFormSnapshot, unitSnapshot: item.unitSnapshot, lotNumberSnapshot: allocation.lotNumberSnapshot, expiryDateSnapshot: allocation.expiryDateSnapshot, directionsThSnapshot: item.directionsTh };
       });
       tx.insert(fulfillmentDispenseLines).values(lines).run();
+      snapshotDispensePrices(tx, dispenseId);
       input.inventory.consumeReservationForDispense(tx, actor, { visitId, reservationId: reservation.id, dispenseId, decisionId: decision.id, decisionVersion: decision.version, labelVersionId: label.id, labelPrintEventId: release.labelPrintEventId, releaseId: release.id, preparationId: prep.id, occurredAt: now, previousStatus: visit.status, nextStatus: "AWAITING_CHARGE", lines: lines.map((line) => ({ id: line.id, reservationAllocationId: line.reservationAllocationId, lotId: line.lotId, quantity: line.quantity, lotNumberSnapshot: line.lotNumberSnapshot, unitSnapshot: line.unitSnapshot })) });
       const changed = tx.update(visits).set({ status: "AWAITING_CHARGE", revision: visit.revision + 1 }).where(and(eq(visits.id, visitId), eq(visits.status, "AWAITING_HANDOFF"), eq(visits.revision, visit.revision))).run();
       if (changed.changes !== 1) invalidState("Visit ถูกเปลี่ยนแปลงแล้ว");

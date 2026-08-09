@@ -41,6 +41,7 @@ const expectedTables = new Set([
   "clinic_config",
   "clinic_counters",
   "fulfillment_artifact_invalidations",
+  "fulfillment_dispense_price_snapshots",
   "fulfillment_dispense_lines",
   "fulfillment_dispenses",
   "fulfillment_label_items",
@@ -64,6 +65,7 @@ const expectedTables = new Set([
   "medication_decisions",
   "medication_order_draft_items",
   "medication_order_items",
+  "medication_order_price_snapshots",
   "medications",
   "patient_allergy_items",
   "patient_allergy_revisions",
@@ -93,6 +95,7 @@ const appendOnlyTables = [
   "clinical_note_amendments",
   "medication_decisions",
   "medication_order_items",
+  "medication_order_price_snapshots",
   "patient_allergy_revisions",
   "patient_allergy_items",
   "inventory_receipts",
@@ -109,6 +112,7 @@ const appendOnlyTables = [
   "fulfillment_rejections",
   "fulfillment_dispenses",
   "fulfillment_dispense_lines",
+  "fulfillment_dispense_price_snapshots",
   "fulfillment_label_versions",
 ] as const;
 
@@ -294,6 +298,7 @@ function verifyReset(sqlite: Database.Database): void {
     ["inventory_adjustments", "count(*)"],
     ["inventory_lot_status_events", "count(*)"],
     ["fulfillment_dispense_lines", "count(*)"],
+    ["fulfillment_dispense_price_snapshots", "count(*)"],
     ["fulfillment_dispenses", "count(*)"],
     ["fulfillment_releases", "count(*)"],
     ["fulfillment_rejections", "count(*)"],
@@ -312,6 +317,7 @@ function verifyReset(sqlite: Database.Database): void {
     ["medication_decisions", "count(*)"],
     ["medication_order_draft_items", "count(*)"],
     ["medication_order_items", "count(*)"],
+    ["medication_order_price_snapshots", "count(*)"],
     ["patient_allergy_items", "count(*)"],
     ["patient_allergy_revisions", "count(*)"],
     ["visits", "count(*)"],
@@ -346,14 +352,20 @@ function verifyReset(sqlite: Database.Database): void {
     .get();
   if (Number(clinicalAuditCount) !== 0) fail("Synthetic reset left clinical Audit rows");
   const catalog = sqlite
-    .prepare("SELECT id, display_name, active, revision FROM medications ORDER BY id")
+    .prepare("SELECT id, display_name, active, revision, unit_price_baht FROM medications ORDER BY id")
     .all();
   if (JSON.stringify(catalog) !== JSON.stringify([
-    { id: "DEMO-MED-001", display_name: "[DEMO] ยาทดสอบชนิด A", active: 1, revision: 1 },
-    { id: "DEMO-MED-002", display_name: "[DEMO] ยาทดสอบชนิด B", active: 1, revision: 1 },
-    { id: "DEMO-MED-003", display_name: "[DEMO] ยาทดสอบชนิด C", active: 1, revision: 1 },
-    { id: "DEMO-MED-004", display_name: "[DEMO] ยาทดสอบชนิด D", active: 1, revision: 1 },
+    { id: "DEMO-MED-001", display_name: "[DEMO] ยาทดสอบชนิด A", active: 1, revision: 1, unit_price_baht: 5 },
+    { id: "DEMO-MED-002", display_name: "[DEMO] ยาทดสอบชนิด B", active: 1, revision: 1, unit_price_baht: 10 },
+    { id: "DEMO-MED-003", display_name: "[DEMO] ยาทดสอบชนิด C", active: 1, revision: 1, unit_price_baht: 50 },
+    { id: "DEMO-MED-004", display_name: "[DEMO] ยาทดสอบชนิด D", active: 1, revision: 1, unit_price_baht: 15 },
   ])) fail("Synthetic medication catalog changed during reset");
+  const clinicPricing = sqlite
+    .prepare("SELECT consultation_fee_baht, pricing_revision FROM clinic_config WHERE id = 'clinic'")
+    .get();
+  if (JSON.stringify(clinicPricing) !== JSON.stringify({ consultation_fee_baht: 100, pricing_revision: 1 })) {
+    fail("Synthetic clinic pricing changed during reset");
+  }
   assertForeignKeys(sqlite);
   const freelist = Number(sqlite.pragma("freelist_count", { simple: true }));
   if (freelist !== 0) fail("SQLite VACUUM did not reclaim all free pages");
@@ -401,6 +413,8 @@ export function runResetSyntheticData(deps: ResetSyntheticDependencies): number 
     dropKnownAppendOnlyTriggers(sqlite);
     sqlite.exec("DELETE FROM sessions;");
     sqlite.exec("DELETE FROM idempotency_records;");
+    sqlite.exec("DELETE FROM fulfillment_dispense_price_snapshots;");
+    sqlite.exec("DELETE FROM medication_order_price_snapshots;");
     sqlite.exec("DELETE FROM fulfillment_dispense_lines;");
     sqlite.exec("DELETE FROM fulfillment_dispenses;");
     sqlite.exec("DELETE FROM fulfillment_releases;");

@@ -26,6 +26,7 @@ import {
   medicationOrderItems,
   medications,
 } from "./schema.js";
+import { snapshotOrderPrices } from "../finance/pricing.js";
 import { visits } from "../visit/schema.js";
 
 const SEARCH_RESULT_LIMIT = 20;
@@ -412,6 +413,7 @@ export function createMedicationService(input: MedicationServiceOptions): Medica
         dosageFormSnapshot: item.dosageFormText, unitSnapshot: item.canonicalUnit,
         quantity: item.quantity, directionsTh: item.directionsTh,
       }))).run();
+      snapshotOrderPrices(tx, signed.id);
       appendAuditEvent({
         tx, actor, id: idFactory(), action: "medication.decision-signed", entityType: "medication_decision",
         entityId: signed.id, entityRevision: signed.version, reason: null, occurredAt: signed.signedAt,
@@ -479,6 +481,7 @@ export function createMedicationService(input: MedicationServiceOptions): Medica
         dosageFormSnapshot: item.dosageFormText, unitSnapshot: item.canonicalUnit,
         quantity: item.quantity, directionsTh: item.directionsTh,
       }))).run();
+      snapshotOrderPrices(tx, signed.id);
       appendAuditEvent({
         tx, actor, id: idFactory(), action: "medication.decision-revised", entityType: "medication_decision",
         entityId: signed.id, entityRevision: signed.version, reason,
