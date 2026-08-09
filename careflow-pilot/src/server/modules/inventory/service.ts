@@ -95,6 +95,8 @@ export interface InventoryService {
       labelPrintEventId: string;
       releaseId: string;
       preparationId: string;
+      /** Must equal fulfillment_dispenses.handed_off_at for the DB evidence guard. */
+      occurredAt: string;
       previousStatus: string;
       nextStatus: string;
       lines: Array<{ id: string; reservationAllocationId: string; lotId: string; quantity: number; lotNumberSnapshot: string; unitSnapshot: string }>;
@@ -947,7 +949,7 @@ export function createInventoryService(input: InventoryServiceOptions): Inventor
           throw reservationError("ล็อตยาสำหรับส่งมอบไม่พร้อมใช้งาน");
         }
       }
-      const now = clock().toISOString();
+      const now = input.occurredAt;
       const movements = input.lines.map((line) => ({
         id: nextInventoryId(), clinicId: "clinic", lotId: line.lotId, movementType: "DISPENSE" as const,
         quantityDelta: -line.quantity, sourceType: "DISPENSE" as const, sourceId: line.id,

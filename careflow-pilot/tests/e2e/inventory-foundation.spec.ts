@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { loginAndAcknowledge, startPilotServer } from "./fixtures.js";
 
-test("assistant receives a synthetic lot while doctor can read but cannot submit receipts", async ({ browser }) => {
+test("assistant and doctor can receive synthetic lots under the explicit pilot role matrix", async ({ browser }) => {
   const server = await startPilotServer();
   const assistantContext = await browser.newContext();
   const doctorContext = await browser.newContext();
@@ -32,24 +32,24 @@ test("assistant receives a synthetic lot while doctor can read but cannot submit
     await doctorPage.goto(`${server.baseURL}/inventory`);
     await expect(doctorPage).toHaveURL(/\/inventory$/);
     await expect(doctorPage.locator(".inventory-table tbody tr").filter({ hasText: "[DEMO] ยาทดสอบชนิด A" })).toContainText("10");
-    await expect(doctorPage.getByRole("link", { name: /รับยาเข้าคลัง|บันทึกรับยาใหม่/ })).toHaveCount(0);
+    await expect(doctorPage.getByRole("link", { name: /รับยาเข้าคลัง|บันทึกรับยาใหม่/ })).toHaveCount(2);
 
-    const denied = await doctorPage.request.post(`${server.baseURL}/api/inventory/receipts`, {
-      headers: { "idempotency-key": "inventory-e2e-doctor-denied-001" },
+    const received = await doctorPage.request.post(`${server.baseURL}/api/inventory/receipts`, {
+      headers: { "idempotency-key": "inventory-e2e-doctor-receive-001" },
       data: {
         expectedRevisions: { medication: 1 },
         payload: {
           medicationId: "DEMO-MED-001",
           quantity: 10,
-          lotNumber: "E2E-DOCTOR-DENIED",
+          lotNumber: "E2E-DOCTOR-RECEIVE",
           expiryDate,
           supplierName: "ผู้จำหน่าย E2E",
-          note: "ต้องถูกปฏิเสธ",
+          note: "รับเข้าทดสอบโดยแพทย์",
         },
       },
     });
-    expect(denied.status()).toBe(403);
-    await expect(denied.json()).resolves.toMatchObject({ error: { code: "FORBIDDEN" } });
+    expect(received.status()).toBe(201);
+    await expect(received.json()).resolves.toMatchObject({ data: { lot: { lotNumber: "E2E-DOCTOR-RECEIVE" } } });
   } finally {
     await assistantContext.close();
     await doctorContext.close();

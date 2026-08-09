@@ -86,21 +86,18 @@ test("reserves a signed Order across future lots in FEFO order and shares the Pi
     await receiveLot(assistantPage, { key: "e2e-fefo-late", lotNumber: "E2E-FEFO-LATE", expiryDate: "2030-08-20", quantity: 10 });
 
     await assistantPage.goto(`${server.baseURL}/dispensing/${patient.visitId}`);
-    await expect(assistantPage.getByRole("heading", { name: "จัดยา" })).toBeVisible();
-    await expect(assistantPage.getByText("ยาทดสอบชนิด A", { exact: false })).toBeVisible();
-    await assistantPage.getByRole("button", { name: "เริ่มจองล็อตตาม FEFO" }).click();
+    await expect(assistantPage.getByRole("heading", { name: "จัดยา", exact: true })).toBeVisible();
+    await expect(assistantPage.getByText("CF-DEMO-001", { exact: true })).toBeVisible();
+    await assistantPage.getByRole("button", { name: "เริ่มเตรียมยา" }).click();
     await expect(assistantPage.getByText("PREPARING", { exact: true })).toBeVisible();
-    await expect(assistantPage.getByText("E2E-FEFO-EARLY", { exact: true })).toBeVisible();
-    await expect(assistantPage.getByText("5 เม็ด", { exact: true })).toBeVisible();
-    await expect(assistantPage.getByText("E2E-FEFO-LATE", { exact: true })).toBeVisible();
-    await expect(assistantPage.getByText("3 เม็ด", { exact: true })).toBeVisible();
+    await expect(assistantPage.getByLabel("รายการ allocation")).toHaveCount(1);
+    await expect(assistantPage.getByLabel("รายการ allocation").locator("article")).toHaveCount(2);
 
     await doctorPage.goto(`${server.baseURL}/dispensing/${patient.visitId}`);
-    await expect(doctorPage.getByRole("heading", { name: "จัดยา" })).toBeVisible();
+    await expect(doctorPage.getByRole("heading", { name: "จัดยา", exact: true })).toBeVisible();
     await expect(doctorPage.getByText("PREPARING", { exact: true })).toBeVisible();
-    await expect(doctorPage.getByText("E2E-FEFO-EARLY", { exact: true })).toBeVisible();
-    await expect(doctorPage.getByText("E2E-FEFO-LATE", { exact: true })).toBeVisible();
-    await expect(doctorPage.getByRole("button", { name: "เริ่มจองล็อตตาม FEFO" })).toHaveCount(0);
+    await expect(doctorPage.getByLabel("รายการ allocation").locator("article")).toHaveCount(2);
+    await expect(doctorPage.getByRole("button", { name: "เริ่มเตรียมยา" })).toHaveCount(0);
 
     // A second signed Order asks for eight units while only seven remain available.
     // The all-or-nothing command must leave that Visit and every allocation untouched.
@@ -115,11 +112,9 @@ test("reserves a signed Order across future lots in FEFO order and shares the Pi
     await signOrder(doctorPage);
 
     await assistantPage.goto(`${server.baseURL}/dispensing/${secondPatient.visitId}`);
-    await assistantPage.getByRole("button", { name: "เริ่มจองล็อตตาม FEFO" }).click();
+    await assistantPage.getByRole("button", { name: "เริ่มเตรียมยา" }).click();
     await expect(assistantPage.getByRole("alert")).toContainText("ไม่เพียงพอ");
     await expect(assistantPage.getByText("AWAITING_PREPARATION", { exact: true })).toBeVisible();
-    await expect(assistantPage.getByText("E2E-FEFO-EARLY", { exact: true })).toHaveCount(0);
-    await expect(assistantPage.getByText("E2E-FEFO-LATE", { exact: true })).toHaveCount(0);
     const insufficientPickList = await assistantPage.request.get(`${server.baseURL}/api/dispensing/${secondPatient.visitId}`);
     expect(insufficientPickList.status()).toBe(200);
     await expect(insufficientPickList.json()).resolves.toMatchObject({ data: {

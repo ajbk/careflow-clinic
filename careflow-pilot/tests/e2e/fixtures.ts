@@ -10,10 +10,11 @@ import { openDatabase, type DatabaseHandle } from "../../src/server/db/client.js
 export const E2E_PASSWORD = "careflow-pilot-e2e-password";
 
 interface PilotServer {
-  app: FastifyInstance;
-  database: DatabaseHandle;
+  readonly app: FastifyInstance;
+  readonly database: DatabaseHandle;
   directory: string;
-  baseURL: string;
+  readonly baseURL: string;
+  restart: () => Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -46,9 +47,7 @@ export async function startPilotServer(): Promise<PilotServer> {
   insertAccount.run("assistant-e2e-001", "assistant", "ผู้ช่วย E2E", "assistant", passwordHash, now, now, now);
   insertAccount.run("doctor-e2e-001", "doctor", "พญ. E2E", "doctor", passwordHash, now, now, now);
 
-  const app = await buildApp({
-    db: database,
-    config: {
+  const config = {
       host: "127.0.0.1",
       port: 0,
       databasePath,
@@ -56,27 +55,39 @@ export async function startPilotServer(): Promise<PilotServer> {
       sessionIdleMinutes: 15,
       sessionAbsoluteHours: 8,
       clientDistPath,
-    },
+  };
+  let requestIndex = 0;
+  const idFactory = () => `e2e-${++requestIndex}`;
+  const nextApp = async (handle: DatabaseHandle) => buildApp({
+    db: handle,
+    config,
     clock: () => new Date(),
-    idFactory: (() => {
-      let index = 0;
-      return () => `e2e-${++index}`;
-    })(),
+    idFactory,
     serveStatic: true,
     clientAssetsRoot: clientDistPath,
   });
-  const address = await app.listen({ host: "127.0.0.1", port: 0 });
-  return {
-    app,
-    database,
+  let activeDatabase = database;
+  let activeApp = await nextApp(activeDatabase);
+  let activeBaseURL = await activeApp.listen({ host: "127.0.0.1", port: 0 });
+  const server: PilotServer = {
+    get app() { return activeApp; },
+    get database() { return activeDatabase; },
     directory,
-    baseURL: address,
+    get baseURL() { return activeBaseURL; },
+    restart: async () => {
+      await activeApp.close();
+      activeDatabase.close();
+      activeDatabase = openDatabase(databasePath);
+      activeApp = await nextApp(activeDatabase);
+      activeBaseURL = await activeApp.listen({ host: "127.0.0.1", port: 0 });
+    },
     close: async () => {
-      await app.close();
-      database.close();
+      await activeApp.close();
+      activeDatabase.close();
       rmSync(directory, { recursive: true, force: true });
     },
   };
+  return server;
 }
 
 export async function loginAndAcknowledge(page: Page, baseURL: string, username: string): Promise<void> {
