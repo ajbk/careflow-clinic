@@ -112,6 +112,7 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
       }
     }
   };
+  const allocationEvidence = (tx: Reader, reservationId: string) => tx.select().from(inventoryReservationAllocations).where(eq(inventoryReservationAllocations.reservationId, reservationId)).orderBy(asc(inventoryReservationAllocations.position)).all().map((allocation) => ({ allocationId: allocation.id, orderItemId: allocation.medicationOrderItemId, lotId: allocation.lotId, lotNumber: allocation.lotNumberSnapshot, expiryDate: allocation.expiryDateSnapshot, unit: allocation.unitSnapshot, quantity: allocation.quantity }));
   const read = (tx: Reader, visitId: string): FulfillmentPickListDto => {
     const visit = tx.select().from(visits).where(and(eq(visits.id, visitId), eq(visits.clinicId, "clinic"))).get();
     if (!visit) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit" });
@@ -287,7 +288,8 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
       const sequence = (tx.select().from(fulfillmentLabelPrintEvents).where(eq(fulfillmentLabelPrintEvents.labelVersionId, label.id)).all().reduce((max, event) => Math.max(max, event.sequence), 0)) + 1;
       const now = clock().toISOString(); const id = nextId();
       tx.insert(fulfillmentLabelPrintEvents).values({ id, labelVersionId: label.id, sequence, requestedAt: now, requestedBy: actor.id, rendererVersion, mediaSizeSnapshot: "80x100mm" }).run();
-      appendAuditEvent({ tx, actor, id: nextId(), action: "label.print-requested", entityType: "fulfillment_label_version", entityId: label.id, entityRevision: label.version, reason: null, occurredAt: now, metadata: { visitId, labelVersionId: label.id, sequence } }); return read(tx, visitId);
+      const reservation = tx.select().from(inventoryReservations).where(and(eq(inventoryReservations.visitId, visitId), eq(inventoryReservations.status, "ACTIVE"))).orderBy(desc(inventoryReservations.createdAt)).get();
+      appendAuditEvent({ tx, actor, id: nextId(), action: "label.print-requested", entityType: "fulfillment_label_version", entityId: label.id, entityRevision: label.version, reason: null, occurredAt: now, metadata: { visitId, decisionId: label.medicationDecisionId, decisionVersion: label.medicationDecisionVersion, labelVersionId: label.id, printEventId: id, printSequence: sequence, reservationId: reservation?.id ?? null, allocations: reservation ? allocationEvidence(tx, reservation.id) : [] } }); return read(tx, visitId);
     },
     confirmAllocation(tx, actor, visitId, visitRevision, preparationRevision, payload) {
       const visit = tx.select().from(visits).where(eq(visits.id, visitId)).get(); if (!visit) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit" }); assertExpectedRevision(visit.revision, visitRevision, "visit");
@@ -313,7 +315,7 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
       if (changedPreparation.changes !== 1) invalidState("รายการจัดยาถูกเปลี่ยนแปลงแล้ว");
       const changedVisit = tx.update(visits).set({ status: "AWAITING_RELEASE", revision: visit.revision + 1 }).where(and(eq(visits.id, visitId), eq(visits.status, "PREPARING"), eq(visits.revision, visit.revision))).run();
       if (changedVisit.changes !== 1) invalidState("Visit ถูกเปลี่ยนแปลงแล้ว");
-      appendAuditEvent({ tx, actor, id: nextId(), action: "visit.preparation-completed", entityType: "visit", entityId: visitId, entityRevision: visit.revision + 1, reason: null, occurredAt: now, metadata: { previousStatus: visit.status, nextStatus: "AWAITING_RELEASE", preparationId: prep.id, reservationId: prep.reservationId } }); return read(tx, visitId);
+      appendAuditEvent({ tx, actor, id: nextId(), action: "visit.preparation-completed", entityType: "visit", entityId: visitId, entityRevision: visit.revision + 1, reason: null, occurredAt: now, metadata: { visitId, decisionId: prep.medicationDecisionId, decisionVersion: prep.medicationDecisionVersion, labelVersionId: prep.labelVersionId, preparationId: prep.id, reservationId: prep.reservationId, previousStatus: visit.status, nextStatus: "AWAITING_RELEASE", allocations: allocationEvidence(tx, prep.reservationId) } }); return read(tx, visitId);
     },
     abandonPreparation(tx, actor, visitId, visitRevision, preparationRevision, preparationId, reservationId, reason) {
       const visit = tx.select().from(visits).where(eq(visits.id, visitId)).get();
@@ -334,10 +336,10 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
       const released = input.inventory.releaseActiveReservation(tx, actor, visitId, reason.trim());
       if (!released || released.id !== reservation.id) invalidState("รายการจองยาที่เกี่ยวข้องถูกเปลี่ยนแปลงแล้ว");
       const now = clock().toISOString();
-      appendAuditEvent({ tx, actor, id: nextId(), action: "inventory.reservation-released", entityType: "inventory_reservation", entityId: released.id, entityRevision: 1, reason: reason.trim(), occurredAt: released.releasedAt ?? now, metadata: { visitId, trigger: "manual-release", allocations: allocations.map((allocation) => ({ lotId: allocation.lotId, lotNumber: allocation.lotNumberSnapshot, quantity: allocation.quantity, unit: allocation.unitSnapshot })) } });
+      appendAuditEvent({ tx, actor, id: nextId(), action: "inventory.reservation-released", entityType: "inventory_reservation", entityId: released.id, entityRevision: 1, reason: reason.trim(), occurredAt: released.releasedAt ?? now, metadata: { visitId, trigger: "manual-release", decisionId: prep.medicationDecisionId, decisionVersion: prep.medicationDecisionVersion, labelVersionId: prep.labelVersionId, preparationId: prep.id, reservationId: prep.reservationId, allocations: allocationEvidence(tx, prep.reservationId) } });
       const changedVisit = tx.update(visits).set({ status: "AWAITING_PREPARATION", revision: visit.revision + 1 }).where(and(eq(visits.id, visitId), eq(visits.status, "PREPARING"), eq(visits.revision, visit.revision))).run();
       if (changedVisit.changes !== 1) invalidState("Visit ถูกเปลี่ยนแปลงแล้ว");
-      appendAuditEvent({ tx, actor, id: nextId(), action: "visit.preparation-abandoned", entityType: "visit", entityId: visitId, entityRevision: visit.revision + 1, reason: reason.trim(), occurredAt: now, metadata: { previousStatus: visit.status, nextStatus: "AWAITING_PREPARATION", preparationId, reservationId: prep.reservationId } }); return read(tx, visitId);
+      appendAuditEvent({ tx, actor, id: nextId(), action: "visit.preparation-abandoned", entityType: "visit", entityId: visitId, entityRevision: visit.revision + 1, reason: reason.trim(), occurredAt: now, metadata: { visitId, decisionId: prep.medicationDecisionId, decisionVersion: prep.medicationDecisionVersion, labelVersionId: prep.labelVersionId, preparationId, reservationId: prep.reservationId, previousStatus: visit.status, nextStatus: "AWAITING_PREPARATION", allocations: allocationEvidence(tx, prep.reservationId) } }); return read(tx, visitId);
     },
     releaseForVisit(tx, actor, visitId, visitRevision, preparationRevision, payload) {
       const visit = tx.select().from(visits).where(eq(visits.id, visitId)).get();
