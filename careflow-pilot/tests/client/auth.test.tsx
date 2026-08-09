@@ -105,7 +105,7 @@ describe("auth boundary", () => {
     }), { status: 200 }));
     const { router } = renderApp("/queue", fetchImpl);
     await waitFor(() => expect(router.state.location.pathname).toBe("/change-password"));
-    expect(screen.getByRole("heading", { name: /เปลี่ยนรหัสผ่าน/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /เปลี่ยนรหัสผ่าน/ })).toBeInTheDocument();
   });
 
   it("denies Assistant Consultation before requesting clinical data", async () => {

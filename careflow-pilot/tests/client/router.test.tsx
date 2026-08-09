@@ -15,7 +15,7 @@ function completeSession(role: "assistant" | "doctor") {
       },
       clinic: { id: "clinic", name: "คลินิกทดสอบ" },
       permissions: role === "doctor"
-        ? ["patient:read", "visit:read-queue", "visit:start-consultation", "inventory:read", "fulfillment:read"]
+        ? ["patient:read", "visit:read-queue", "visit:start-consultation", "inventory:read", "inventory:receive", "fulfillment:read"]
         : ["patient:read", "visit:read-queue", "visit:submit-intake", "inventory:read", "inventory:receive", "fulfillment:read"],
       pilotAcknowledgedAt: "2026-08-03T00:00:00.000Z",
       mustChangePassword: false,
@@ -154,17 +154,14 @@ describe("pilot router", () => {
     expect(await screen.findByRole("heading", { name: heading })).toBeInTheDocument();
   });
 
-  it("denies a doctor the receiving screen before requesting its medication search", async () => {
-    const requests: string[] = [];
+  it("allows a doctor to open the receiving screen", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const path = String(input); requests.push(path);
+      const path = String(input);
       if (path === "/api/auth/session") return new Response(JSON.stringify(completeSession("doctor")), { status: 200 });
       throw new Error(`Unexpected request: ${path}`);
     }));
-    const router = createMemoryRouter(appRoutes, { initialEntries: ["/inventory/receive"] });
-    render(<AppProviders><RouterProvider router={router} /></AppProviders>);
-    expect(await screen.findByText("ไม่มีสิทธิ์ใช้งาน")).toBeInTheDocument();
-    expect(requests).toEqual(["/api/auth/session"]);
+    render(<AppProviders><RouterProvider router={createMemoryRouter(appRoutes, { initialEntries: ["/inventory/receive"] })} /></AppProviders>);
+    expect(await screen.findByRole("heading", { name: "รับยาเข้าคลัง" })).toBeInTheDocument();
   });
 
   it("denies a read-restricted dispensing route before requesting its Pick List", async () => {

@@ -28,7 +28,7 @@ function session(role: "assistant" | "doctor") {
       clinic: { id: "clinic", name: "คลินิกทดสอบ" },
       permissions: role === "assistant"
         ? ["patient:read", "visit:read-queue", "visit:submit-intake", "inventory:read", "inventory:receive", "inventory:quarantine"]
-        : ["patient:read", "visit:read-queue", "visit:start-consultation", "inventory:read", "inventory:quarantine", "inventory:release-quarantine", "inventory:adjust"],
+        : ["patient:read", "visit:read-queue", "visit:start-consultation", "inventory:read", "inventory:receive", "inventory:quarantine", "inventory:release-quarantine", "inventory:adjust"],
       pilotAcknowledgedAt: "2026-08-03T00:00:00.000Z",
       mustChangePassword: false,
       idleExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
@@ -65,6 +65,7 @@ beforeEach(() => server.resetHandlers(
     lotNumber: "LOT-001", expiryDate: "2026-10-01", supplierName: "ผู้จำหน่าย", status: "AVAILABLE",
     createdAt: "2026-08-03T00:00:00.000Z", createdBy: { id: "assistant-1", displayName: "ผู้ช่วยทดสอบ" },
     onHand: 8, reserved: 0, available: 8, latestMovementId: "movement-001",
+    recentMovements: [{ id: "movement-001", lotId: "lot-001", movementType: "RECEIPT", quantityDelta: 8, sourceType: "RECEIPT", sourceId: "receipt-001", occurredAt: "2026-08-03T00:00:00.000Z" }],
   }] })),
 ));
 afterEach(() => { cleanup(); server.resetHandlers(); });
@@ -85,13 +86,13 @@ describe("Inventory screens", () => {
     expect(screen.queryByText("พาราเซตามอล")).not.toBeInTheDocument();
   });
 
-  it("shows receipt actions only to an assistant", async () => {
+  it("shows receipt actions to both Assistant and Doctor inventory operators", async () => {
     renderInventory("/inventory", "assistant");
     expect(await screen.findByRole("link", { name: /รับยาเข้าคลัง/ })).toHaveAttribute("href", "/inventory/receive");
     cleanup();
     renderInventory("/inventory", "doctor");
     await screen.findAllByText("พาราเซตามอล");
-    expect(screen.queryByRole("link", { name: /รับยาเข้าคลัง|บันทึกรับยาใหม่/ })).not.toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: /รับยาเข้าคลัง/ })).toHaveAttribute("href", "/inventory/receive");
   });
 
   it("shows role-specific lot safety controls after selecting an inventory row", async () => {
@@ -140,6 +141,29 @@ describe("Inventory screens", () => {
     expect(screen.getByLabelText("วันหมดอายุ")).toHaveValue(expiryValue);
     await user.click(screen.getByRole("button", { name: "ยืนยันการรับยา" }));
     await screen.findByRole("alert");
+    expect(idempotencyKeys).toHaveLength(2);
+    expect(idempotencyKeys[1]).toBe(idempotencyKeys[0]);
+  });
+
+  it("preserves the selected movement and adjustment draft after a failed correction", async () => {
+    const user = userEvent.setup();
+    const idempotencyKeys: string[] = [];
+    server.use(http.post("/api/inventory/lots/lot-001/adjustments", ({ request }) => {
+      idempotencyKeys.push(request.headers.get("Idempotency-Key") ?? "");
+      return errorResponse("VALIDATION_FAILED", "รายการอ้างอิงไม่อยู่ในล็อตยานี้");
+    }));
+    renderInventory("/inventory", "doctor");
+    await user.click(await screen.findByRole("button", { name: /พาราเซตามอล/ }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "รายการอ้างอิง LOT-001" }), "movement-001");
+    await user.type(screen.getByRole("spinbutton", { name: "ปรับจำนวน LOT-001" }), "-2");
+    await user.type(screen.getByRole("textbox", { name: "เหตุผลปรับจำนวน LOT-001" }), "ตรวจนับซ้ำ");
+    await user.click(screen.getByRole("button", { name: "บันทึกการปรับ" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("รายการอ้างอิงไม่อยู่ในล็อตยานี้");
+    expect(screen.getByRole("combobox", { name: "รายการอ้างอิง LOT-001" })).toHaveValue("movement-001");
+    expect(screen.getByRole("spinbutton", { name: "ปรับจำนวน LOT-001" })).toHaveValue(-2);
+    expect(screen.getByRole("textbox", { name: "เหตุผลปรับจำนวน LOT-001" })).toHaveValue("ตรวจนับซ้ำ");
+    await user.click(screen.getByRole("button", { name: "บันทึกการปรับ" }));
     expect(idempotencyKeys).toHaveLength(2);
     expect(idempotencyKeys[1]).toBe(idempotencyKeys[0]);
   });

@@ -7,7 +7,7 @@ import { Card, EmptyState, PageHeader, SectionHeading, StatusBadge } from "../co
 import { useInventory, useInventoryAdjustment, useInventoryLots, useInventoryLotStatusCommand, type InventoryAdjustmentAttempt, type InventoryLotAttempt } from "../features/inventory";
 import { isApiError } from "../lib/api-error";
 import { createCommandAttempt } from "../lib/idempotency";
-import { formatThaiDate } from "../lib/thai-date";
+import { formatThaiDate, formatThaiDateTime } from "../lib/thai-date";
 
 function badge(status: InventoryStatus): { label: string; tone: "success" | "warning" | "error" | "info" } {
   if (status === "OK") return { label: "พร้อมใช้", tone: "success" };
@@ -28,10 +28,11 @@ function LotControls({ medication, lot, canQuarantine, canUnquarantine, canAdjus
   const [reason, setReason] = useState("");
   const [quantityDelta, setQuantityDelta] = useState("");
   const [adjustmentReason, setAdjustmentReason] = useState("");
+  const [correctsMovementId, setCorrectsMovementId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const statusAttempts = useRef<Record<string, InventoryLotAttempt>>({});
   const adjustmentAttempts = useRef<Record<string, InventoryAdjustmentAttempt>>({});
-  const canSubmitAdjustment = lot.latestMovementId !== null && Number.isInteger(Number(quantityDelta)) && Number(quantityDelta) !== 0 && adjustmentReason.trim().length > 0;
+  const canSubmitAdjustment = correctsMovementId.length > 0 && Number.isInteger(Number(quantityDelta)) && Number(quantityDelta) !== 0 && adjustmentReason.trim().length > 0;
   const statusMutation = lot.status === "AVAILABLE" ? quarantine : unquarantine;
   const statusAction = lot.status === "AVAILABLE" ? "quarantine" : "unquarantine";
   const statusPermission = lot.status === "AVAILABLE" ? canQuarantine : canUnquarantine;
@@ -47,8 +48,8 @@ function LotControls({ medication, lot, canQuarantine, canUnquarantine, canAdjus
 
   function adjust(): void {
     if (!canAdjust || !canSubmitAdjustment) return;
-    if (!lot.latestMovementId) return;
-    const payload = { correctsMovementId: lot.latestMovementId, quantityDelta: Number(quantityDelta), reason: adjustmentReason.trim() };
+    if (!correctsMovementId) return;
+    const payload = { correctsMovementId, quantityDelta: Number(quantityDelta), reason: adjustmentReason.trim() };
     const fingerprint = `adjust:${JSON.stringify(payload)}:${lot.revision}`;
     const attempt = adjustmentAttempts.current[fingerprint] ?? createCommandAttempt({ lot: lot.revision }, payload);
     adjustmentAttempts.current[fingerprint] = attempt;
@@ -60,7 +61,8 @@ function LotControls({ medication, lot, canQuarantine, canUnquarantine, canAdjus
     <div><strong>ล็อต {lot.lotNumber}</strong><span>หมดอายุ {formatThaiDate(lot.expiryDate)} · revision {lot.revision}</span></div>
     <div className="inventory-lot-counts"><span>คงคลัง {lot.onHand}</span><span>จอง {lot.reserved}</span><span>พร้อมใช้ {lot.available}</span><StatusBadge tone={lot.status === "AVAILABLE" ? "success" : "warning"}>{lot.status === "AVAILABLE" ? "พร้อมใช้" : "กักกัน"}</StatusBadge></div>
     {statusPermission ? <div className="inventory-lot-command"><label>เหตุผล<input aria-label={`เหตุผล ${statusAction} ${lot.lotNumber}`} value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} /></label><button className="care-button care-button-secondary" type="button" onClick={changeStatus} disabled={!reason.trim() || statusMutation.isPending}>{statusMutation.isPending ? "กำลังบันทึก…" : lot.status === "AVAILABLE" ? "กักกันล็อต" : "ปลดกักกัน"}</button></div> : null}
-    {canAdjust ? <div className="inventory-lot-command inventory-adjust-command"><label>ปรับจำนวน<input aria-label={`ปรับจำนวน ${lot.lotNumber}`} type="number" value={quantityDelta} onChange={(event) => setQuantityDelta(event.target.value)} /></label><label>เหตุผล<input aria-label={`เหตุผลปรับจำนวน ${lot.lotNumber}`} value={adjustmentReason} onChange={(event) => setAdjustmentReason(event.target.value)} maxLength={500} /></label><button className="care-button care-button-secondary" type="button" onClick={adjust} disabled={!canSubmitAdjustment || adjustment.isPending}>{adjustment.isPending ? "กำลังปรับ…" : "บันทึกการปรับ"}</button></div> : null}
+    {lot.recentMovements.length > 0 ? <div className="inventory-movement-history" aria-label={`รายการเคลื่อนไหว ${lot.lotNumber}`}><strong>รายการเคลื่อนไหวล่าสุด</strong><ul>{lot.recentMovements.map((movement) => <li key={movement.id}><span>{movement.id}</span><span>{movement.lotId}</span><span>{movement.quantityDelta > 0 ? "+" : ""}{movement.quantityDelta} · {movement.sourceType}/{movement.sourceId}</span><time dateTime={movement.occurredAt}>{formatThaiDateTime(movement.occurredAt)}</time></li>)}</ul></div> : <p className="empty-detail">ยังไม่มีรายการเคลื่อนไหว</p>}
+    {canAdjust ? <div className="inventory-lot-command inventory-adjust-command"><label>รายการที่ต้องการแก้ไข<select aria-label={`รายการอ้างอิง ${lot.lotNumber}`} value={correctsMovementId} onChange={(event) => setCorrectsMovementId(event.target.value)}><option value="">เลือกรายการเคลื่อนไหว</option>{lot.recentMovements.map((movement) => <option key={movement.id} value={movement.id}>{movement.id} · {movement.lotId} · {movement.quantityDelta > 0 ? "+" : ""}{movement.quantityDelta} · {movement.sourceType}/{movement.sourceId} · {formatThaiDateTime(movement.occurredAt)}</option>)}</select></label><label>ปรับจำนวน<input aria-label={`ปรับจำนวน ${lot.lotNumber}`} type="number" value={quantityDelta} onChange={(event) => setQuantityDelta(event.target.value)} /></label><label>เหตุผล<input aria-label={`เหตุผลปรับจำนวน ${lot.lotNumber}`} value={adjustmentReason} onChange={(event) => setAdjustmentReason(event.target.value)} maxLength={500} /></label><button className="care-button care-button-secondary" type="button" onClick={adjust} disabled={!canSubmitAdjustment || adjustment.isPending}>{adjustment.isPending ? "กำลังปรับ…" : "บันทึกการปรับ"}</button></div> : null}
     {error ? <p className="inventory-command-error" role="alert">{error}</p> : null}
   </article>;
 }

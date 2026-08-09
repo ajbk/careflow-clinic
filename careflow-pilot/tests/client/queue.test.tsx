@@ -74,7 +74,22 @@ const pendingItems = [
   },
   {
     ...consultingItem,
-    visit: { ...consultingItem.visit, id: "visit-charge", status: "AWAITING_CHARGE" as const, revision: 11 },
+    visit: { ...consultingItem.visit, id: "visit-preparing", status: "PREPARING" as const, revision: 11 },
+    allowedActions: ["OPEN_CONSULTATION"] as const,
+  },
+  {
+    ...consultingItem,
+    visit: { ...consultingItem.visit, id: "visit-release", status: "AWAITING_RELEASE" as const, revision: 12 },
+    allowedActions: ["OPEN_CONSULTATION"] as const,
+  },
+  {
+    ...consultingItem,
+    visit: { ...consultingItem.visit, id: "visit-handoff", status: "AWAITING_HANDOFF" as const, revision: 13 },
+    allowedActions: ["OPEN_CONSULTATION"] as const,
+  },
+  {
+    ...consultingItem,
+    visit: { ...consultingItem.visit, id: "visit-charge", status: "AWAITING_CHARGE" as const, revision: 14 },
     allowedActions: ["OPEN_CONSULTATION"] as const,
   },
 ];
@@ -123,8 +138,8 @@ function session(role: "assistant" | "doctor") {
       },
       clinic: { id: "clinic", name: "คลินิกทดสอบ" },
       permissions: role === "doctor"
-        ? ["patient:read", "visit:read-queue", "visit:start-consultation", "clinical:read", "clinical:save-draft", "clinical:sign", "clinical:amend", "patient:update-allergy", "medication:read-catalog", "medication:sign-decision"]
-        : ["patient:read", "visit:read-queue"],
+        ? ["patient:read", "visit:read-queue", "visit:start-consultation", "clinical:read", "clinical:save-draft", "clinical:sign", "clinical:amend", "patient:update-allergy", "medication:read-catalog", "medication:sign-decision", "fulfillment:read"]
+        : ["patient:read", "visit:read-queue", "fulfillment:read"],
       pilotAcknowledgedAt: "2026-08-03T00:00:00.000Z",
       mustChangePassword: false,
       idleExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
@@ -324,11 +339,16 @@ describe("connected shared queue workflow", () => {
     expect(workspaceRequests).toBe(0);
   });
 
-  it("opens every post-finalize pending state only when Doctor receives OPEN_CONSULTATION", async () => {
+  it("routes operational pending states to dispensing and clinical states to the Doctor room", async () => {
     server.use(http.get("/api/queue", () => HttpResponse.json({ data: pendingItems })));
     renderRoute("/queue");
     for (const item of pendingItems.filter((item) => item.visit.status !== "WAITING")) {
-      expect(within(await screen.findByRole("article", { name: new RegExp(item.visit.id) })).getByRole("link", { name: "เปิดห้องตรวจ" })).toHaveAttribute("href", `/consultations/${item.visit.id}`);
+      const row = within(await screen.findByRole("article", { name: new RegExp(item.visit.id) }));
+      if (["AWAITING_PREPARATION", "PREPARING", "AWAITING_RELEASE", "AWAITING_HANDOFF"].includes(item.visit.status)) {
+        expect(row.getByRole("link", { name: /การจัดยา|ปล่อยยา|ส่งมอบยา/ })).toHaveAttribute("href", `/dispensing/${item.visit.id}`);
+      } else {
+        expect(row.getByRole("link", { name: "เปิดห้องตรวจ" })).toHaveAttribute("href", `/consultations/${item.visit.id}`);
+      }
     }
   });
 
@@ -540,6 +560,19 @@ describe("connected shared queue workflow", () => {
     expect((await screen.findAllByText("กำลังตรวจ")).length).toBeGreaterThan(0);
     expect(screen.queryByText(/ยังไม่พร้อมใน Pilot/)).not.toBeInTheDocument();
     expect(screen.queryByText(/฿|บาท|คงเหลือ/)).not.toBeInTheDocument();
+  });
+
+  it("makes operational Overview rows open the dispensing workflow for either role", async () => {
+    const operational = pendingItems.find((item) => item.visit.status === "AWAITING_PREPARATION");
+    if (!operational) throw new Error("Missing operational queue fixture");
+    server.use(http.get("/api/queue", () => HttpResponse.json({ data: [operational] })));
+    renderRoute("/overview");
+    expect(await screen.findByRole("link", { name: /รอจัดยา/ })).toHaveAttribute("href", `/dispensing/${operational.visit.id}`);
+
+    cleanup();
+    server.use(http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))));
+    renderRoute("/overview");
+    expect(await screen.findByRole("link", { name: /รอจัดยา/ })).toHaveAttribute("href", `/dispensing/${operational.visit.id}`);
   });
 
   it("keeps Assistant Intake affordances in an empty Overview", async () => {

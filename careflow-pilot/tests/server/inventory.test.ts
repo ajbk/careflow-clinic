@@ -129,16 +129,21 @@ describe("inventory foundation service", () => {
     expect(database.sqlite.prepare("SELECT count(*) AS count FROM inventory_stock_movements").get()).toEqual({ count: 0 });
   });
 
-  it("rejects a duplicate medication and lot pair without leaving partial receipt records", async () => {
+  it("appends a receipt into an existing medication and lot while preserving one lot identity", async () => {
     const { database, inventory } = fixture();
     const actor = await receivingActor(database);
 
-    receive(database, inventory, actor);
-    expect(() => receive(database, inventory, actor)).toThrow(/มีในคลังแล้ว/);
-    expect(database.sqlite.prepare("SELECT count(*) AS count FROM inventory_receipts").get()).toEqual({ count: 1 });
-    expect(database.sqlite.prepare("SELECT count(*) AS count FROM inventory_receipt_lines").get()).toEqual({ count: 1 });
+    const first = receive(database, inventory, actor);
+    const second = receive(database, inventory, actor);
+    expect(second.lot.id).toBe(first.lot.id);
+    expect(second.lot.revision).toBe(2);
+    expect(database.sqlite.prepare("SELECT count(*) AS count FROM inventory_receipts").get()).toEqual({ count: 2 });
+    expect(database.sqlite.prepare("SELECT count(*) AS count FROM inventory_receipt_lines").get()).toEqual({ count: 2 });
     expect(database.sqlite.prepare("SELECT count(*) AS count FROM inventory_lots").get()).toEqual({ count: 1 });
-    expect(database.sqlite.prepare("SELECT count(*) AS count FROM inventory_stock_movements").get()).toEqual({ count: 1 });
+    expect(database.sqlite.prepare("SELECT count(*) AS count FROM inventory_stock_movements").get()).toEqual({ count: 2 });
+    expect(summary(inventory.getInventory(), "DEMO-MED-001")).toMatchObject({ onHand: 24, available: 24 });
+    expect(() => receive(database, inventory, actor, payload({ expiryDate: "2027-09-01" })))
+      .toThrow(/ข้อมูลล็อตเดิมไม่ตรงกัน/);
   });
 
   it("enforces append-only stock movements at the database boundary", async () => {
@@ -152,6 +157,16 @@ describe("inventory foundation service", () => {
     expect(() => database.sqlite.prepare(
       "DELETE FROM inventory_stock_movements WHERE lot_id = ?",
     ).run(receipt.lot.id)).toThrow(/append-only/);
+    expect(() => database.sqlite.prepare(`
+      INSERT INTO inventory_adjustments (id, clinic_id, lot_id, corrects_movement_id, quantity_delta, reason, occurred_at, actor_id)
+      VALUES ('invalid-adjustment-source', 'clinic', ?, 'missing-movement', 1, 'ทดสอบ', '2026-08-03T00:00:00.000Z', ?)
+    `).run(receipt.lot.id, actor.id)).toThrow(/correction source|same clinic|invalid/i);
+    const otherReceipt = receive(database, inventory, actor, payload({ lotNumber: "LOT-2608-B" }));
+    const otherMovementId = database.sqlite.prepare("SELECT id FROM inventory_stock_movements WHERE lot_id = ?").pluck().get(otherReceipt.lot.id) as string;
+    expect(() => database.sqlite.prepare(`
+      INSERT INTO inventory_adjustments (id, clinic_id, lot_id, corrects_movement_id, quantity_delta, reason, occurred_at, actor_id)
+      VALUES ('invalid-adjustment-cross-lot', 'clinic', ?, ?, 1, 'ทดสอบ', '2026-08-03T00:00:00.000Z', ?)
+    `).run(receipt.lot.id, otherMovementId, actor.id)).toThrow(/correction source|same clinic|invalid/i);
   });
 
   it("rebuilds a persisted receipt by its identifier", async () => {
@@ -215,12 +230,12 @@ describe("inventory receiving API", () => {
     })).json().data).toHaveLength(4);
     expect((await fixture.app.inject({
       method: "GET", url: "/api/inventory/medications?q=DEMO", headers: { cookie: fixture.doctorCookie },
-    })).statusCode).toBe(403);
+    })).statusCode).toBe(200);
     expect((await fixture.app.inject({
       method: "POST", url: "/api/inventory/receipts", headers: {
         cookie: fixture.doctorCookie, "idempotency-key": "inventory-doctor-receive-001",
       }, payload: receiptCommand(),
-    })).statusCode).toBe(403);
+    })).statusCode).toBe(201);
     expect((await fixture.app.inject({
       method: "GET", url: "/api/medications?q=DEMO", headers: { cookie: fixture.assistantCookie },
     })).statusCode).toBe(403);
@@ -282,7 +297,7 @@ describe("inventory receiving API", () => {
     expect(collision.json().error.code).toBe("IDEMPOTENCY_CONFLICT");
   });
 
-  it("returns domain conflicts for stale medication revisions and duplicate medication lots", async () => {
+  it("returns domain conflicts for stale revisions and appends a matching medication lot", async () => {
     const fixture = await inventoryApiFixture();
     const headers = { cookie: fixture.assistantCookie, "idempotency-key": "inventory-stale-001" };
     const stale = await fixture.app.inject({
@@ -303,8 +318,9 @@ describe("inventory receiving API", () => {
       headers: { cookie: fixture.assistantCookie, "idempotency-key": "inventory-lot-duplicate-001" },
       payload: receiptCommand(),
     });
-    expect(duplicate.statusCode).toBe(409);
-    expect(duplicate.json().error.code).toBe("INVALID_STATE");
+    expect(duplicate.statusCode).toBe(201);
+    expect(duplicate.json().data.lot.id).toBe(first.json().data.lot.id);
+    expect(duplicate.json().data.lot.revision).toBe(first.json().data.lot.revision + 1);
   });
 
   it("rejects malformed or unknown inventory input and invalid idempotency keys", async () => {
@@ -365,6 +381,9 @@ describe("inventory integrity API", () => {
       onHand: 12,
       reserved: 0,
       available: 12,
+      recentMovements: [expect.objectContaining({
+        id: expect.any(String), lotId: lot.id, quantityDelta: 12, sourceType: "RECEIPT", sourceId: expect.any(String), occurredAt: expect.any(String),
+      })],
     })]);
   });
 
@@ -437,6 +456,10 @@ describe("inventory integrity API", () => {
     expect(first.statusCode).toBe(201);
     expect(first.json()).toMatchObject({ replayed: false, data: { onHand: 10, reserved: 0, available: 10, revision: lot.revision + 1 } });
     expect(fixture.database.sqlite.prepare("SELECT movement_type, source_type, quantity_delta FROM inventory_stock_movements WHERE lot_id = ? AND movement_type = 'ADJUSTMENT'").get(lot.id)).toEqual({ movement_type: "ADJUSTMENT", source_type: "ADJUSTMENT", quantity_delta: -2 });
+    const adjustmentAudit = fixture.database.sqlite.prepare("SELECT action, occurred_at, metadata_json FROM audit_events WHERE action LIKE 'inventory.%adjusted'").get() as { action: string; occurred_at: string; metadata_json: string };
+    expect(adjustmentAudit.action).toBe("inventory.stock-adjusted");
+    expect(adjustmentAudit.occurred_at).toBe("2026-08-03T00:00:00.000Z");
+    expect(JSON.parse(adjustmentAudit.metadata_json)).toMatchObject({ lotId: lot.id, correctsMovementId: movementId, quantityDelta: -2 });
     expect(() => fixture.database.sqlite.prepare("UPDATE inventory_adjustments SET reason = 'แก้' WHERE lot_id = ?").run(lot.id)).toThrow(/append-only/);
     const replay = await fixture.app.inject({ method: "POST", url: `/api/inventory/lots/${lot.id}/adjustments`, headers: adjustmentHeaders, payload: adjustmentPayload });
     expect(replay.statusCode).toBe(200);

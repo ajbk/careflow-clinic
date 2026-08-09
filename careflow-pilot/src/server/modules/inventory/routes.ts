@@ -63,6 +63,7 @@ export function registerInventoryRoutes(input: {
             medicationId: receipt.medication.id,
             lotId: receipt.lot.id,
             lotNumber: receipt.lot.lotNumber,
+            lotRevision: receipt.lot.revision,
             quantity: receipt.quantity,
             unit: receipt.unit,
           },
@@ -91,7 +92,7 @@ export function registerInventoryRoutes(input: {
           appendAuditEvent({
             tx, actor, id: `audit:${auditAction}:${lot.id}:${lot.revision}`, action: auditAction,
             entityType: "inventory_lot", entityId: lot.id, entityRevision: lot.revision, reason: body.payload.reason,
-            occurredAt: new Date().toISOString(), metadata: { lotId: lot.id, oldStatus: nextStatus === "QUARANTINED" ? "AVAILABLE" : "QUARANTINED", newStatus: lot.status, revision: lot.revision, reason: body.payload.reason },
+            occurredAt: input.inventory.currentTimestamp(), metadata: { lotId: lot.id, oldStatus: nextStatus === "QUARANTINED" ? "AVAILABLE" : "QUARANTINED", newStatus: lot.status, revision: lot.revision, reason: body.payload.reason },
           });
           return { statusCode: 201, data: lot };
         },
@@ -114,9 +115,9 @@ export function registerInventoryRoutes(input: {
           correctsMovementId: body.payload.correctsMovementId, quantityDelta: body.payload.quantityDelta, reason: body.payload.reason,
         });
         appendAuditEvent({
-          tx, actor, id: `audit:inventory.lot-adjusted:${lot.id}:${lot.revision}`, action: "inventory.lot-adjusted",
+          tx, actor, id: `audit:inventory.stock-adjusted:${lot.id}:${lot.revision}`, action: "inventory.stock-adjusted",
           entityType: "inventory_lot", entityId: lot.id, entityRevision: lot.revision, reason: body.payload.reason,
-          occurredAt: new Date().toISOString(), metadata: { lotId: lot.id, correctsMovementId: body.payload.correctsMovementId, quantityDelta: body.payload.quantityDelta, onHand: lot.onHand, reserved: lot.reserved, available: lot.available, revision: lot.revision, reason: body.payload.reason },
+          occurredAt: input.inventory.currentTimestamp(), metadata: { lotId: lot.id, correctsMovementId: body.payload.correctsMovementId, quantityDelta: body.payload.quantityDelta, onHand: lot.onHand, reserved: lot.reserved, available: lot.available, revision: lot.revision, reason: body.payload.reason },
         });
         return { statusCode: 201, data: lot };
       },

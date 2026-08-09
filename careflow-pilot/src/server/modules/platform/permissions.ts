@@ -31,6 +31,7 @@ export const permissionsByRole = {
     "medication:read-catalog",
     "medication:sign-decision",
     "inventory:read",
+    "inventory:receive",
     "inventory:reserve",
     "fulfillment:read",
     "fulfillment:prepare",

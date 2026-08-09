@@ -189,11 +189,23 @@ export const inventoryLotSchema = z.strictObject({
 });
 export type InventoryLotDto = z.infer<typeof inventoryLotSchema>;
 
+export const inventoryLotMovementSchema = z.strictObject({
+  id: z.string().min(1),
+  lotId: z.string().min(1),
+  movementType: z.enum(["RECEIPT", "DISPENSE", "ADJUSTMENT"]),
+  quantityDelta: z.number().int().min(-999_999).max(999_999).refine((value) => value !== 0),
+  sourceType: z.enum(["RECEIPT", "DISPENSE", "ADJUSTMENT"]),
+  sourceId: z.string().min(1),
+  occurredAt: z.string().datetime(),
+});
+export type InventoryLotMovementDto = z.infer<typeof inventoryLotMovementSchema>;
+
 export const inventoryLotBalanceSchema = inventoryLotSchema.extend({
   onHand: z.number().int().min(0),
   reserved: z.number().int().min(0),
   available: z.number().int().min(0),
   latestMovementId: z.string().min(1).nullable(),
+  recentMovements: z.array(inventoryLotMovementSchema).max(20),
 });
 export type InventoryLotBalanceDto = z.infer<typeof inventoryLotBalanceSchema>;
 

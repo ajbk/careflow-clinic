@@ -69,6 +69,14 @@ function queueStatus(status: string): { label: string; tone: "waiting" | "active
   };
 }
 
+const dispensingStatuses = new Set(["AWAITING_PREPARATION", "PREPARING", "AWAITING_RELEASE", "AWAITING_HANDOFF"]);
+
+function journeyHref(status: string, visitId: string, isDoctor: boolean, canFulfillment: boolean): string {
+  if (canFulfillment && dispensingStatuses.has(status)) return `/dispensing/${visitId}`;
+  if (isDoctor && ["WAITING", "CONSULTING", "AWAITING_ORDER_REVISION"].includes(status)) return `/consultations/${visitId}`;
+  return "/queue";
+}
+
 export function OverviewScreen(): ReactElement {
   const auth = useAuth();
   const dashboard = useDashboardToday();
@@ -95,6 +103,7 @@ export function OverviewScreen(): ReactElement {
   const hasCachedQueue = Array.isArray(queue.data);
   const queueStale = Boolean(queue.error && hasCachedQueue && !(isApiError(queue.error) && queue.error.status === 403));
   const isDoctor = auth.session?.user.role === "doctor";
+  const canFulfillment = auth.session?.permissions.includes("fulfillment:read") ?? false;
   const roleAction = isDoctor
     ? {
         header: { to: "/queue", label: "ไปยังคิวตรวจ", icon: UsersRound },
@@ -127,7 +136,7 @@ export function OverviewScreen(): ReactElement {
       />
 
       <section className="metric-grid" aria-label="สรุปสถานะคลินิก">
-        {pendingMetrics.map((metric, index) => <Card className={`metric-card metric-card-${["mint", "blue", "warm", "neutral", "mint"][index]}`} key={metric.key}><div className="metric-value-group"><span className="metric-label">{metric.label}</span><strong>{metrics[metric.key]}</strong><small>{metric.detail}</small></div></Card>)}
+        {pendingMetrics.map((metric, index) => <Card className={`metric-card metric-card-${["mint", "blue", "warm", "neutral", "blue", "rose", "mint", "neutral"][index]}`} key={metric.key}><div className="metric-value-group"><span className="metric-label">{metric.label}</span><strong>{metrics[metric.key]}</strong><small>{metric.detail}</small></div></Card>)}
       </section>
 
       <div className="overview-grid">
@@ -141,11 +150,11 @@ export function OverviewScreen(): ReactElement {
               {activeRows.map((item) => {
                 const status = queueStatus(item.visit.status);
                 return (
-                  <article className="journey-row" key={item.visit.id}>
+                  <Link className="journey-row" key={item.visit.id} to={journeyHref(item.visit.status, item.visit.id, isDoctor, canFulfillment)} aria-label={`${item.patient.displayName} ${status.label}`}>
                     <span className="journey-time">{formatThaiDateTime(item.visit.arrivedAt)}</span>
                     <span className="journey-person"><strong>{item.patient.displayName}</strong><small>{item.chiefComplaint}</small></span>
                     <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
-                  </article>
+                  </Link>
                 );
               })}
             </div>
