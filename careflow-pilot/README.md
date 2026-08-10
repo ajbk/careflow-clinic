@@ -78,6 +78,12 @@ npm run test:e2e
 
 The E2E fixture creates a temporary synthetic-only SQLite file and two isolated browser contexts; it never reads credentials from `.env`.
 
+## Pre-pilot UAT
+
+- [Thai tester guide](../docs/uat/careflow-pre-pilot/guide-th.md)
+- [Result checklist](../docs/uat/careflow-pre-pilot/checklist.md)
+- [Administrator runbook](../docs/uat/careflow-pre-pilot/admin-runbook.md)
+
 ## Milestone 4 and explicit limits
 
 Synthetic Milestone 4 is complete: immutable pricing snapshots, Charge collection, full waiver, Visit close, and the Doctor-only A4 OPD Card are enabled only for this synthetic local pilot. Backup/restore, deployment, HTTPS/Caddy, external integrations, analytics, receipts/tax, QR/bank integration, partial collection, price-management UI, and all real-data use are **disabled**. The database reset command is a synthetic-data maintenance tool, not a backup or deployment mechanism. Never enter real Patient data, and do not treat this pilot as a clinical, billing, backup, or deployment system.
