@@ -50,28 +50,15 @@ async function createPatientAndVisit(test: Awaited<ReturnType<typeof fixture>>) 
     payload: { expectedRevisions: {}, payload: {} },
   });
   const patientId = patientResponse.json().data.id as string;
-  const intakeResponse = await test.app.inject({
-    method: "POST",
-    url: "/api/visits/intake",
-    headers: { cookie: test.assistantCookie, "idempotency-key": "allergy-intake-001" },
-    payload: {
-      expectedRevisions: { patient: 1 },
-      payload: {
-        patientId,
-        chiefComplaint: "อาการทดสอบ",
-        vitals: {
-          weightKg: null,
-          heightCm: null,
-          temperatureC: null,
-          systolicMmhg: null,
-          diastolicMmhg: null,
-          heartRateBpm: null,
-          spo2Percent: null,
-        },
-      },
-    },
-  });
-  return { patientId, visitId: intakeResponse.json().data.visit.id as string };
+  const visitId = "allergy-legacy-visit-001";
+  const recordedAt = "2026-08-03T00:00:00.000Z";
+  test.database.sqlite.prepare(
+    "INSERT INTO visits (id, clinic_id, patient_id, status, chief_complaint, revision, arrived_at, started_at, closed_at, created_by) VALUES (?, 'clinic', ?, 'WAITING', 'อาการทดสอบ', 1, ?, NULL, NULL, ?)",
+  ).run(visitId, patientId, recordedAt, test.assistant.actor.id);
+  test.database.sqlite.prepare(
+    "INSERT INTO intake_observations (id, visit_id, weight_kg, height_cm, temperature_c, systolic_mmhg, diastolic_mmhg, heart_rate_bpm, spo2_percent, recorded_by, recorded_at) VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)",
+  ).run("allergy-legacy-observation-001", visitId, test.assistant.actor.id, recordedAt);
+  return { patientId, visitId };
 }
 
 function review(

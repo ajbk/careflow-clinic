@@ -68,17 +68,19 @@ async function submitIntake(
     heartRateBpm: 80,
     spo2Percent: 98,
   },
+  expectedPatientRevision = 1,
 ) {
   return app.inject({
     method: "POST",
     url: "/api/visits/intake",
     headers: { cookie, "idempotency-key": key },
     payload: {
-      expectedRevisions: { patient: 1 },
+      expectedRevisions: { patient: expectedPatientRevision },
       payload: {
         patientId,
         chiefComplaint: complaint,
         vitals,
+        allergy: { answer: "NO", items: [], changeReason: null },
       },
     },
   });
@@ -121,7 +123,7 @@ async function closeNoMedicationVisit(
     method: "POST",
     url: `/api/visits/${visitId}/finalize-consultation`,
     headers: { cookie: test.doctorCookie, "idempotency-key": `${key}-finalize` },
-    payload: { expectedRevisions: { visit: 2, patient: 1, noteDraft: 1, medicationDraft: 1 }, payload: {} },
+    payload: { expectedRevisions: { visit: 2, patient: 2, noteDraft: 1, medicationDraft: 1 }, payload: {} },
   });
   expect(finalized.statusCode).toBe(200);
 
@@ -195,6 +197,7 @@ describe("shared Intake, Queue, and consultation workflow", () => {
           heartRateBpm: 80,
           spo2Percent: 98,
         },
+        allergy: { answer: "NO", items: [], changeReason: null },
       },
     };
     const service = createVisitService({
@@ -210,7 +213,7 @@ describe("shared Intake, Queue, and consultation workflow", () => {
         db: test.database.db,
         actor: test.assistant.actor,
         key: "visit-audit-failure-001",
-        operation: "visit.submit-intake.v1",
+        operation: "visit.submit-intake.v2",
         requestBody: body,
         work: (tx) => ({
           statusCode: 201,
@@ -266,12 +269,12 @@ describe("shared Intake, Queue, and consultation workflow", () => {
     });
     expect(assistantQueue.json().data[0]).toMatchObject({
       visit: { id: visitId, status: "WAITING", revision: 1 },
-      allergy: { state: "UNKNOWN", id: null, revision: 0 },
+      allergy: { state: "NONE_KNOWN", id: expect.any(String), revision: 1 },
       allowedActions: ["REVIEW_ALLERGY"],
     });
     expect(doctorQueue.json().data[0]).toMatchObject({
       visit: { id: visitId, status: "WAITING", revision: 1 },
-      allergy: { state: "UNKNOWN", id: null, revision: 0 },
+      allergy: { state: "NONE_KNOWN", id: expect.any(String), revision: 1 },
       allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"],
     });
 
@@ -497,7 +500,15 @@ describe("shared Intake, Queue, and consultation workflow", () => {
 
     const firstVisitId = first.json().data.visit.id as string;
     await closeNoMedicationVisit(test, firstVisitId, "active-index-close");
-    const replacement = await submitIntake(test.app, test.assistantCookie, patientId, "active-index-replacement");
+    const replacement = await submitIntake(
+      test.app,
+      test.assistantCookie,
+      patientId,
+      "active-index-replacement",
+      undefined,
+      undefined,
+      2,
+    );
     expect(replacement.statusCode).toBe(201);
     expect(test.database.db.select().from(visits).all()).toHaveLength(2);
   });
@@ -684,7 +695,7 @@ describe("shared Intake, Queue, and consultation workflow", () => {
         recordedBy: { id: test.assistant.actor.id, displayName: test.assistant.actor.displayName },
       },
       patientSnapshot: {
-        allergy: { state: "UNKNOWN", id: null, revision: 0 },
+        allergy: { state: "NONE_KNOWN", id: expect.any(String), revision: 1 },
         activeProblems: { state: "UNKNOWN", value: null, source: null },
         currentMedicationContext: { state: "UNKNOWN", value: null, source: null },
         latestRelevantPlan: { state: "UNKNOWN", value: null, source: null },

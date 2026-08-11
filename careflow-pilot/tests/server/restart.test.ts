@@ -93,6 +93,7 @@ describe("real-file restart boundary", () => {
             heartRateBpm: 80,
             spo2Percent: 98,
           },
+          allergy: { answer: "NO", items: [], changeReason: null },
         },
       },
     });
@@ -113,7 +114,7 @@ describe("real-file restart boundary", () => {
       url: `/api/patients/${patient.id}/allergy-revisions`,
       headers: { cookie: doctorCookie, "idempotency-key": "restart-allergy-001" },
       payload: {
-        expectedRevisions: { patient: 1, visit: 2 },
+        expectedRevisions: { patient: 2, visit: 2 },
         payload: {
           visitId,
           state: "PRESENT",
@@ -125,8 +126,8 @@ describe("real-file restart boundary", () => {
     });
     expect(allergyReview.statusCode).toBe(201);
     expect(allergyReview.json().data).toMatchObject({
-      patient: { id: patient.id, revision: 2 },
-      allergy: { revision: 1, state: "PRESENT", items: [{ substance: "เพนิซิลลิน" }] },
+      patient: { id: patient.id, revision: 3 },
+      allergy: { revision: 2, state: "PRESENT", items: [{ substance: "เพนิซิลลิน" }] },
       visit: { id: visitId, revision: 2 },
     });
 
@@ -145,7 +146,7 @@ describe("real-file restart boundary", () => {
     const finalized = await firstApp.inject({
       method: "POST", url: `/api/visits/${visitId}/finalize-consultation`,
       headers: { cookie: doctorCookie, "idempotency-key": "restart-finalize-001" },
-      payload: { expectedRevisions: { visit: 2, patient: 2, noteDraft: 1, medicationDraft: 1 }, payload: {} },
+      payload: { expectedRevisions: { visit: 2, patient: 3, noteDraft: 1, medicationDraft: 1 }, payload: {} },
     });
     expect(finalized.statusCode).toBe(200);
     const finalizedData = finalized.json().data;

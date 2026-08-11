@@ -623,6 +623,22 @@ export const allergyItemSchema = z.strictObject({
   note: requiredClinicalText(500).nullable(),
 });
 
+const intakeAllergyChangeReasonSchema = requiredClinicalText(500).nullable();
+
+export const intakeAllergyAnswerSchema = z.discriminatedUnion("answer", [
+  z.strictObject({
+    answer: z.literal("NO"),
+    items: z.tuple([]),
+    changeReason: intakeAllergyChangeReasonSchema,
+  }),
+  z.strictObject({
+    answer: z.literal("YES"),
+    items: z.array(allergyItemSchema).min(1).max(20),
+    changeReason: intakeAllergyChangeReasonSchema,
+  }),
+]);
+export type IntakeAllergyAnswer = z.infer<typeof intakeAllergyAnswerSchema>;
+
 export const allergyAssessmentSchema = z.strictObject({
   id: z.string().min(1).nullable(),
   revision: z.number().int().min(0),
@@ -634,6 +650,17 @@ export const allergyAssessmentSchema = z.strictObject({
   reviewedAt: z.string().datetime().nullable(),
 });
 export type AllergyAssessmentDto = z.infer<typeof allergyAssessmentSchema>;
+
+export const patientAllergyContextSchema = z.strictObject({
+  patient: patientSchema,
+  allergy: allergyAssessmentSchema,
+});
+export type PatientAllergyContextDto = z.infer<typeof patientAllergyContextSchema>;
+
+export const patientAllergyContextResponseSchema = z.strictObject({
+  data: patientAllergyContextSchema,
+});
+export type PatientAllergyContextResponse = z.infer<typeof patientAllergyContextResponseSchema>;
 
 export const visitSummarySchema = z.strictObject({
   id: z.string().min(1),
@@ -719,6 +746,7 @@ export const intakePayloadSchema = rejectOwnPrototypeKeys(
         message: "อาการสำคัญต้องมี 1–500 ตัวอักษร",
       }),
     vitals: intakeVitalsWithRelationshipSchema,
+    allergy: intakeAllergyAnswerSchema,
   }),
 );
 export type IntakePayload = z.infer<typeof intakePayloadSchema>;

@@ -37,4 +37,10 @@ export function registerPatientRoutes(input: {
     const query = patientSearchQuerySchema.parse(request.query);
     return { data: input.patients.searchPatients(query.q) };
   });
+
+  input.app.get("/api/patients/:patientId/allergy-assessment", async (request) => {
+    requireActor(request, "patient:read");
+    const patientId = (request.params as { patientId?: string }).patientId ?? "";
+    return { data: input.patients.getAllergyContext(patientId) };
+  });
 }

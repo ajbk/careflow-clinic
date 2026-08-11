@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import stableStringify from "fast-json-stable-stringify";
 import {
   startConsultationBodySchema,
   submitIntakeBodySchema,
@@ -22,14 +23,15 @@ export function registerVisitRoutes(input: {
       db: input.database.db,
       actor,
       key,
-      operation: "visit.submit-intake.v1",
+      operation: "visit.submit-intake.v2",
       requestBody: body,
       work: (tx) => ({
         statusCode: 201,
         data: input.visits.submitIntake(tx, actor, body),
       }),
     });
-    return reply.code(result.statusCode).send(result.body);
+    const responseBody = JSON.parse(stableStringify(result.body)) as typeof result.body;
+    return reply.code(result.body.replayed ? 200 : result.statusCode).send(responseBody);
   });
 
   input.app.get("/api/queue", async (request) => {

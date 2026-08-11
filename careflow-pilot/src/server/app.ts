@@ -13,7 +13,7 @@ import {
   type PasswordVerifier,
 } from "./auth/routes.js";
 import { createSessionService } from "./modules/platform/index.js";
-import { createPatientService, registerPatientRoutes } from "./modules/patient/index.js";
+import { createPatientService, registerPatientRoutes, type IntakeWriteStage } from "./modules/patient/index.js";
 import { createVisitService, registerVisitRoutes } from "./modules/visit/index.js";
 import { createMedicationService, registerMedicationRoutes } from "./modules/medication/index.js";
 import { createInventoryService, registerInventoryRoutes } from "./modules/inventory/index.js";
@@ -46,6 +46,8 @@ export interface BuildAppOptions {
   beforeVisitCloseTransition?: () => void;
   /** Test-only failure injection at each close transaction write boundary. */
   visitCloseFailureInjector?: (stage: VisitCloseWriteStage) => void;
+  /** Test-only failure injection at each atomic Intake write boundary. */
+  intakeFailureInjector?: (stage: IntakeWriteStage) => void;
 }
 
 function zodFieldErrors(error: ZodError): Record<string, string> {
@@ -117,6 +119,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     database: options.db,
     patients: patientService,
     clock: options.clock,
+    intakeFailureInjector: options.intakeFailureInjector,
   });
   registerVisitRoutes({ app, database: options.db, visits: visitService });
   const medicationService = createMedicationService({ database: options.db, clock: options.clock });
