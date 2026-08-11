@@ -60,13 +60,21 @@ export function JourneyBlockerCard({
   onLocalAction?: (action: "START_CONSULTATION" | "REVIEW_ALLERGY") => void;
   commandFailure?: string;
 }): ReactElement {
-  const alertRef = useRef<HTMLParagraphElement>(null);
+  const alertRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (commandFailure) alertRef.current?.focus();
   }, [commandFailure]);
 
   const canRecover = authorityReady && blocker.recoveryAction !== null && allowedActions.includes(blocker.recoveryAction);
   const medication = blocker.medication;
+  const medicationFacts = medication ? (
+    <div className="journey-blocker-medication" aria-label={`รายละเอียดการขาด ${medication.displayNameSnapshot}`}>
+      <strong>{medication.displayNameSnapshot}</strong>
+      <span>ต้องการ {medication.required} {medication.unitSnapshot}</span>
+      <span>พร้อมใช้ {medication.available} {medication.unitSnapshot}</span>
+      <span>ขาด {medication.shortfall} {medication.unitSnapshot}</span>
+    </div>
+  ) : null;
   return (
     <Card className="journey-blocker-card">
       <div className="journey-blocker-heading">
@@ -74,15 +82,12 @@ export function JourneyBlockerCard({
         <span>บทบาทหลัก: {roleLabel(blocker.primaryRole)}</span>
       </div>
       <p>{blocker.detailTh}</p>
-      {medication ? (
-        <div className="journey-blocker-medication" aria-label={`รายละเอียดการขาด ${medication.displayNameSnapshot}`}>
-          <strong>{medication.displayNameSnapshot}</strong>
-          <span>ต้องการ {medication.required} {medication.unitSnapshot}</span>
-          <span>พร้อมใช้ {medication.available} {medication.unitSnapshot}</span>
-          <span>ขาด {medication.shortfall} {medication.unitSnapshot}</span>
+      {commandFailure ? (
+        <div ref={alertRef} className="journey-command-failure" role="alert" tabIndex={-1}>
+          <p>{commandFailure}</p>
+          {medicationFacts}
         </div>
-      ) : null}
-      {commandFailure ? <p ref={alertRef} className="journey-command-failure" role="alert" tabIndex={-1}>{commandFailure}</p> : null}
+      ) : medicationFacts}
       {blocker.recoveryAction ? (
         <div className="journey-blocker-recovery">
           {canRecover ? <JourneyActionControl action={blocker.recoveryAction} labelTh={blocker.recoveryAction === "RECEIVE_STOCK" ? "รับยาเข้าคลัง" : blocker.titleTh} visitId={visitId} blocker={blocker} allowedActions={allowedActions} authorityReady={authorityReady} onLocalAction={onLocalAction} /> : null}

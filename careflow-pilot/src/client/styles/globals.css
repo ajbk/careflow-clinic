@@ -895,7 +895,7 @@ button {
   .visit-journey-ribbon-list { display: flex; min-height: 76px; }
   .visit-journey-ribbon-step { flex: 1 1 33.333%; border-right: 1px solid rgba(112, 121, 116, .14); border-bottom: 0; }
   /* Off-screen steps remain list items for assistive technology; only their visual presentation is clipped. */
-  .visit-journey-ribbon-step:not(.is-current):not(:has(+ .visit-journey-ribbon-step.is-current)):not(.is-current + .visit-journey-ribbon-step) { position: absolute; width: 1px; min-height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+  .visit-journey-ribbon-step:not([aria-current="step"]):not(:has(+ .visit-journey-ribbon-step[aria-current="step"])):not([aria-current="step"] + .visit-journey-ribbon-step) { position: absolute; width: 1px; min-height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
   .visit-journey-ribbon-step.is-current { box-shadow: inset 0 -3px 0 var(--primary); }
   .journey-next-task-card, .journey-blocker-card { padding: 16px; }
   .journey-authority-banner { grid-template-columns: 1fr; }

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { opdCardSchema, type OpdCardDto } from "../../src/shared/contracts.js";
+import { opdCardSchema, type OpdCardDto, type VisitJourneyDto } from "../../src/shared/contracts.js";
 import { loginAndAcknowledge, startPilotServer } from "./fixtures.js";
 
 const NOW = "2026-08-10T00:00:00.000Z";
@@ -132,14 +132,50 @@ function maximumOpdCard(): OpdCardDto {
   return opdCardSchema.parse(card);
 }
 
+function closedJourney(): VisitJourneyDto {
+  return {
+    visit: { id: "layout-max", status: "CLOSED", revision: 10 },
+    refreshedAt: NOW,
+    steps: [
+      { code: "INTAKE", labelTh: "รับผู้ป่วย", state: "COMPLETE" },
+      { code: "SCREENING", labelTh: "คัดกรอง", state: "COMPLETE" },
+      { code: "CONSULTATION", labelTh: "ตรวจรักษา", state: "COMPLETE" },
+      { code: "MEDICATION_DECISION", labelTh: "ตัดสินใจเรื่องยา", state: "COMPLETE" },
+      { code: "PREPARATION", labelTh: "เตรียมยา", state: "COMPLETE" },
+      { code: "HANDOFF", labelTh: "ส่งมอบยา", state: "COMPLETE" },
+      { code: "PAYMENT", labelTh: "ชำระเงิน", state: "COMPLETE" },
+      { code: "CLOSURE", labelTh: "ปิด Visit", state: "COMPLETE" },
+    ],
+    nextTask: { action: "OPEN_OPD_CARD", labelTh: "เปิดบัตร OPD", primaryRole: "doctor", permittedRoles: ["doctor"], availability: "AVAILABLE" },
+    blockers: [],
+    allowedActions: ["OPEN_OPD_CARD"],
+  };
+}
+
 async function openMaximumOpdCard(page: Page, baseURL: string): Promise<void> {
   const card = maximumOpdCard();
   await loginAndAcknowledge(page, baseURL, "doctor");
   await page.route("**/api/visits/layout-max/opd-card", async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: card }) });
   });
+  await page.route("**/api/visits/layout-max/journey", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: closedJourney() }) });
+  });
   await page.goto(`${baseURL}/visits/layout-max/opd-card`);
   await expect(page.getByLabel("บัตร OPD สำหรับพิมพ์")).toBeVisible();
+}
+
+async function expectClosedJourneyRibbon(page: Page, mobile: boolean): Promise<void> {
+  const ribbon = page.getByRole("navigation", { name: "เส้นทางผู้ป่วย" });
+  const current = ribbon.locator("li[aria-current='step']");
+  await expect(ribbon.locator("li")).toHaveCount(8);
+  await expect(current).toHaveCount(1);
+  await expect(current).toHaveText(/ปิด Visit/);
+  await expect(current).toHaveClass(/is-complete/);
+  if (mobile) {
+    await expect(current).toBeVisible();
+    expect(await current.evaluate((element) => getComputedStyle(element).position)).not.toBe("absolute");
+  }
 }
 
 async function expectRequiredEvidenceVisible(page: Page): Promise<void> {
@@ -176,6 +212,7 @@ for (const viewport of [
     const page = await context.newPage();
     try {
       await openMaximumOpdCard(page, server.baseURL);
+      await expectClosedJourneyRibbon(page, viewport.width === 375);
       await expectRequiredEvidenceVisible(page);
       expect(await opdHorizontalOverflows(page)).toEqual([]);
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);

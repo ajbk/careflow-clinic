@@ -52,6 +52,18 @@ const stockBlocker: JourneyBlocker = {
   },
 };
 
+const secondStockBlocker: JourneyBlocker = {
+  ...stockBlocker,
+  medication: {
+    medicationId: "DEMO-MED-002",
+    displayNameSnapshot: "ไอบูโพรเฟน",
+    required: 2,
+    available: 0,
+    shortfall: 2,
+    unitSnapshot: "เม็ด",
+  },
+};
+
 afterEach(() => cleanup());
 
 describe("shared Visit Journey UI", () => {
@@ -84,6 +96,21 @@ describe("shared Visit Journey UI", () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
     render(<VisitJourneyRibbon steps={steps} />);
     expect(within(screen.getByRole("navigation", { name: "เส้นทางผู้ป่วย" })).getAllByRole("listitem")).toHaveLength(8);
+  });
+
+  it("normalizes one accessible Closure current step for a closed server summary at a 375px viewport", () => {
+    // Break caught: a closed Visit marks every visual step complete, which previously left mobile assistive technology with no current Journey position.
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
+    const closedSteps = steps.map((step) => ({ ...step, state: "COMPLETE" as const }));
+    render(<VisitJourneyRibbon steps={closedSteps} />);
+
+    const navigation = screen.getByRole("navigation", { name: "เส้นทางผู้ป่วย" });
+    const items = within(navigation).getAllByRole("listitem");
+    const closure = within(navigation).getByText("ปิด Visit").closest("li");
+    expect(items).toHaveLength(8);
+    expect(items.filter((item) => item.getAttribute("aria-current") === "step")).toHaveLength(1);
+    expect(closure).toHaveAttribute("aria-current", "step");
+    expect(closure).toHaveClass("is-complete");
   });
 
   it("uses only the authorized local action for the current role", async () => {
@@ -122,6 +149,29 @@ describe("shared Visit Journey UI", () => {
     expect(screen.queryByRole("button", { name: /เริ่มตรวจ/ })).not.toBeInTheDocument();
   });
 
+  it("keeps explanatory next-task copy when an authorized local action has no screen handler", () => {
+    // Break caught: the server can authorize REVIEW_ALLERGY while this screen has no local handler; rendering neither action nor explanation hides the required next step.
+    const unresolved: JourneySummaryDto = {
+      ...waitingSummary,
+      nextTask: {
+        action: "REVIEW_ALLERGY",
+        labelTh: "ทบทวนประวัติแพ้ยา",
+        primaryRole: "doctor",
+        permittedRoles: ["doctor"],
+        availability: "AVAILABLE",
+      },
+      allowedActions: ["REVIEW_ALLERGY"],
+    };
+    render(
+      <MemoryRouter>
+        <JourneyNextTaskCard summary={unresolved} visitId="visit-1" currentRole="doctor" authorityReady />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("ทบทวนประวัติแพ้ยา");
+    expect(screen.queryByRole("button", { name: "ทบทวนประวัติแพ้ยา" })).not.toBeInTheDocument();
+  });
+
   it("shows server-provided shortage facts, routes an authorized recovery, and focuses a command-failure alert", async () => {
     // Break caught: a stock recovery without the exact shortage facts or focusable failure summary leaves the operator unable to safely recover.
     render(
@@ -147,7 +197,46 @@ describe("shared Visit Journey UI", () => {
     );
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("กันสต็อกไม่สำเร็จ");
+    expect(alert).toHaveTextContent("พาราเซตามอล");
+    expect(alert).toHaveTextContent("ต้องการ 3 เม็ด");
+    expect(alert).toHaveTextContent("พร้อมใช้ 0 เม็ด");
+    expect(alert).toHaveTextContent("ขาด 3 เม็ด");
     await waitFor(() => expect(alert).toHaveFocus());
+  });
+
+  it("focuses only one complete medication-failure alert when several shortages are present", async () => {
+    // Break caught: every blocker used to focus its own generic error, leaving the final shortage focused without the first recovery facts.
+    const blockedSummary: JourneySummaryDto = {
+      ...waitingSummary,
+      nextTask: {
+        action: "RECEIVE_STOCK",
+        labelTh: "รับยาเข้าคลัง",
+        primaryRole: "assistant",
+        permittedRoles: ["assistant"],
+        availability: "BLOCKED",
+      },
+      blockers: [stockBlocker, secondStockBlocker],
+      allowedActions: ["RECEIVE_STOCK"],
+    };
+    render(
+      <MemoryRouter>
+        <JourneyNextTaskCard
+          summary={blockedSummary}
+          visitId="visit-1"
+          currentRole="assistant"
+          authorityReady
+          commandFailure="กันสต็อกไม่สำเร็จ กรุณาตรวจสอบคงคลังล่าสุด"
+        />
+      </MemoryRouter>,
+    );
+
+    const alerts = await screen.findAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toHaveTextContent("พาราเซตามอล");
+    expect(alerts[0]).toHaveTextContent("ต้องการ 3 เม็ด");
+    expect(alerts[0]).toHaveTextContent("พร้อมใช้ 0 เม็ด");
+    expect(alerts[0]).toHaveTextContent("ขาด 3 เม็ด");
+    await waitFor(() => expect(alerts[0]).toHaveFocus());
   });
 });
 

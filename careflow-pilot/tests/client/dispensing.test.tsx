@@ -282,22 +282,15 @@ describe("Preparation and label workflow", () => {
     expect(await screen.findByRole("button", { name: "ปล่อยยา" })).toBeEnabled();
   });
 
-  it("pins every reviewed artifact and preserves a Doctor rejection reason in the client command", async () => {
-    const user = userEvent.setup();
-    let body: { payload?: Record<string, unknown> } | undefined;
+  it("does not expose an unsupported rejection control from a legacy Pick List", async () => {
+    // Break caught: RELEASE_MEDICATION authority must not be repurposed to authorize the distinct rejection mutation.
     server.resetHandlers(
       http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: releasePickList })),
-      http.post("/api/dispensing/visit-42/reject", async ({ request }) => {
-        body = await request.json() as { payload?: Record<string, unknown> };
-        return HttpResponse.json({ data: { ...basePickList, visit: { ...visit, status: "AWAITING_PREPARATION" as const, revision: 12 }, allowedActions: ["START_PREPARATION"] }, replayed: false }, { status: 201 });
-      }),
     );
     renderDispensing("/dispensing/visit-42", "doctor", ["fulfillment:read", "fulfillment:release"]);
-    await user.type(await screen.findByLabelText("เหตุผลการปฏิเสธ"), "  ฉลากไม่ตรง  ");
-    await user.click(screen.getByRole("button", { name: "ปฏิเสธการจัดยา" }));
-    await waitFor(() => expect(body).toEqual(expect.objectContaining({ payload: {
-      decisionId: "decision-1", decisionVersion: 1, labelVersionId: "label-1", labelPrintEventId: "print-1", preparationId: "preparation-1", reservationId: "reservation-1", reason: "ฉลากไม่ตรง",
-    } })));
+    expect(await screen.findByRole("button", { name: "ปล่อยยา" })).toBeEnabled();
+    expect(screen.queryByLabelText("เหตุผลการปฏิเสธ")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "ปฏิเสธการจัดยา" })).not.toBeInTheDocument();
   });
 
   it("allows Assistant and Doctor handoff but sends one exact command while the first submit is pending", async () => {
@@ -447,15 +440,13 @@ describe("Preparation and label workflow", () => {
     expect(reason).toHaveValue("ฉลากชำรุด");
   });
 
-  it("does not complete an incomplete preparation and abandons only with a reason", async () => {
-    const user = userEvent.setup(); let abandoned = false;
-    server.resetHandlers(http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: preparingPickList })), http.post("/api/dispensing/visit-42/reservation-release", () => { abandoned = true; return HttpResponse.json({ data: basePickList, replayed: false }, { status: 201 }); }));
+  it("does not expose an unsupported abandonment control from a legacy Pick List", async () => {
+    // Break caught: CONFIRM_ALLOCATION or COMPLETE_PREPARATION authority must not be repurposed to authorize reservation abandonment.
+    server.resetHandlers(http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: preparingPickList })));
     renderDispensing();
-    await user.click(await screen.findByRole("button", { name: "เสร็จสิ้นการเตรียมยา" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("ยืนยันรายการจัดยาไม่ครบ");
-    await user.type(screen.getByLabelText("เหตุผลการยกเลิกการเตรียมยา"), "พบยาไม่ครบ");
-    await user.click(screen.getByRole("button", { name: "ยกเลิกการเตรียมยา" }));
-    await waitFor(() => expect(abandoned).toBe(true));
+    expect(await screen.findByLabelText("สแกนบาร์โค้ดยา")).toBeInTheDocument();
+    expect(screen.queryByLabelText("เหตุผลการยกเลิกการเตรียมยา")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "ยกเลิกการเตรียมยา" })).not.toBeInTheDocument();
   });
 
   it("records a print request before opening print and calls it a request, not a physical success", async () => {

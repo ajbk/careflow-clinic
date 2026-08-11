@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactElement } from "react";
 import type { JourneySummaryDto } from "../../../shared/contracts";
+import { journeyDestination } from "../../app/journey-navigation";
 import { Card } from "./ui";
 import { JourneyActionControl, JourneyBlockerCard } from "./JourneyBlockerCard";
 import { ActionButton } from "./ui";
@@ -48,12 +49,17 @@ export function JourneyNextTaskCard({
   useEffect(() => {
     if (commandFailure && summary.blockers.length === 0) alertRef.current?.focus();
   }, [commandFailure, summary.blockers.length]);
+  const nextTaskDestination = nextTask ? journeyDestination(nextTask.action, visitId) : null;
+  const nextTaskIsResolvable = nextTaskDestination?.kind === "ROUTE" || (nextTaskDestination?.kind === "LOCAL" && Boolean(onLocalAction));
   const canAct = Boolean(
     authorityReady &&
     nextTask &&
     nextTask.availability === "AVAILABLE" &&
-    summary.allowedActions.includes(nextTask.action),
+    summary.allowedActions.includes(nextTask.action) &&
+    nextTaskIsResolvable,
   );
+  const failureBlockerIndex = summary.blockers.findIndex((blocker) => blocker.medication !== null);
+  const focusedFailureBlockerIndex = failureBlockerIndex === -1 ? 0 : failureBlockerIndex;
   return (
     <section className="journey-next-task" aria-label="งานถัดไป">
       <Card className="journey-next-task-card">
@@ -69,7 +75,7 @@ export function JourneyNextTaskCard({
           </>
         ) : <p className="journey-waiting-copy">ยังไม่มีงานที่ดำเนินการได้สำหรับ Visit นี้</p>}
       </Card>
-      {summary.blockers.map((blocker) => (
+      {summary.blockers.map((blocker, index) => (
         <JourneyBlockerCard
           key={`${blocker.code}-${blocker.medication?.medicationId ?? "visit"}`}
           blocker={blocker}
@@ -78,7 +84,7 @@ export function JourneyNextTaskCard({
           allowedActions={summary.allowedActions}
           authorityReady={authorityReady}
           onLocalAction={onLocalAction}
-          commandFailure={commandFailure}
+          commandFailure={index === focusedFailureBlockerIndex ? commandFailure : undefined}
         />
       ))}
     </section>
