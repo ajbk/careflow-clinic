@@ -8,6 +8,7 @@ import {
   type VisitWorkspaceDto,
 } from "../../shared/contracts";
 import { queryKeys } from "../app/query-client";
+import { invalidateJourney } from "./journey";
 import { ApiClient, apiClient as defaultApiClient } from "../lib/api-client";
 import { createCommandAttempt, type CommandAttempt } from "../lib/idempotency";
 
@@ -40,6 +41,6 @@ export function useReviewAllergy(client: ApiClient = defaultApiClient) {
   return useMutation({
     mutationFn: ({ context, attempt }: { context: AllergyReviewContext; attempt: ReviewAllergyAttempt }) => client.command(`/api/patients/${encodeURIComponent(context.patient.id)}/allergy-revisions`, attempt, responseSchema),
     retry: false,
-    onSuccess: async (_data, { context }) => { await Promise.all([queryClient.invalidateQueries({ queryKey: queryKeys.visit(context.visit.id) }), queryClient.invalidateQueries({ queryKey: queryKeys.queue }), queryClient.invalidateQueries({ queryKey: queryKeys.dashboard })]); },
+    onSuccess: async (_data, { context }) => { await Promise.all([queryClient.invalidateQueries({ queryKey: queryKeys.visit(context.visit.id) }), invalidateJourney(queryClient, context.visit.id), queryClient.invalidateQueries({ queryKey: queryKeys.queue }), queryClient.invalidateQueries({ queryKey: queryKeys.dashboard })]); },
   });
 }

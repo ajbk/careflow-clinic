@@ -2,9 +2,10 @@ import { Printer } from "lucide-react";
 import { useState, type ReactElement } from "react";
 import { useParams } from "react-router-dom";
 import type { FulfillmentCurrentLabelDto } from "../../shared/contracts";
-import { useAuth } from "../auth/AuthProvider";
+import { JourneyAuthorityBanner } from "../components/careflow/JourneyNextTaskCard";
 import { ActionButton, Card, PageHeader, SectionHeading, StatusBadge } from "../components/careflow/ui";
 import { createPrintLabelAttempt, useCurrentLabel, useDispensingPickList, usePrintLabel } from "../features/dispensing";
+import { journeyAuthorityUnavailable, useVisitJourney } from "../features/journey";
 import { isApiError } from "../lib/api-error";
 
 function message(error: unknown) { return isApiError(error) ? error.messageTh : "ไม่สามารถบันทึกคำขอพิมพ์ได้ กรุณาลองใหม่อีกครั้ง"; }
@@ -14,16 +15,17 @@ function labelIsStale(label: NonNullable<FulfillmentCurrentLabelDto>, pickListLa
 }
 
 export function LabelScreen(): ReactElement {
-  const { visitId = "" } = useParams(); const auth = useAuth(); const currentLabel = useCurrentLabel(visitId); const pickList = useDispensingPickList(visitId); const print = usePrintLabel(); const [requested, setRequested] = useState(false);
+  const { visitId = "" } = useParams(); const currentLabel = useCurrentLabel(visitId); const pickList = useDispensingPickList(visitId); const journey = useVisitJourney(visitId); const print = usePrintLabel(); const [requested, setRequested] = useState(false);
   if (currentLabel.isPending) return <div className="flow-page labels-page"><PageHeader eyebrow="FULFILLMENT · LABEL" title="ฉลากยา" /><Card><p role="status">กำลังโหลด Label…</p></Card></div>;
   if (currentLabel.error) return <div className="flow-page labels-page"><PageHeader eyebrow="FULFILLMENT · LABEL" title="ฉลากยา" /><Card><p role="alert">{readMessage(currentLabel.error)}</p></Card></div>;
   const label = currentLabel.data;
   if (!label) return <div className="flow-page labels-page"><PageHeader eyebrow="FULFILLMENT · LABEL" title="ฉลากยา" /><Card><section className="workflow-blocked" role="alert"><p>ฉลากปัจจุบันไม่พร้อมใช้งานหรือถูกยกเลิกแล้ว จึงไม่สามารถพิมพ์ฉลากเดิมได้</p></section></Card></div>;
   const pickListUnavailable = Boolean(pickList.error || !pickList.data);
-  const checking = currentLabel.isFetching || pickList.isFetching || (pickList.isPending && !pickListUnavailable);
+  const authorityUnavailable = journeyAuthorityUnavailable(journey);
+  const checking = currentLabel.isFetching || pickList.isFetching || journey.isFetching || (pickList.isPending && !pickListUnavailable);
   const pickListLabel = pickList.data?.label ?? null;
   const stale = labelIsStale(label, pickListLabel);
-  const canPrint = Boolean(!checking && !pickListUnavailable && !stale && pickList.data?.allowedActions.includes("PRINT_LABEL") && auth.session?.permissions.includes("label:print"));
+  const canPrint = Boolean(!checking && !pickListUnavailable && !stale && !authorityUnavailable && journey.data?.allowedActions.includes("PRINT_LABEL"));
   const statusLabel = checking ? "CHECKING" : pickListUnavailable ? "UNAVAILABLE" : stale ? "STALE" : "CURRENT";
   const statusTone = checking ? "info" : pickListUnavailable || stale ? "error" : "success";
   const guidance = checking
@@ -39,8 +41,10 @@ export function LabelScreen(): ReactElement {
     ? "กำลังตรวจสอบข้อมูลปัจจุบัน…"
     : pickListUnavailable
       ? "ข้อมูลรายการจัดยายังไม่พร้อมสำหรับการพิมพ์"
-      : stale
-        ? "ฉลากเดิมใช้พิมพ์ไม่ได้"
+    : stale
+      ? "ฉลากเดิมใช้พิมพ์ไม่ได้"
+      : authorityUnavailable
+        ? "กำลังตรวจสอบสิทธิ์พิมพ์ฉลากล่าสุด"
         : "รอผู้มีสิทธิ์ขอพิมพ์ฉลาก";
   const requestPrint = () => {
     const data = pickList.data;
@@ -49,6 +53,7 @@ export function LabelScreen(): ReactElement {
   };
   return <div className="flow-page labels-page">
     <PageHeader eyebrow="FULFILLMENT · LABEL" title="ฉลากยา" description="แสดงเฉพาะฉลากปัจจุบันที่ลงนามแล้ว" />
+    {authorityUnavailable ? <JourneyAuthorityBanner error={journey.error} fetching={journey.isFetching} onReload={() => void journey.refetch()} /> : null}
     <Card className="dispensing-body label-controls non-printable"><SectionHeading icon={Printer} title={`Label v${label.version}`} description="ขนาดสื่อ 80 × 100 มม." action={<StatusBadge tone={statusTone}>{statusLabel}</StatusBadge>} /><div className="dispense-footer"><p>{guidance}</p>{canPrint ? <ActionButton type="button" icon={Printer} onClick={requestPrint} disabled={print.isPending}>{print.isPending ? "กำลังบันทึกคำขอ…" : "บันทึกคำขอพิมพ์และเปิดหน้าต่างพิมพ์"}</ActionButton> : <p className="field-hint">{printHint}</p>}</div>{print.error ? <p className="field-error" role="alert">{message(print.error)}</p> : null}</Card>
     {!stale ? <section className={`print-area label-sheet${canPrint ? "" : " non-printable"}`} aria-label="ฉลากปัจจุบัน">{label.items.map((item) => <Card as="article" className="medicine-label" key={item.orderItemId}><p className="page-eyebrow">{label.clinicNameSnapshot}</p><h2>{label.patientDisplayNameSnapshot}</h2><p>HN {label.patientHnSnapshot}</p><hr /><strong>{item.displayNameSnapshot}</strong><p>{item.strengthSnapshot} · {item.dosageFormSnapshot}</p><p>จำนวน {item.quantity} {item.unitSnapshot}</p><p>{item.directionsThSnapshot}</p><p>Medication {item.medicationId} · revision {item.medicationRevision}</p><p>Order item {item.orderItemId}</p><code>{item.internalBarcode}</code><small>Label version {label.version} · 80 × 100 mm</small></Card>)}</section> : <section className="workflow-blocked non-printable" role="alert"><p>ฉลากเดิมไม่พร้อมใช้งานสำหรับการพิมพ์ กรุณาโหลดฉลากปัจจุบันอีกครั้ง</p></section>}
   </div>;

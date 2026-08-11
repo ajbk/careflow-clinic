@@ -32,4 +32,13 @@ describe("QueryClient retry policy", () => {
     expect(patientAllergy?.("patient-42")).toEqual(["patient-allergy", "patient-42"]);
     expect(patientAllergy?.("patient-43")).not.toEqual(patientAllergy?.("patient-42"));
   });
+
+  it("has an isolated Journey authority key per Visit", () => {
+    // Break caught: a shared or missing Journey key can leave one Visit's action authority stale after another changes.
+    const keys = queryKeys as Record<string, unknown>;
+    expect(keys.journey).toBeTypeOf("function");
+    const journey = keys.journey as ((visitId: string) => readonly string[]) | undefined;
+    expect(journey?.("visit-42")).toEqual(["journey", "visit-42"]);
+    expect(journey?.("visit-43")).not.toEqual(journey?.("visit-42"));
+  });
 });

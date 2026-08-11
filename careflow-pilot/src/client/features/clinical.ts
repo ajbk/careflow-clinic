@@ -5,6 +5,7 @@ import {
   type SignClinicalNoteAmendmentBody, type SignMedicationDecisionRevisionBody, type VisitWorkspaceDto,
 } from "../../shared/contracts";
 import { queryKeys } from "../app/query-client";
+import { invalidateJourney } from "./journey";
 import { ApiClient, apiClient as defaultApiClient } from "../lib/api-client";
 import { createCommandAttempt, type CommandAttempt } from "../lib/idempotency";
 
@@ -21,7 +22,7 @@ export function createFinalizeAttempt(workspace: VisitWorkspaceDto): FinalizeAtt
   if (!noteDraft || !medicationDraft) throw new Error("Consultation drafts must be saved before signing");
   return createCommandAttempt({ visit: workspace.visit.revision, patient: workspace.patient.revision, noteDraft: noteDraft.revision, medicationDraft: medicationDraft.revision }, {});
 }
-function invalidate(queryClient: ReturnType<typeof useQueryClient>, visitId: string) { return Promise.all([queryClient.invalidateQueries({ queryKey: queryKeys.visit(visitId) }), queryClient.invalidateQueries({ queryKey: queryKeys.queue }), queryClient.invalidateQueries({ queryKey: queryKeys.dashboard })]); }
+function invalidate(queryClient: ReturnType<typeof useQueryClient>, visitId: string) { return Promise.all([queryClient.invalidateQueries({ queryKey: queryKeys.visit(visitId) }), invalidateJourney(queryClient, visitId), queryClient.invalidateQueries({ queryKey: queryKeys.queue }), queryClient.invalidateQueries({ queryKey: queryKeys.dashboard })]); }
 export function useSaveConsultationDraft(client: ApiClient = defaultApiClient) { const queryClient = useQueryClient(); return useMutation({ mutationFn: ({ visitId, attempt }: { visitId: string; attempt: SaveDraftAttempt }) => client.command(`/api/visits/${encodeURIComponent(visitId)}/consultation-draft`, attempt, saveConsultationDraftResponseSchema), retry: false, onSuccess: (_data, variables) => invalidate(queryClient, variables.visitId) }); }
 export function useFinalizeConsultation(client: ApiClient = defaultApiClient) { const queryClient = useQueryClient(); return useMutation({ mutationFn: ({ visitId, attempt }: { visitId: string; attempt: FinalizeAttempt }) => client.command(`/api/visits/${encodeURIComponent(visitId)}/finalize-consultation`, attempt, finalizeConsultationResponseSchema), retry: false, onSuccess: (_data, variables) => invalidate(queryClient, variables.visitId) }); }
 export function useAmendClinicalNote(client: ApiClient = defaultApiClient) { const queryClient = useQueryClient(); return useMutation({ mutationFn: (variables: { noteId: string; visitId: string; attempt: CommandAttempt<SignClinicalNoteAmendmentBody["payload"], SignClinicalNoteAmendmentBody["expectedRevisions"]> }) => client.command(`/api/clinical-notes/${encodeURIComponent(variables.noteId)}/amendments`, variables.attempt, clinicalNoteAmendmentResponseSchema), retry: false, onSuccess: (_data, variables) => invalidate(queryClient, variables.visitId) }); }

@@ -53,6 +53,7 @@ for (const viewport of viewports) {
       const hnMatch = (await patientHeader.innerText()).match(/HN DEMO-\d{6}/)?.[0];
       expect(hnMatch).toMatch(/^HN DEMO-\d{6}$/);
       const hn = hnMatch as string;
+      await assistantPage.getByRole("radio", { name: "ไม่แพ้" }).check();
       await assistantPage.getByLabel("อาการสำคัญ *").fill(`ไอและมีไข้ ${viewport.name}`);
       await assistantPage.getByRole("button", { name: "ส่งพบแพทย์" }).click();
       await expect(assistantPage).toHaveURL(/\/queue$/);
@@ -80,7 +81,7 @@ for (const viewport of viewports) {
       await expectNoHorizontalOverflow(doctorPage);
       await expectVisibleControlsAtLeast48Px(doctorPage);
 
-      const startConsultation = doctorPage.getByRole("button", { name: "เริ่มการตรวจ" });
+      const startConsultation = doctorPage.getByRole("button", { name: "เริ่มตรวจ" });
       await startConsultation.focus();
       await doctorPage.keyboard.press("Enter");
       await expect(doctorPage).toHaveURL(/\/consultations\/[^/]+$/);

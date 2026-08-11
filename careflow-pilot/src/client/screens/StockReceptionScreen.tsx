@@ -1,7 +1,8 @@
 import { ArrowLeft, PackageCheck, PackagePlus, Search } from "lucide-react";
 import { useRef, useState, type FormEvent, type ReactElement } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import type { MedicationDto, ReceiveInventoryPayload } from "../../shared/contracts";
+import { sanitizeJourneyReturnTo, visitIdFromJourneyReturnTo } from "../app/journey-navigation";
 import { ActionButton, Card, Field, PageHeader, SectionHeading, TextAreaField } from "../components/careflow/ui";
 import { createReceiveInventoryAttempt, useInventory, useInventoryMedicationSearch, useReceiveInventory, type ReceiveInventoryAttempt } from "../features/inventory";
 import { isApiError } from "../lib/api-error";
@@ -34,13 +35,20 @@ function messageFor(error: unknown): string {
 
 export function StockReceptionScreen(): ReactElement {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const returnTo = sanitizeJourneyReturnTo(searchParams.get("returnTo"));
+  const recoveryMedicationId = searchParams.get("medicationId");
+  const returnVisitId = visitIdFromJourneyReturnTo(returnTo);
   const inventory = useInventory();
-  const receive = useReceiveInventory();
+  const receive = useReceiveInventory(returnVisitId ?? undefined);
   const [draft, setDraft] = useState<Draft>(blankDraft);
-  const [selected, setSelected] = useState<MedicationDto | null>(null);
+  const [selectionOverride, setSelectionOverride] = useState<MedicationDto | null | undefined>(undefined);
   const [validationError, setValidationError] = useState("");
   const attempt = useRef<ReceiveInventoryAttempt | null>(null);
-  const search = useInventoryMedicationSearch(draft.medicationSearch, !selected || selected.displayName !== draft.medicationSearch);
+  const recoveredMedication = inventory.data?.find((item) => item.medication.id === recoveryMedicationId)?.medication ?? null;
+  const selected = selectionOverride === undefined ? recoveredMedication : selectionOverride;
+  const medicationSearch = selectionOverride === undefined && selected ? selected.displayName : draft.medicationSearch;
+  const search = useInventoryMedicationSearch(medicationSearch, !selected || selected.displayName !== medicationSearch);
   const quantity = Number(draft.quantity);
   const validQuantity = Number.isInteger(quantity) && quantity > 0;
   const current = inventory.data?.find((item) => item.medication.id === selected?.id);
@@ -48,14 +56,14 @@ export function StockReceptionScreen(): ReactElement {
   function change(key: keyof Draft, value: string) {
     attempt.current = null;
     setValidationError("");
-    if (key === "medicationSearch" && selected?.displayName !== value) setSelected(null);
+    if (key === "medicationSearch" && selected?.displayName !== value) setSelectionOverride(null);
     setDraft((currentDraft) => ({ ...currentDraft, [key]: value }));
   }
 
   function chooseMedication(medication: MedicationDto) {
     attempt.current = null;
     setValidationError("");
-    setSelected(medication);
+    setSelectionOverride(medication);
     setDraft((currentDraft) => ({ ...currentDraft, medicationSearch: medication.displayName }));
   }
 
@@ -78,7 +86,7 @@ export function StockReceptionScreen(): ReactElement {
       note: draft.note.trim(),
     };
     attempt.current ??= createReceiveInventoryAttempt(selected, payload);
-    receive.mutate(attempt.current, { onSuccess: () => navigate("/inventory") });
+    receive.mutate(attempt.current, { onSuccess: () => navigate(returnTo) });
   }
 
   const impact = selected && validQuantity
@@ -92,7 +100,7 @@ export function StockReceptionScreen(): ReactElement {
       <form className="stock-layout" onSubmit={submit} noValidate>
         <Card className="stock-form-card"><SectionHeading icon={PackagePlus} title="ข้อมูลการรับยา" description="เลือกทะเบียนยา แล้วบันทึกล็อตที่ตรวจสอบได้" />
           <div className="form-grid two-columns">
-            <label className="field" htmlFor="inventory-medication-search"><span className="field-label">ค้นหายา</span><div className="medication-search"><Search aria-hidden="true" size={18} /><input id="inventory-medication-search" className="care-input" role="combobox" aria-autocomplete="list" aria-expanded={Boolean(search.data?.length && !selected)} aria-controls="inventory-medication-options" value={draft.medicationSearch} onChange={(event) => change("medicationSearch", event.target.value)} placeholder="พิมพ์อย่างน้อย 2 ตัวอักษร" disabled={receive.isPending} /></div>
+            <label className="field" htmlFor="inventory-medication-search"><span className="field-label">ค้นหายา</span><div className="medication-search"><Search aria-hidden="true" size={18} /><input id="inventory-medication-search" className="care-input" role="combobox" aria-autocomplete="list" aria-expanded={Boolean(search.data?.length && !selected)} aria-controls="inventory-medication-options" value={medicationSearch} onChange={(event) => change("medicationSearch", event.target.value)} placeholder="พิมพ์อย่างน้อย 2 ตัวอักษร" disabled={receive.isPending} /></div>
               {search.isFetching ? <span className="field-hint">กำลังค้นหาทะเบียนยา…</span> : null}
               {search.error ? <span className="field-error">{messageFor(search.error)}</span> : null}
               {search.data?.length && !selected ? <div id="inventory-medication-options" className="stock-medication-results" role="listbox" aria-label="ผลการค้นหายา">{search.data.map((medication) => <button key={medication.id} role="option" aria-selected="false" type="button" onClick={() => chooseMedication(medication)}><strong>{medication.displayName}</strong><small>{medication.strengthText} · {medication.dosageFormText} · {medication.canonicalUnit}</small></button>)}</div> : null}
@@ -105,7 +113,7 @@ export function StockReceptionScreen(): ReactElement {
             <TextAreaField className="form-span-full" label="หมายเหตุ" value={draft.note} onChange={(event) => change("note", event.target.value)} placeholder="ถ้ามี" disabled={receive.isPending} />
           </div>
           {error ? <p className="stock-error" role="alert">{error}</p> : null}
-          <div className="stock-actions"><Link className="care-button care-button-ghost" to="/inventory"><ArrowLeft aria-hidden="true" size={19} />ยกเลิก</Link><ActionButton type="submit" icon={PackageCheck} disabled={receive.isPending}>{receive.isPending ? "กำลังบันทึก…" : "ยืนยันการรับยา"}</ActionButton></div>
+          <div className="stock-actions"><Link className="care-button care-button-ghost" to={returnTo}><ArrowLeft aria-hidden="true" size={19} />ยกเลิก</Link><ActionButton type="submit" icon={PackageCheck} disabled={receive.isPending}>{receive.isPending ? "กำลังบันทึก…" : "ยืนยันการรับยา"}</ActionButton></div>
         </Card>
         <Card className="stock-impact-card"><SectionHeading title="ผลกระทบต่อคงคลัง" description="ตัวอย่างก่อนยืนยันรายการ" /><div className="stock-impact"><span>ยอดปัจจุบัน</span><strong>{selected ? `${(current?.onHand ?? 0).toLocaleString("th-TH")} ${selected.canonicalUnit}` : "—"}</strong><span>ยอดหลังรับเข้า</span><strong className={selected && validQuantity ? "impact-total" : ""}>{impact}</strong></div><p>ระบบจะสร้างล็อตใหม่ พร้อมบันทึกความเคลื่อนไหวคงคลังแบบตรวจสอบย้อนหลังได้</p></Card>
       </form>

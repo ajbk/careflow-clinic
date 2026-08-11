@@ -17,6 +17,7 @@ export const queryKeys = {
   inventoryMedicationSearch: (q: string) => ["inventory-medications", q] as const,
   inventoryLots: (medicationId: string) => ["inventory-lots", medicationId] as const,
   visit: (id: string) => ["visit", id] as const,
+  journey: (visitId: string) => ["journey", visitId] as const,
   dispensing: (id: string) => ["dispensing", id] as const,
   label: (id: string) => ["dispensing", id, "label"] as const,
 };

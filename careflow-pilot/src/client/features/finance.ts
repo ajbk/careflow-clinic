@@ -19,6 +19,7 @@ import {
   type RecordCashBody,
 } from "../../shared/contracts";
 import { queryKeys } from "../app/query-client";
+import { invalidateJourney } from "./journey";
 import { isApiError } from "../lib/api-error";
 import { ApiClient, apiClient as defaultApiClient } from "../lib/api-client";
 import { createCommandAttempt, type CommandAttempt } from "../lib/idempotency";
@@ -32,10 +33,6 @@ export type ConfirmPromptPayAttempt = CommandAttempt<ConfirmPromptPayBody["paylo
 export type CloseVisitAttempt = CommandAttempt<CloseVisitBody["payload"], CloseVisitBody["expectedRevisions"]>;
 
 type FinanceCommandResponse = FinalizeChargeResponse | CollectionResponse;
-
-function allowed(data: CheckoutDto, action: CheckoutDto["allowedActions"][number]): void {
-  if (!data.allowedActions.includes(action)) throw new Error(`Server did not authorize ${action}`);
-}
 
 function requireCharge(data: CheckoutDto) {
   if (!data.charge) throw new Error("A finalized charge is required");
@@ -61,7 +58,6 @@ export function getCheckout(
 }
 
 export function createFinalizeChargeAttempt(data: CheckoutDto): FinalizeChargeAttempt {
-  allowed(data, "FINALIZE_CHARGE");
   return createCommandAttempt(
     { visit: data.visit.revision, clinicPricing: data.clinicPricingRevision },
     { settlementIntent: "COLLECT" },
@@ -69,7 +65,6 @@ export function createFinalizeChargeAttempt(data: CheckoutDto): FinalizeChargeAt
 }
 
 export function createFinalizeFullWaiverAttempt(data: CheckoutDto, waiverReason: string): FinalizeChargeAttempt {
-  allowed(data, "FINALIZE_CHARGE");
   return createCommandAttempt(
     { visit: data.visit.revision, clinicPricing: data.clinicPricingRevision },
     { settlementIntent: "FULL_WAIVER", waiverReason: waiverReason.trim() },
@@ -77,19 +72,16 @@ export function createFinalizeFullWaiverAttempt(data: CheckoutDto, waiverReason:
 }
 
 export function createApproveFullWaiverAttempt(data: CheckoutDto, reason: string): ApproveFullWaiverAttempt {
-  allowed(data, "APPROVE_FULL_WAIVER");
   const charge = requireCharge(data);
   return createCommandAttempt({ visit: data.visit.revision }, { chargeId: charge.id, reason: reason.trim() });
 }
 
 export function createRecordCashAttempt(data: CheckoutDto): RecordCashAttempt {
-  allowed(data, "RECORD_CASH");
   const charge = requireCharge(data);
   return createCommandAttempt({ visit: data.visit.revision }, { chargeId: charge.id, amountBaht: data.netDueBaht });
 }
 
 export function createConfirmPromptPayAttempt(data: CheckoutDto, manualReference: string): ConfirmPromptPayAttempt {
-  allowed(data, "CONFIRM_PROMPTPAY");
   const charge = requireCharge(data);
   return createCommandAttempt(
     { visit: data.visit.revision },
@@ -98,7 +90,6 @@ export function createConfirmPromptPayAttempt(data: CheckoutDto, manualReference
 }
 
 export function createCloseVisitAttempt(data: CheckoutDto): CloseVisitAttempt {
-  allowed(data, "CLOSE_VISIT");
   const charge = requireCharge(data);
   const resolution = requireTerminalResolution(data);
   return createCommandAttempt(
@@ -184,6 +175,7 @@ function invalidateAfterFinanceCommand(
     queryClient.invalidateQueries({ queryKey: queryKeys.checkout(visitId), refetchType: "none" }),
     queryClient.invalidateQueries({ queryKey: queryKeys.visit(visitId) }),
     queryClient.invalidateQueries({ queryKey: queryKeys.dispensing(visitId) }),
+    invalidateJourney(queryClient, visitId),
     queryClient.invalidateQueries({ queryKey: queryKeys.queue }),
     queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
   ]).then(() => undefined);
@@ -249,6 +241,7 @@ export function useCloseVisit(client: ApiClient = defaultApiClient) {
       queryClient.invalidateQueries({ queryKey: queryKeys.checkout(variables.visitId) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.opdCard(variables.visitId), refetchType: "none" }),
       queryClient.invalidateQueries({ queryKey: queryKeys.visit(variables.visitId) }),
+      invalidateJourney(queryClient, variables.visitId),
       queryClient.invalidateQueries({ queryKey: queryKeys.queue }),
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
     ]).then(() => undefined),

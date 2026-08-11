@@ -50,6 +50,22 @@ const unknownAllergy: AllergyAssessmentDto = {
   reviewedAt: null,
 };
 
+const waitingJourneySummary = {
+  steps: [
+    { code: "INTAKE", labelTh: "รับผู้ป่วย", state: "COMPLETE" },
+    { code: "SCREENING", labelTh: "คัดกรอง", state: "COMPLETE" },
+    { code: "CONSULTATION", labelTh: "ตรวจรักษา", state: "UPCOMING" },
+    { code: "MEDICATION_DECISION", labelTh: "ตัดสินใจเรื่องยา", state: "UPCOMING" },
+    { code: "PREPARATION", labelTh: "เตรียมยา", state: "UPCOMING" },
+    { code: "HANDOFF", labelTh: "ส่งมอบยา", state: "UPCOMING" },
+    { code: "PAYMENT", labelTh: "ชำระเงิน", state: "UPCOMING" },
+    { code: "CLOSURE", labelTh: "ปิด Visit", state: "UPCOMING" },
+  ],
+  nextTask: { action: "START_CONSULTATION", labelTh: "เริ่มการตรวจ", primaryRole: "doctor", permittedRoles: ["doctor"], availability: "WAITING_FOR_ROLE" },
+  blockers: [],
+  allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"],
+};
+
 function allergyContext(value = patient, allergy: AllergyAssessmentDto = unknownAllergy) {
   return { data: { patient: value, allergy } };
 }
@@ -83,6 +99,7 @@ const intakeResponse = {
       spo2Percent: null,
     },
     allowedActions: [],
+    journeySummary: waitingJourneySummary,
   },
   replayed: false,
 };

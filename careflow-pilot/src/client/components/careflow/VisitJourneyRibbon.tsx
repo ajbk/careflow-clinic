@@ -1,0 +1,37 @@
+import { Ban, CheckCircle2, CircleDot, Clock3, SkipForward } from "lucide-react";
+import type { ComponentType, ReactElement } from "react";
+import type { JourneyStepDto } from "../../../shared/contracts";
+
+const statePresentation: Record<JourneyStepDto["state"], { label: string; Icon: ComponentType<{ "aria-hidden"?: boolean; size?: number }> }> = {
+  COMPLETE: { label: "เสร็จแล้ว", Icon: CheckCircle2 },
+  CURRENT: { label: "กำลังดำเนินการ", Icon: CircleDot },
+  UPCOMING: { label: "รอขั้นตอน", Icon: Clock3 },
+  SKIPPED: { label: "ข้ามขั้นตอน", Icon: SkipForward },
+  BLOCKED: { label: "ติดขัด", Icon: Ban },
+};
+
+export function VisitJourneyRibbon({ steps }: { steps: readonly JourneyStepDto[] }): ReactElement {
+  return (
+    <nav className="visit-journey-ribbon" aria-label="เส้นทางผู้ป่วย">
+      <ol className="visit-journey-ribbon-list">
+        {steps.map((step) => {
+          const presentation = statePresentation[step.state];
+          const Icon = presentation.Icon;
+          return (
+            <li
+              className={`visit-journey-ribbon-step is-${step.state.toLowerCase()}`}
+              key={step.code}
+              aria-current={step.state === "CURRENT" ? "step" : undefined}
+            >
+              <span className="visit-journey-ribbon-icon"><Icon aria-hidden size={18} /></span>
+              <span className="visit-journey-ribbon-copy">
+                <span className="visit-journey-ribbon-label">{step.labelTh}</span>
+                <span className="visit-journey-ribbon-state">{presentation.label}</span>
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
+  );
+}

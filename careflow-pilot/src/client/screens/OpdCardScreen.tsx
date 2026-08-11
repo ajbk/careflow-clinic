@@ -2,8 +2,11 @@ import { Printer } from "lucide-react";
 import type { ReactElement } from "react";
 import { useParams } from "react-router-dom";
 import type { OpdCardDto } from "../../shared/contracts";
+import { JourneyAuthorityBanner, JourneyNextTaskCard } from "../components/careflow/JourneyNextTaskCard";
+import { VisitJourneyRibbon } from "../components/careflow/VisitJourneyRibbon";
 import { ActionButton, Card, PageHeader } from "../components/careflow/ui";
 import { useOpdCard } from "../features/finance";
+import { journeyAuthorityUnavailable, useVisitJourney } from "../features/journey";
 import { isApiError } from "../lib/api-error";
 import { formatThaiDate, formatThaiDateTime } from "../lib/thai-date";
 
@@ -42,6 +45,7 @@ function ResolutionEvidence({ data }: { data: OpdCardDto["charge"]["resolution"]
 export function OpdCardScreen(): ReactElement {
   const { visitId = "" } = useParams();
   const opd = useOpdCard(visitId);
+  const journey = useVisitJourney(visitId);
 
   if (opd.isPending) {
     return <div className="flow-page opd-card-page"><PageHeader eyebrow="DOCTOR · OPD CARD" title="บัตร OPD" /><Card><p role="status">กำลังโหลดบัตร OPD…</p></Card></div>;
@@ -51,6 +55,7 @@ export function OpdCardScreen(): ReactElement {
   }
 
   const data = opd.data;
+  const authorityUnavailable = journeyAuthorityUnavailable(journey);
   return <div className="flow-page opd-card-page">
     <PageHeader
       eyebrow="DOCTOR · OPD CARD"
@@ -58,6 +63,8 @@ export function OpdCardScreen(): ReactElement {
       description="เอกสารสรุปจากหลักฐานที่ลงนามแล้วสำหรับข้อมูลสังเคราะห์"
       actions={<ActionButton className="non-printable" type="button" icon={Printer} onClick={() => window.print()}>พิมพ์ OPD Card</ActionButton>}
     />
+    {journey.data ? <><VisitJourneyRibbon steps={journey.data.steps} /><JourneyNextTaskCard summary={journey.data} visitId={data.visit.id} currentRole="doctor" authorityReady={!authorityUnavailable} /></> : null}
+    {authorityUnavailable ? <JourneyAuthorityBanner error={journey.error} fetching={journey.isFetching} onReload={() => void journey.refetch()} /> : null}
     <section className="print-area opd-card" aria-label="บัตร OPD สำหรับพิมพ์">
       <p className="opd-synthetic-banner">PILOT — ข้อมูลสังเคราะห์เท่านั้น ห้ามใช้รักษาจริง</p>
       <header>
