@@ -39,6 +39,12 @@ const intakeFieldOrder = [
   "heightCm",
 ] as const;
 
+type LoadedAllergyAuthority = {
+  patientId: string;
+  patientRevision: number;
+  allergyRevision: number;
+};
+
 function normalizeFieldKey(key: string): string | null {
   const normalized = key.replace(/^payload\./, "");
   if (normalized.startsWith("vitals.")) {
@@ -142,11 +148,12 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [activeVisit, setActiveVisit] = useState(false);
+  const [allergyReconfirmationRequired, setAllergyReconfirmationRequired] = useState(false);
   const [generateAttempt, setGenerateAttempt] = useState<SyntheticPatientAttempt | null>(null);
   const [submitAttempt, setSubmitAttempt] = useState<IntakeAttempt | null>(null);
   const [retryAttempt, setRetryAttempt] = useState<IntakeAttempt | null>(null);
   const generateAttemptRef = useRef<SyntheticPatientAttempt | null>(null);
-  const loadedAllergyPatientId = useRef<string | null>(null);
+  const loadedAllergyAuthority = useRef<LoadedAllergyAuthority | null>(null);
   const nextAllergyItemId = useRef(0);
   const fieldRefs = useRef<Record<string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null>>({});
 
@@ -164,13 +171,30 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
 
   useEffect(() => {
     if (!selectedPatient) {
-      loadedAllergyPatientId.current = null;
+      loadedAllergyAuthority.current = null;
       return;
     }
-    if (!allergyContext || loadedAllergyPatientId.current === selectedPatient.id) return;
-    loadedAllergyPatientId.current = selectedPatient.id;
-    nextAllergyItemId.current = allergyContext.allergy.items.length;
-    setAllergyDraft(intakeAllergyDraftFromContext(allergyContext));
+    if (!allergyContext) return;
+    const nextAuthority = {
+      patientId: allergyContext.patient.id,
+      patientRevision: allergyContext.patient.revision,
+      allergyRevision: allergyContext.allergy.revision,
+    };
+    const previousAuthority = loadedAllergyAuthority.current;
+    if (
+      previousAuthority?.patientId === nextAuthority.patientId &&
+      previousAuthority.patientRevision === nextAuthority.patientRevision &&
+      previousAuthority.allergyRevision === nextAuthority.allergyRevision
+    ) return;
+    loadedAllergyAuthority.current = nextAuthority;
+    if (!previousAuthority || previousAuthority.patientId !== nextAuthority.patientId) {
+      nextAllergyItemId.current = allergyContext.allergy.items.length;
+      setAllergyDraft(intakeAllergyDraftFromContext(allergyContext));
+      return;
+    }
+    setAllergyDraft((current) => ({ ...current, answer: null }));
+    setSubmitAttempt(null);
+    setRetryAttempt(null);
   }, [allergyContext, selectedPatient]);
 
   const generateMutation = useMutation({
@@ -182,13 +206,14 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
       setDebouncedSearch("");
       setGenerateAttempt(null);
       generateAttemptRef.current = null;
-      loadedAllergyPatientId.current = null;
+      loadedAllergyAuthority.current = null;
       nextAllergyItemId.current = 0;
       setAllergyDraft(initialIntakeAllergyDraft);
       setSubmitAttempt(null);
       setRetryAttempt(null);
       setFieldErrors({});
       setActiveVisit(false);
+      setAllergyReconfirmationRequired(false);
       setSummaryError(null);
     },
   });
@@ -202,14 +227,22 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
   async function handleSubmitError(error: unknown, attempt: IntakeAttempt): Promise<void> {
     const apiError = describeError(error);
     setActiveVisit(apiError.code === "ACTIVE_VISIT_EXISTS");
-    setSummaryError(apiError.messageTh || "ยังบันทึกไม่ได้");
     if (apiError.status === 409 && apiError.code === "REVISION_CONFLICT") {
+      setSummaryError(null);
+      setAllergyReconfirmationRequired(false);
       setSubmitAttempt(null);
       setRetryAttempt(null);
       setAllergyDraft((current) => ({ ...current, answer: null }));
-      await patientAllergy.refetch();
+      const reload = await patientAllergy.refetch();
+      if (reload.isSuccess && reload.data?.patient.id === selectedPatient?.id) {
+        setAllergyReconfirmationRequired(true);
+      } else {
+        setSummaryError("ไม่สามารถโหลดข้อมูลแพ้ยาล่าสุดได้ กรุณาลองโหลดอีกครั้ง");
+      }
       return;
     }
+    setAllergyReconfirmationRequired(false);
+    setSummaryError(apiError.messageTh || "ยังบันทึกไม่ได้");
     setRetryAttempt(attempt);
     if (apiError.status === 422 && apiError.fieldErrors) {
       const mapped = Object.fromEntries(
@@ -231,6 +264,14 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
     const frame = window.requestAnimationFrame(() => element.focus());
     return () => window.cancelAnimationFrame(frame);
   }, [fieldErrors]);
+
+  useEffect(() => {
+    if (!allergyReconfirmationRequired || allergyContextPending) return;
+    const answer = fieldRefs.current["allergy.answer"];
+    if (!answer) return;
+    const frame = window.requestAnimationFrame(() => answer.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [allergyContextPending, allergyReconfirmationRequired]);
 
   const setDraftValue = (key: keyof IntakeDraft, value: string) => {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -263,6 +304,7 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
       answer,
       items: firstItem ? [firstItem] : current.items,
     }));
+    setAllergyReconfirmationRequired(false);
     clearAllergyErrors();
     invalidateAllergyAttempt();
   };
@@ -305,7 +347,7 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
       if (!confirmed) return;
     }
     setSelectedPatient(patient);
-    loadedAllergyPatientId.current = null;
+    loadedAllergyAuthority.current = null;
     nextAllergyItemId.current = 0;
     setAllergyDraft(initialIntakeAllergyDraft);
     setGenerateAttempt(null);
@@ -315,6 +357,7 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
     setFieldErrors({});
     setSummaryError(null);
     setActiveVisit(false);
+    setAllergyReconfirmationRequired(false);
     setSearchText("");
     setDebouncedSearch("");
   }
@@ -333,6 +376,7 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
       setRetryAttempt(null);
       setFieldErrors({});
       setActiveVisit(false);
+      setAllergyReconfirmationRequired(false);
       setSummaryError(null);
     }
     generateMutation.mutate(attempt);
@@ -375,10 +419,10 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
         description="ค้นหาหรือสร้างผู้ป่วย บันทึกสัญญาณชีพ แล้วส่งพบแพทย์"
       />
 
-      {summaryError ? (
+      {summaryError || allergyReconfirmationRequired ? (
         <div className={`intake-error-summary ${activeVisit ? "intake-error-active" : ""}`} role="alert" aria-live="assertive">
-          <strong>{activeVisit ? "ผู้ป่วยมีคิวที่กำลังดำเนินการ" : error.status === 0 || error.status >= 500 ? "ยังบันทึกไม่ได้" : "กรุณาตรวจสอบข้อมูล"}</strong>
-          <span>{summaryError}</span>
+          <strong>{allergyReconfirmationRequired ? "ข้อมูลแพ้ยาเปลี่ยนแปลงแล้ว" : activeVisit ? "ผู้ป่วยมีคิวที่กำลังดำเนินการ" : error.status === 0 || error.status >= 500 ? "ยังบันทึกไม่ได้" : "กรุณาตรวจสอบข้อมูล"}</strong>
+          <span>{allergyReconfirmationRequired ? "โหลดข้อมูลล่าสุดแล้ว กรุณายืนยันคำตอบประวัติแพ้ยาอีกครั้ง" : summaryError}</span>
           {activeVisit ? <Link className="queue-recovery-link" to="/queue">โหลดคิวล่าสุด</Link> : null}
           {retryAttempt && (error.status === 0 || error.status >= 500) ? (
             <button className="inline-retry-button" type="button" onClick={() => submitMutation.mutate(retryAttempt, {
