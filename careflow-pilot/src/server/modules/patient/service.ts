@@ -453,6 +453,7 @@ export function createPatientService(input: PatientServiceOptions): PatientServi
     },
 
     recordIntakeAllergy(tx, actor, record) {
+      service.assertPatientRevision(tx, record.patientId, record.expectedPatientRevision);
       const previous = readAllergyAssessment(tx, record.patientId);
       const state = record.answer.answer === "YES" ? "PRESENT" : "NONE_KNOWN";
       const suppliedReason = record.answer.changeReason?.trim() ?? "";

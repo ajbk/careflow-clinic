@@ -3,8 +3,8 @@ import { eq } from "drizzle-orm";
 import * as contracts from "../../src/shared/contracts.js";
 import { submitIntakeBodySchema } from "../../src/shared/contracts.js";
 import { createPatientService, patientAllergyItems, patientAllergyRevisions, patients } from "../../src/server/modules/patient/index.js";
-import { auditEvents, idempotencyRecords, runAuditedTransaction } from "../../src/server/modules/platform/index.js";
-import { intakeObservations, visits } from "../../src/server/modules/visit/index.js";
+import { auditEvents, runAuditedTransaction } from "../../src/server/modules/platform/index.js";
+import { intakeObservations } from "../../src/server/modules/visit/index.js";
 import { cookieFrom, login, seedAccount } from "./helpers/auth.js";
 import { createTestApp } from "./helpers/database.js";
 
@@ -238,20 +238,28 @@ function recordIntakeAllergy(
   });
 }
 
-function readIntakeEvidence(test: Awaited<ReturnType<typeof fixture>>) {
-  const tableNames = [
-    "visits",
-    "intake_observations",
-    "patient_allergy_revisions",
-    "patient_allergy_items",
-    "patients",
-    "audit_events",
-    "idempotency_records",
-  ] as const;
-  return Object.fromEntries(tableNames.map((table) => [
-    table,
-    test.database.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
-  ]));
+type IntakeEvidence = {
+  visits: Array<{ id: string; patient_id: string }>;
+  intake_observations: Array<{ visit_id: string }>;
+  patient_allergy_revisions: Array<{ patient_id: string }>;
+  patient_allergy_items: Array<Record<string, unknown>>;
+  patients: Array<{ id: string; revision: number }>;
+  audit_events: Array<{ action: string }>;
+  idempotency_records: Array<{ key: string }>;
+};
+
+function readIntakeEvidence(test: Awaited<ReturnType<typeof fixture>>): IntakeEvidence {
+  const rows = <T extends Record<string, unknown>>(table: string): T[] =>
+    test.database.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all() as T[];
+  return {
+    visits: rows<IntakeEvidence["visits"][number]>("visits"),
+    intake_observations: rows<IntakeEvidence["intake_observations"][number]>("intake_observations"),
+    patient_allergy_revisions: rows<IntakeEvidence["patient_allergy_revisions"][number]>("patient_allergy_revisions"),
+    patient_allergy_items: rows<IntakeEvidence["patient_allergy_items"][number]>("patient_allergy_items"),
+    patients: rows<IntakeEvidence["patients"][number]>("patients"),
+    audit_events: rows<IntakeEvidence["audit_events"][number]>("audit_events"),
+    idempotency_records: rows<IntakeEvidence["idempotency_records"][number]>("idempotency_records"),
+  };
 }
 
 const intakeWriteStages = [
@@ -392,6 +400,31 @@ describe("atomic Intake allergy command", () => {
     });
   });
 
+  it("returns a stale Patient CAS revision before validating a conflicting Allergy answer and writes nothing", async () => {
+    const test = await fixture();
+    const patientId = await createPatient(test);
+    recordIntakeAllergy(test, {
+      patientId,
+      expectedPatientRevision: 1,
+      visitId: "stale-patient-winner",
+      answer: { answer: "YES", items: [singleItem], changeReason: null },
+    });
+    const before = readIntakeEvidence(test);
+
+    const stale = await postIntake(test, patientId, {
+      answer: "NO",
+      items: [],
+      changeReason: null,
+    }, "intake-stale-before-reason", "ไอและมีไข้", 1);
+
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json().error).toMatchObject({
+      code: "REVISION_CONFLICT",
+      currentRevisions: { patient: 2 },
+    });
+    expect(readIntakeEvidence(test)).toEqual(before);
+  });
+
   it("appends a same-state Intake review and increments the current Patient revision exactly once", async () => {
     const test = await fixture();
     const patientId = await createPatient(test);
@@ -448,22 +481,38 @@ describe("atomic Intake allergy command", () => {
     expect(collision.json().error.code).toBe("IDEMPOTENCY_CONFLICT");
     expect(readIntakeEvidence(test)).toEqual(beforeCollision);
 
+    const beforeDuplicate = readIntakeEvidence(test);
     const duplicate = await postIntake(test, patientId, noAnswer(patientId).payload.allergy, "intake-active-duplicate");
     expect(duplicate.statusCode).toBe(409);
     expect(duplicate.json().error.code).toBe("ACTIVE_VISIT_EXISTS");
-    expect(test.database.db.select().from(visits).all()).toHaveLength(1);
+    expect(readIntakeEvidence(test)).toEqual(beforeDuplicate);
 
     const secondPatientId = await createPatient(test, "intake-race-patient");
+    const beforeRace = readIntakeEvidence(test);
     const [raceA, raceB] = await Promise.all([
       postIntake(test, secondPatientId, noAnswer(secondPatientId).payload.allergy, "intake-race-a"),
       postIntake(test, secondPatientId, noAnswer(secondPatientId).payload.allergy, "intake-race-b"),
     ]);
     expect([raceA.statusCode, raceB.statusCode].sort()).toEqual([201, 409]);
     expect([raceA.json().error?.code, raceB.json().error?.code]).toContain("ACTIVE_VISIT_EXISTS");
-    expect(test.database.db.select().from(visits).all().filter((visit) => visit.patientId === secondPatientId)).toHaveLength(1);
-    expect(test.database.db.select().from(patientAllergyRevisions).all().filter((revision) => revision.patientId === secondPatientId)).toHaveLength(1);
-    expect(test.database.db.select().from(idempotencyRecords).all().filter(
-      (row) => row.key === "intake-race-a" || row.key === "intake-race-b",
-    )).toHaveLength(1);
+    const afterRace = readIntakeEvidence(test);
+    const raceVisit = afterRace.visits.find((visit) => visit.patient_id === secondPatientId);
+    expect(afterRace.visits).toHaveLength(beforeRace.visits.length + 1);
+    expect(afterRace.intake_observations).toHaveLength(beforeRace.intake_observations.length + 1);
+    expect(afterRace.patient_allergy_revisions).toHaveLength(beforeRace.patient_allergy_revisions.length + 1);
+    expect(afterRace.patient_allergy_items).toHaveLength(beforeRace.patient_allergy_items.length);
+    expect(afterRace.patients).toHaveLength(beforeRace.patients.length);
+    expect(afterRace.patients.find((patient) => patient.id === secondPatientId)).toMatchObject({ revision: 2 });
+    expect(afterRace.audit_events).toHaveLength(beforeRace.audit_events.length + 2);
+    expect(afterRace.idempotency_records).toHaveLength(beforeRace.idempotency_records.length + 1);
+    expect(raceVisit).toBeDefined();
+    expect(afterRace.intake_observations.filter((observation) => observation.visit_id === raceVisit?.id)).toHaveLength(1);
+    expect(afterRace.patient_allergy_revisions.filter((revision) => revision.patient_id === secondPatientId)).toHaveLength(1);
+    expect(afterRace.audit_events.slice(beforeRace.audit_events.length).map((event) => event.action).sort())
+      .toEqual(["allergy.updated", "visit.intake-submitted"]);
+    expect(afterRace.idempotency_records.slice(beforeRace.idempotency_records.length).map((row) => row.key))
+      .toHaveLength(1);
+    expect(afterRace.idempotency_records.slice(beforeRace.idempotency_records.length)[0]?.key)
+      .toMatch(/^(intake-race-a|intake-race-b)$/);
   });
 });
