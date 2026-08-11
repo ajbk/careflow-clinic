@@ -538,6 +538,69 @@ describe("connected Intake journey", () => {
     expect(intakePosts).toBe(1);
   });
 
+  it("keeps failed Allergy reload authority blocked when synthetic Patient generation fails", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    let allergyContextRequests = 0;
+    let intakePosts = 0;
+    let generationRequests = 0;
+    server.use(
+      validPatientSearch(),
+      http.get("/api/patients/patient-1/allergy-assessment", () => {
+        allergyContextRequests += 1;
+        return allergyContextRequests === 1
+          ? HttpResponse.json(allergyContext())
+          : jsonError("ALLERGY_CONTEXT_UNAVAILABLE", "ไม่สามารถโหลดข้อมูลแพ้ยาล่าสุดได้", 404);
+      }),
+      http.post("/api/visits/intake", () => {
+        intakePosts += 1;
+        return jsonError("REVISION_CONFLICT", "ข้อมูลผู้ป่วยเปลี่ยนแล้ว", 409, { currentRevisions: { patient: 5 } });
+      }),
+      http.post("/api/patients/synthetic", () => {
+        generationRequests += 1;
+        return generationRequests === 1
+          ? jsonError("INTERNAL_ERROR", "สร้างผู้ป่วยสังเคราะห์ไม่สำเร็จ", 503)
+          : HttpResponse.json({ data: secondPatient, replayed: false }, { status: 201 });
+      }),
+    );
+    renderIntake();
+
+    await user.type(await screen.findByRole("textbox", { name: /ค้นหา|ผู้ป่วย/ }), "000123");
+    await waitFor(() => expect(screen.getByText(patient.displayName)).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: /เลือกผู้ป่วย/ }));
+    await confirmNoAllergy(user);
+    const complaint = screen.getByRole("textbox", { name: /อาการสำคัญ/ });
+    const temperature = screen.getByRole("spinbutton", { name: "อุณหภูมิ" });
+    await user.type(complaint, "ไอ");
+    await user.type(temperature, "38.2");
+    await user.click(screen.getByRole("button", { name: /ส่งพบแพทย์/ }));
+
+    await waitFor(() => expect(allergyContextRequests).toBeGreaterThan(1));
+    const staleCopy = "ยังโหลดข้อมูลแพ้ยาล่าสุดไม่สำเร็จ กรุณาลองโหลดอีกครั้งก่อนยืนยันคำตอบ";
+    await screen.findByText(staleCopy);
+    await user.click(screen.getByRole("button", { name: /สร้างผู้ป่วยสังเคราะห์/ }));
+    await screen.findByText("สร้างผู้ป่วยสังเคราะห์ไม่สำเร็จ");
+
+    expect(screen.getByText(patient.displayName)).toBeInTheDocument();
+    expect(screen.getByText(staleCopy)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "โหลดข้อมูลแพ้ยาล่าสุดอีกครั้ง" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "ไม่แพ้" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /ส่งพบแพทย์/ })).toBeDisabled();
+    expect(complaint).toHaveValue("ไอ");
+    expect(temperature).toHaveValue(38.2);
+    expect(intakePosts).toBe(1);
+
+    await user.click(screen.getByRole("button", { name: /ลองสร้างอีกครั้ง/ }));
+    await waitFor(() => expect(screen.getByText(secondPatient.displayName)).toBeInTheDocument());
+    const newPatientAnswer = await screen.findByRole("radio", { name: "ไม่แพ้" });
+    await waitFor(() => expect(newPatientAnswer).toBeEnabled());
+    expect(screen.queryByText(staleCopy)).not.toBeInTheDocument();
+    expect(newPatientAnswer).not.toBeChecked();
+    expect(complaint).toHaveValue("ไอ");
+    expect(screen.getByRole("button", { name: /ส่งพบแพทย์/ })).toBeDisabled();
+    expect(intakePosts).toBe(1);
+  });
+
   it("creates a new Intake attempt when an Allergy value changes after a failure", async () => {
     const user = userEvent.setup();
     const bodies: unknown[] = [];

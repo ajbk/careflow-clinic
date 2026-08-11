@@ -401,7 +401,6 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
       setRetryAttempt(null);
       setFieldErrors({});
       setActiveVisit(false);
-      setAllergyReconfirmationState("idle");
       setSummaryError(null);
     }
     generateMutation.mutate(attempt);
