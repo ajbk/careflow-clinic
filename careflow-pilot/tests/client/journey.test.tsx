@@ -23,6 +23,17 @@ const steps: JourneySummaryDto["steps"] = [
   { code: "CLOSURE", labelTh: "ปิด Visit", state: "UPCOMING" },
 ];
 
+const stockShortageSteps: JourneySummaryDto["steps"] = [
+  { code: "INTAKE", labelTh: "รับผู้ป่วย", state: "COMPLETE" },
+  { code: "SCREENING", labelTh: "คัดกรอง", state: "COMPLETE" },
+  { code: "CONSULTATION", labelTh: "ตรวจรักษา", state: "COMPLETE" },
+  { code: "MEDICATION_DECISION", labelTh: "ตัดสินใจเรื่องยา", state: "COMPLETE" },
+  { code: "PREPARATION", labelTh: "เตรียมยา", state: "BLOCKED" },
+  { code: "HANDOFF", labelTh: "ส่งมอบยา", state: "UPCOMING" },
+  { code: "PAYMENT", labelTh: "ชำระเงิน", state: "UPCOMING" },
+  { code: "CLOSURE", labelTh: "ปิด Visit", state: "UPCOMING" },
+];
+
 const waitingSummary: JourneySummaryDto = {
   steps,
   nextTask: {
@@ -111,6 +122,31 @@ describe("shared Visit Journey UI", () => {
     expect(items.filter((item) => item.getAttribute("aria-current") === "step")).toHaveLength(1);
     expect(closure).toHaveAttribute("aria-current", "step");
     expect(closure).toHaveClass("is-complete");
+  });
+
+  it("uses the server-blocked Preparation step as the semantic current context at a 375px viewport", () => {
+    // Break caught: stock-shortage derivation replaces PREPARATION CURRENT with BLOCKED, which previously removed aria-current and clipped every mobile Journey step.
+    const initialWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
+    try {
+      render(<VisitJourneyRibbon steps={stockShortageSteps} />);
+
+      const navigation = screen.getByRole("navigation", { name: "เส้นทางผู้ป่วย" });
+      const items = within(navigation).getAllByRole("listitem");
+      const preparation = within(navigation).getByText("เตรียมยา").closest("li");
+      expect(items).toHaveLength(8);
+      expect(items.map((item) => item.textContent)).toEqual(expect.arrayContaining([
+        expect.stringContaining("รับผู้ป่วย"), expect.stringContaining("คัดกรอง"), expect.stringContaining("ตรวจรักษา"),
+        expect.stringContaining("ตัดสินใจเรื่องยา"), expect.stringContaining("เตรียมยา"), expect.stringContaining("ส่งมอบยา"),
+        expect.stringContaining("ชำระเงิน"), expect.stringContaining("ปิด Visit"),
+      ]));
+      expect(items.filter((item) => item.getAttribute("aria-current") === "step")).toHaveLength(1);
+      expect(preparation).toHaveAttribute("aria-current", "step");
+      expect(preparation).toHaveClass("is-blocked");
+      expect(within(preparation!).getByText("ติดขัด")).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: initialWidth });
+    }
   });
 
   it("uses only the authorized local action for the current role", async () => {

@@ -10,13 +10,21 @@ const statePresentation: Record<JourneyStepDto["state"], { label: string; Icon: 
   BLOCKED: { label: "ติดขัด", Icon: Ban },
 };
 
+function semanticCurrentStep(steps: readonly JourneyStepDto[]): JourneyStepDto | undefined {
+  const explicitCurrent = steps.find((step) => step.state === "CURRENT");
+  if (explicitCurrent) return explicitCurrent;
+  // Server derivation can replace its operational current step with BLOCKED
+  // (for example, PREPARATION during a stock shortage). The final blocked
+  // step is the furthest server-provided progress context without changing
+  // any visual state. Closure is present in every valid Journey contract.
+  for (let index = steps.length - 1; index >= 0; index -= 1) {
+    if (steps[index]?.state === "BLOCKED") return steps[index];
+  }
+  return steps.find((step) => step.code === "CLOSURE");
+}
+
 export function VisitJourneyRibbon({ steps }: { steps: readonly JourneyStepDto[] }): ReactElement {
-  const explicitCurrent = steps.find((step) => step.state === "CURRENT")?.code;
-  // Closed server summaries visually mark all eight steps COMPLETE. Preserve that
-  // visual state while exposing Closure as the one semantic current position.
-  const accessibleCurrent = explicitCurrent ?? (steps.length > 0 && steps.every((step) => step.state === "COMPLETE")
-    ? steps.find((step) => step.code === "CLOSURE")?.code
-    : undefined);
+  const accessibleCurrent = semanticCurrentStep(steps)?.code;
   return (
     <nav className="visit-journey-ribbon" aria-label="เส้นทางผู้ป่วย">
       <ol className="visit-journey-ribbon-list">
