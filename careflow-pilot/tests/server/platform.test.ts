@@ -99,27 +99,45 @@ describe("stable API conflict codes", () => {
 });
 
 describe("role permissions", () => {
-  it("keeps every semantic Journey action bound to the authoritative permission vocabulary", () => {
+  it("keeps every semantic Journey action bound to the exact authoritative permission vocabulary", () => {
     expect(journeyPermission).toEqual({
-      START_CONSULTATION: "visit:start-consultation",
-      REVIEW_ALLERGY: "patient:update-allergy",
-      OPEN_CONSULTATION: "clinical:read",
-      START_PREPARATION: "fulfillment:prepare",
-      PRINT_LABEL: "label:print",
-      CONFIRM_ALLOCATION: "fulfillment:prepare",
-      COMPLETE_PREPARATION: "fulfillment:prepare",
-      RELEASE_MEDICATION: "fulfillment:release",
-      HANDOFF_MEDICATION: "fulfillment:handoff",
-      FINALIZE_CHARGE: "finance:finalize-charge",
-      RECORD_CASH: "finance:record-cash",
-      RECORD_PROMPTPAY: "finance:confirm-promptpay",
-      APPROVE_FULL_WAIVER: "finance:waive",
-      CLOSE_VISIT: "visit:close",
-      OPEN_OPD_CARD: "opd:read",
-      RECEIVE_STOCK: "inventory:receive",
+      START_CONSULTATION: ["visit:start-consultation"],
+      REVIEW_ALLERGY: ["patient:update-allergy"],
+      OPEN_CONSULTATION: ["clinical:read"],
+      SAVE_CONSULTATION_DRAFT: ["clinical:save-draft"],
+      FINALIZE_CONSULTATION: ["clinical:sign", "medication:sign-decision"],
+      AMEND_CLINICAL_NOTE: ["clinical:amend"],
+      REVISE_MEDICATION_DECISION: ["medication:sign-decision"],
+      START_PREPARATION: ["fulfillment:prepare"],
+      PRINT_LABEL: ["label:print"],
+      CONFIRM_ALLOCATION: ["fulfillment:prepare"],
+      COMPLETE_PREPARATION: ["fulfillment:prepare"],
+      ABANDON_PREPARATION: ["fulfillment:prepare"],
+      RELEASE_MEDICATION: ["fulfillment:release"],
+      REJECT_PREPARATION: ["fulfillment:release"],
+      HANDOFF_MEDICATION: ["fulfillment:handoff"],
+      FINALIZE_CHARGE: ["finance:finalize-charge"],
+      RECORD_CASH: ["finance:record-cash"],
+      RECORD_PROMPTPAY: ["finance:confirm-promptpay"],
+      APPROVE_FULL_WAIVER: ["finance:waive"],
+      CLOSE_VISIT: ["visit:close"],
+      OPEN_OPD_CARD: ["opd:read"],
+      RECEIVE_STOCK: ["inventory:receive"],
     });
-    for (const permission of Object.values(journeyPermission)) {
+    for (const permission of Object.values(journeyPermission).flat()) {
       expect(permissionSchema.safeParse(permission).success).toBe(true);
+    }
+  });
+
+  it("keeps Doctor supervised Journey permissions even where Assistant is the descriptive primary owner", () => {
+    // Break caught: a primary handoff owner is not a server-side deny-list for
+    // the Doctor permissions intentionally retained in permissionsByRole.
+    const doctor: Actor = { id: "doctor-supervisor", role: "doctor", displayName: "พญ. ผู้กำกับ" };
+    for (const action of [
+      "START_PREPARATION", "PRINT_LABEL", "CONFIRM_ALLOCATION", "COMPLETE_PREPARATION", "ABANDON_PREPARATION",
+      "HANDOFF_MEDICATION", "RECORD_CASH", "RECEIVE_STOCK",
+    ] as const) {
+      expect(journeyPermission[action].every((permission) => hasPermission(doctor, permission)), action).toBe(true);
     }
   });
 

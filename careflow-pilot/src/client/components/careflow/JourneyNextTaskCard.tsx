@@ -58,6 +58,9 @@ export function JourneyNextTaskCard({
     summary.allowedActions.includes(nextTask.action) &&
     nextTaskIsResolvable,
   );
+  const nextTaskIsBlockerRecovery = Boolean(nextTask && summary.blockers.some(
+    (blocker) => blocker.recoveryAction === nextTask.action,
+  ));
   const failureBlockerIndex = summary.blockers.findIndex((blocker) => blocker.medication !== null);
   const focusedFailureBlockerIndex = failureBlockerIndex === -1 ? 0 : failureBlockerIndex;
   return (
@@ -71,7 +74,7 @@ export function JourneyNextTaskCard({
             {!authorityReady ? <p className="journey-waiting-copy" role="status">กำลังตรวจสอบสิทธิ์ล่าสุดก่อนดำเนินการ</p> : null}
             {authorityReady && !canAct ? <p className="journey-waiting-copy" role="status">{nextTask.labelTh}</p> : null}
             {commandFailure && summary.blockers.length === 0 ? <p ref={alertRef} className="journey-command-failure" role="alert" tabIndex={-1}>{commandFailure}</p> : null}
-            {canAct && summary.blockers.length === 0 ? <JourneyActionControl action={nextTask.action} labelTh={nextTask.labelTh} visitId={visitId} allowedActions={summary.allowedActions} authorityReady={authorityReady} onLocalAction={onLocalAction} /> : null}
+            {canAct && !nextTaskIsBlockerRecovery ? <JourneyActionControl action={nextTask.action} labelTh={nextTask.labelTh} visitId={visitId} allowedActions={summary.allowedActions} authorityReady={authorityReady} onLocalAction={onLocalAction} /> : null}
           </>
         ) : <p className="journey-waiting-copy">ยังไม่มีงานที่ดำเนินการได้สำหรับ Visit นี้</p>}
       </Card>

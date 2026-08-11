@@ -75,6 +75,22 @@ function isPositiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1;
 }
 
+/** Keep finalization availability private and aligned with the two signing services. */
+function finalizableNoteDraft(draft: ClinicalNoteDraftDto | null): boolean {
+  return draft !== null &&
+    [draft.subjective, draft.objective, draft.assessment, draft.plan].every((value) => value.trim().length > 0) &&
+    draft.diagnoses.length >= 1 && draft.diagnoses.length <= 20 &&
+    draft.diagnoses.every((diagnosis) => diagnosis.trim().length > 0);
+}
+
+function finalizableMedicationDraft(draft: MedicationDecisionDraftDto | null): boolean {
+  if (draft === null || draft.kind === "UNDECIDED") return false;
+  if (draft.kind === "NO_MEDICATION") return draft.noMedicationReason.trim().length > 0;
+  return draft.items.length >= 1 && draft.items.length <= 20 && draft.items.every((item) =>
+    item.quantity >= 1 && item.directionsTh.trim().length > 0,
+  );
+}
+
 function invalidReplayReference(): never {
   throw new Error("Invalid clinical idempotency replay reference");
 }
@@ -82,7 +98,12 @@ function invalidReplayReference(): never {
 export interface ClinicalWorkflow {
   getWorkspace(visitId: string, actor: Actor): VisitWorkspaceDto;
   /** Presence-only clinical evidence for Journey; no note prose, diagnoses, identifiers, or hashes escape. */
-  getJourneyEvidence(visitId: string): { hasDraft: boolean; hasSignedNote: boolean };
+  getJourneyEvidence(visitId: string): {
+    hasDraft: boolean;
+    hasMedicationDraft: boolean;
+    canFinalize: boolean;
+    hasSignedNote: boolean;
+  };
   reviewAllergy(
     tx: AuditedTransaction,
     actor: Actor,
@@ -311,8 +332,12 @@ export function createClinicalWorkflow(input: {
   };
   return {
     getJourneyEvidence(visitId) {
+      const noteDraft = input.notes.getDraft(visitId);
+      const medicationDraft = input.medications.getDecisionDraft(visitId);
       return {
-        hasDraft: input.notes.getDraft(visitId) !== null,
+        hasDraft: noteDraft !== null,
+        hasMedicationDraft: medicationDraft !== null,
+        canFinalize: finalizableNoteDraft(noteDraft) && finalizableMedicationDraft(medicationDraft),
         hasSignedNote: input.notes.getSignedNote(visitId) !== null,
       };
     },

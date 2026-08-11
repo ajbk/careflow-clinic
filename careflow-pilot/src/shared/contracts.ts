@@ -722,11 +722,17 @@ export const journeyActionSchema = z.enum([
   "START_CONSULTATION",
   "REVIEW_ALLERGY",
   "OPEN_CONSULTATION",
+  "SAVE_CONSULTATION_DRAFT",
+  "FINALIZE_CONSULTATION",
+  "AMEND_CLINICAL_NOTE",
+  "REVISE_MEDICATION_DECISION",
   "START_PREPARATION",
   "PRINT_LABEL",
   "CONFIRM_ALLOCATION",
   "COMPLETE_PREPARATION",
+  "ABANDON_PREPARATION",
   "RELEASE_MEDICATION",
+  "REJECT_PREPARATION",
   "HANDOFF_MEDICATION",
   "FINALIZE_CHARGE",
   "RECORD_CASH",
@@ -802,7 +808,7 @@ const journeySummaryStrictSchema = z.strictObject({
   steps: journeyStepsSchema,
   nextTask: journeyNextTaskSchema.nullable(),
   blockers: z.array(journeyBlockerSchema).max(20),
-  allowedActions: z.array(journeyActionSchema).max(16).superRefine((actions, context) => {
+  allowedActions: z.array(journeyActionSchema).max(24).superRefine((actions, context) => {
     rejectDuplicateValues(actions, context, "allowedActions");
   }),
 });

@@ -92,8 +92,25 @@ for (const viewport of viewports) {
       await expect(doctorPage.getByRole("button", { name: "ทบทวนประวัติแพ้" })).toBeVisible();
       await expect(doctorPage.getByLabel("Clinical Note editor")).toBeVisible();
       await expect(doctorPage.getByLabel("Medication decision")).toBeVisible();
+      await doctorPage.getByLabel("Subjective (ข้อมูลจากผู้ป่วย)").fill(`SOAP responsive ${viewport.name}`);
+      await doctorPage.getByLabel("Objective (ผลตรวจ)").fill(`ผลตรวจ responsive ${viewport.name}`);
+      await doctorPage.getByLabel("Assessment (การประเมิน)").fill(`การประเมิน responsive ${viewport.name}`);
+      await doctorPage.getByLabel("Plan (แผนการดูแล)").fill(`แผน responsive ${viewport.name}`);
+      await doctorPage.getByRole("textbox", { name: "การวินิจฉัย", exact: true }).fill(`การวินิจฉัย responsive ${viewport.name}`);
+      await doctorPage.getByRole("button", { name: "ไม่สั่งยา" }).click();
+      await doctorPage.getByLabel("เหตุผลที่ไม่สั่งยา").fill("ทดสอบหน้าจอ responsive ด้วยข้อมูลสังเคราะห์");
+      await doctorPage.getByRole("button", { name: "บันทึกร่าง" }).click();
       const signAction = doctorPage.getByRole("button", { name: "ลงนามและส่งต่อ" });
-      await signAction.scrollIntoViewIfNeeded();
+      // The action lives in a sticky footer. Scroll the document (rather than
+      // asking Playwright to scroll that sticky element) before checking its
+      // viewport geometry.
+      await doctorPage.evaluate(() => {
+        const root = document.documentElement;
+        const previous = root.style.scrollBehavior;
+        root.style.scrollBehavior = "auto";
+        window.scrollTo(0, document.body.scrollHeight);
+        root.style.scrollBehavior = previous;
+      });
       await expect(signAction).toBeVisible();
       expect(await signAction.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(48);
       await expect.poll(() => signAction.evaluate((element) => {

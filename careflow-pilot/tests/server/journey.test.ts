@@ -18,8 +18,11 @@ afterEach(async () => {
 type SafeParser = { safeParse(value: unknown): { success: boolean } };
 type JourneyAction =
   | "START_CONSULTATION" | "REVIEW_ALLERGY" | "OPEN_CONSULTATION"
+  | "SAVE_CONSULTATION_DRAFT" | "FINALIZE_CONSULTATION"
+  | "AMEND_CLINICAL_NOTE" | "REVISE_MEDICATION_DECISION"
   | "START_PREPARATION" | "PRINT_LABEL" | "CONFIRM_ALLOCATION"
-  | "COMPLETE_PREPARATION" | "RELEASE_MEDICATION" | "HANDOFF_MEDICATION"
+  | "COMPLETE_PREPARATION" | "ABANDON_PREPARATION"
+  | "RELEASE_MEDICATION" | "REJECT_PREPARATION" | "HANDOFF_MEDICATION"
   | "FINALIZE_CHARGE" | "RECORD_CASH" | "RECORD_PROMPTPAY"
   | "APPROVE_FULL_WAIVER" | "CLOSE_VISIT" | "OPEN_OPD_CARD" | "RECEIVE_STOCK";
 
@@ -475,8 +478,9 @@ describe("Journey contracts", () => {
       ["journeyStepCodeSchema", ["INTAKE", "SCREENING", "CONSULTATION", "MEDICATION_DECISION", "PREPARATION", "HANDOFF", "PAYMENT", "CLOSURE"]],
       ["journeyStepStateSchema", ["COMPLETE", "CURRENT", "UPCOMING", "SKIPPED", "BLOCKED"]],
       ["journeyActionSchema", [
-        "START_CONSULTATION", "REVIEW_ALLERGY", "OPEN_CONSULTATION", "START_PREPARATION", "PRINT_LABEL",
-        "CONFIRM_ALLOCATION", "COMPLETE_PREPARATION", "RELEASE_MEDICATION", "HANDOFF_MEDICATION", "FINALIZE_CHARGE",
+        "START_CONSULTATION", "REVIEW_ALLERGY", "OPEN_CONSULTATION", "SAVE_CONSULTATION_DRAFT",
+        "FINALIZE_CONSULTATION", "AMEND_CLINICAL_NOTE", "REVISE_MEDICATION_DECISION", "START_PREPARATION", "PRINT_LABEL",
+        "CONFIRM_ALLOCATION", "COMPLETE_PREPARATION", "ABANDON_PREPARATION", "RELEASE_MEDICATION", "REJECT_PREPARATION", "HANDOFF_MEDICATION", "FINALIZE_CHARGE",
         "RECORD_CASH", "RECORD_PROMPTPAY", "APPROVE_FULL_WAIVER", "CLOSE_VISIT", "OPEN_OPD_CARD", "RECEIVE_STOCK",
       ]],
       ["journeyBlockerCodeSchema", ["ALLERGY_UNKNOWN", "STOCK_SHORTAGE", "EVIDENCE_INCONSISTENT"]],
@@ -614,6 +618,112 @@ describe("privacy-safe server Visit Journey", () => {
       }),
     ]));
     expect(data.allowedActions).toEqual(expect.arrayContaining(["START_CONSULTATION", "REVIEW_ALLERGY"]));
+    // The safety recovery must be visible without making the Doctor's real
+    // start-consultation command disappear behind the blocker.
+    expect(data.nextTask).toMatchObject({
+      action: "START_CONSULTATION",
+      availability: "AVAILABLE",
+    });
+  });
+
+  it("keeps UNKNOWN consultation draft work available but never advertises finalization", async () => {
+    // Break caught: UNKNOWN is a finalization blocker, not a reason to silently
+    // remove Doctor draft authority or authorize signing through OPEN_CONSULTATION.
+    const test = await fixture();
+    const seeded = seedJourneyVisit(test, { status: "CONSULTING", allergy: "UNKNOWN" });
+    const response = await test.app.inject({
+      method: "GET", url: `/api/visits/${seeded.visitId}/journey`, headers: { cookie: test.doctorCookie },
+    });
+    expect(response.statusCode).toBe(200);
+    const data = (response.json() as JourneyResponse).data;
+    expect(data.allowedActions).toEqual(expect.arrayContaining([
+      "OPEN_CONSULTATION", "SAVE_CONSULTATION_DRAFT", "REVIEW_ALLERGY",
+    ]));
+    expect(data.allowedActions).not.toContain("FINALIZE_CONSULTATION");
+  });
+
+  it("advertises signed-note amendment and medication-decision revision as their own Journey actions", async () => {
+    // Break caught: OPEN_CONSULTATION is a read/navigation action and must not
+    // stand in for either append-only note amendment or decision revision.
+    const test = await fixture();
+    const seeded = seedJourneyVisit(test, { status: "AWAITING_ORDER_REVISION", decision: "ORDER" });
+    test.database.sqlite.exec(`
+      INSERT INTO clinical_notes (
+        id, visit_id, version, subjective, objective, assessment, plan, source_draft_revision,
+        signed_by, signed_by_display_name, signed_at, content_hash
+      ) VALUES (
+        '${seeded.visitId}-note', '${seeded.visitId}', 1, 'Journey subjective', 'Journey objective',
+        'Journey assessment', 'Journey plan', 1, '${test.doctor.actor.id}', '${test.doctor.actor.displayName}',
+        '${seeded.now}', '${"c".repeat(64)}'
+      );
+      INSERT INTO clinical_note_diagnoses (id, clinical_note_id, position, diagnosis_text)
+      VALUES ('${seeded.visitId}-diagnosis', '${seeded.visitId}-note', 0, 'Journey diagnosis');
+    `);
+    const response = await test.app.inject({
+      method: "GET", url: `/api/visits/${seeded.visitId}/journey`, headers: { cookie: test.doctorCookie },
+    });
+    expect(response.statusCode).toBe(200);
+    const actions = (response.json() as JourneyResponse).data.allowedActions;
+    expect(actions).toEqual(expect.arrayContaining([
+      "OPEN_CONSULTATION", "AMEND_CLINICAL_NOTE", "REVISE_MEDICATION_DECISION",
+    ]));
+    expect(actions).not.toContain("SAVE_CONSULTATION_DRAFT");
+    expect(actions).not.toContain("FINALIZE_CONSULTATION");
+  });
+
+  it("retains each exact fulfillment recovery action for the Doctor without treating primaryRole as a deny-list", async () => {
+    // Break caught: primary ownership is descriptive. A Doctor keeps every
+    // supervised platform permission and recovery must map to its own command.
+    const test = await fixture();
+    const preparing = seedPreparingEvidence(test);
+    const preparingJourney = await test.app.inject({
+      method: "GET", url: `/api/visits/${preparing.visitId}/journey`, headers: { cookie: test.doctorCookie },
+    });
+    expect(preparingJourney.statusCode).toBe(200);
+    expect((preparingJourney.json() as JourneyResponse).data.allowedActions).toEqual(expect.arrayContaining([
+      "PRINT_LABEL", "ABANDON_PREPARATION",
+    ]));
+
+    const abandoned = await test.app.inject({
+      method: "POST", url: `/api/dispensing/${preparing.visitId}/reservation-release`,
+      headers: { cookie: test.doctorCookie, "idempotency-key": "journey-doctor-abandon" },
+      payload: {
+        expectedRevisions: { visit: 7, preparation: 1 },
+        payload: { preparationId: preparing.preparation, reservationId: preparing.reservation, reason: "Journey recovery test" },
+      },
+    });
+    expect(abandoned.statusCode).toBe(201);
+
+    const release = seedPreparingEvidence(test);
+    addPrint(test, release);
+    addConfirmation(test, release);
+    test.database.sqlite.prepare(`
+      UPDATE fulfillment_preparations
+      SET status = 'COMPLETED', revision = 2, completed_at = ?, completed_by = ?
+      WHERE id = ?
+    `).run(release.now, test.assistant.actor.id, release.preparation);
+    test.database.sqlite.prepare("UPDATE visits SET status = 'AWAITING_RELEASE' WHERE id = ?").run(release.visitId);
+    const releaseJourney = await test.app.inject({
+      method: "GET", url: `/api/visits/${release.visitId}/journey`, headers: { cookie: test.doctorCookie },
+    });
+    expect(releaseJourney.statusCode).toBe(200);
+    expect((releaseJourney.json() as JourneyResponse).data.allowedActions).toEqual(expect.arrayContaining([
+      "RELEASE_MEDICATION", "REJECT_PREPARATION",
+    ]));
+
+    const rejected = await test.app.inject({
+      method: "POST", url: `/api/dispensing/${release.visitId}/reject`,
+      headers: { cookie: test.doctorCookie, "idempotency-key": "journey-doctor-reject" },
+      payload: {
+        expectedRevisions: { visit: 7, preparation: 2 },
+        payload: {
+          decisionId: release.decisionId, decisionVersion: 1, labelVersionId: release.label,
+          labelPrintEventId: `${release.visitId}-print`, preparationId: release.preparation,
+          reservationId: release.reservation, reason: "Journey recovery test",
+        },
+      },
+    });
+    expect(rejected.statusCode).toBe(201);
   });
 
   it("never advertises an Assistant Allergy review that the real CONSULTING command rejects", async () => {
@@ -818,11 +928,11 @@ describe("Journey truth table and evidence branches", () => {
       nextTask: {
         action: "RECEIVE_STOCK",
         primaryRole: "assistant",
-        permittedRoles: ["assistant"],
-        availability: "WAITING_FOR_ROLE",
+        permittedRoles: ["assistant", "doctor"],
+        availability: "AVAILABLE",
       },
     });
-    expect(doctorData.allowedActions).not.toContain("RECEIVE_STOCK");
+    expect(doctorData.allowedActions).toContain("RECEIVE_STOCK");
   });
 
   it("blocks UNKNOWN allergy without presenting a charge-state review action that the command guard rejects", async () => {
@@ -863,7 +973,7 @@ describe("Journey truth table and evidence branches", () => {
       });
       const data = (response.json() as JourneyResponse).data;
       expect(data.nextTask).toMatchObject({ action: "CLOSE_VISIT" });
-      expect(data.allowedActions).toEqual(["CLOSE_VISIT"]);
+      expect(data.allowedActions).toEqual(expect.arrayContaining(["AMEND_CLINICAL_NOTE", "CLOSE_VISIT"]));
       expect(data.steps.find((step) => step.code === "PAYMENT")?.state)
         .toBe(resolution === "WAIVER" ? "SKIPPED" : "COMPLETE");
     }
@@ -921,7 +1031,7 @@ describe("Journey truth table and evidence branches", () => {
     const doctorData = (doctor.json() as JourneyResponse).data;
     expect(doctorData.blockers).toEqual([]);
     expect(doctorData.nextTask).toMatchObject({ action: "OPEN_OPD_CARD", availability: "AVAILABLE" });
-    expect(doctorData.allowedActions).toEqual(["OPEN_OPD_CARD"]);
+    expect(doctorData.allowedActions).toEqual(expect.arrayContaining(["AMEND_CLINICAL_NOTE", "OPEN_OPD_CARD"]));
     expect((assistant.json() as JourneyResponse).data).toMatchObject({ blockers: [], nextTask: null, allowedActions: [] });
   });
 });

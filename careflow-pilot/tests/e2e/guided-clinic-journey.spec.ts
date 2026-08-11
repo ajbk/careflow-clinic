@@ -253,8 +253,9 @@ test("guides two roles through ORDER stock recovery, fulfillment, cash, Closure,
     await expect(assistant.getByRole("button", { name: "เริ่มเตรียมยา" })).toHaveCount(0);
 
     await doctor.goto(`${server.baseURL}/dispensing/${patient.visitId}`);
-    await expect(doctor.getByRole("heading", { name: "รอผู้ช่วยรับยาเข้าคลัง" })).toBeVisible();
-    await expect(doctor.getByRole("link", { name: "รับยาเข้าคลัง" })).toHaveCount(0);
+    await expect(doctor.getByRole("heading", { name: "รับยาเข้าคลัง" })).toBeVisible();
+    await expect(doctor.locator(".journey-blocker-card").getByText("บทบาทหลัก: ผู้ช่วย", { exact: true })).toBeVisible();
+    await expect(doctor.getByRole("link", { name: "รับยาเข้าคลัง" })).toBeVisible();
     await expect(doctor.getByRole("button", { name: "เริ่มเตรียมยา" })).toHaveCount(0);
 
     await assistant.goto(`${server.baseURL}/dispensing/${patient.visitId}`);
@@ -288,7 +289,8 @@ test("guides two roles through ORDER stock recovery, fulfillment, cash, Closure,
     await expect(doctor.getByRole("button", { name: "ปล่อยยา" })).toBeVisible();
     await doctor.getByRole("button", { name: "ปล่อยยา" }).click();
     await expect(doctor.getByText("AWAITING_HANDOFF", { exact: true })).toBeVisible();
-    await expect(doctor.getByRole("button", { name: "ยืนยันส่งมอบยา" })).toHaveCount(0);
+    await expect(doctor.getByRole("button", { name: "ยืนยันส่งมอบยา" })).toBeVisible();
+    await expect(doctor.getByLabel("งานถัดไป").getByText("บทบาทหลัก: ผู้ช่วย", { exact: true })).toBeVisible();
 
     await assistant.goto(`${server.baseURL}/dispensing/${patient.visitId}`);
     await expect(assistant.getByRole("button", { name: "ยืนยันส่งมอบยา" })).toBeVisible();
@@ -318,7 +320,8 @@ test("guides two roles through ORDER stock recovery, fulfillment, cash, Closure,
       netDueBaht: 115,
       visit: { status: "AWAITING_PAYMENT" },
     });
-    await expect(doctor.getByRole("button", { name: "ยืนยันรับเงินสด 115 บาท" })).toHaveCount(0);
+    await expect(doctor.getByRole("button", { name: "ยืนยันรับเงินสด 115 บาท" })).toBeVisible();
+    await expect(doctor.getByLabel("งานถัดไป").getByText("บทบาทหลัก: ผู้ช่วย", { exact: true })).toBeVisible();
 
     await assistant.goto(`${server.baseURL}/checkout/${patient.visitId}`);
     await expect(assistant.getByRole("button", { name: "ยืนยันรับเงินสด 115 บาท" })).toBeVisible();

@@ -287,10 +287,40 @@ describe("Preparation and label workflow", () => {
     server.resetHandlers(
       http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: releasePickList })),
     );
-    renderDispensing("/dispensing/visit-42", "doctor", ["fulfillment:read", "fulfillment:release"]);
+    renderDispensing(
+      "/dispensing/visit-42",
+      "doctor",
+      ["fulfillment:read", "fulfillment:release"],
+      (visitId) => ({ ...dispensingJourney, visit: { ...dispensingJourney.visit, id: visitId, status: "AWAITING_RELEASE" }, allowedActions: ["RELEASE_MEDICATION"] }),
+    );
     expect(await screen.findByRole("button", { name: "ปล่อยยา" })).toBeEnabled();
     expect(screen.queryByLabelText("เหตุผลการปฏิเสธ")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "ปฏิเสธการจัดยา" })).not.toBeInTheDocument();
+  });
+
+  it("restores the exact Doctor rejection recovery command rather than inferring it from release", async () => {
+    const user = userEvent.setup();
+    let body: unknown;
+    server.resetHandlers(
+      http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: releasePickList })),
+      http.post("/api/dispensing/visit-42/reject", async ({ request }) => {
+        body = await request.json();
+        return HttpResponse.json({ data: { ...basePickList, visit: { ...visit, status: "AWAITING_PREPARATION" as const, revision: 12 }, allowedActions: ["START_PREPARATION"] }, replayed: false }, { status: 201 });
+      }),
+    );
+    renderDispensing(
+      "/dispensing/visit-42",
+      "doctor",
+      ["fulfillment:read", "fulfillment:release"],
+      (visitId) => ({ ...dispensingJourney, visit: { ...dispensingJourney.visit, id: visitId, status: "AWAITING_RELEASE" }, allowedActions: ["RELEASE_MEDICATION", "REJECT_PREPARATION"] }),
+    );
+    const reason = await screen.findByLabelText("เหตุผลการปฏิเสธ");
+    await user.type(reason, "พบความคลาดเคลื่อนในการตรวจปล่อย");
+    await user.click(screen.getByRole("button", { name: "ปฏิเสธการจัดยา" }));
+    await waitFor(() => expect(body).toMatchObject({
+      expectedRevisions: { visit: 11, preparation: 2 },
+      payload: { preparationId: "preparation-1", reservationId: "reservation-1", reason: "พบความคลาดเคลื่อนในการตรวจปล่อย" },
+    }));
   });
 
   it("allows Assistant and Doctor handoff but sends one exact command while the first submit is pending", async () => {
@@ -443,10 +473,40 @@ describe("Preparation and label workflow", () => {
   it("does not expose an unsupported abandonment control from a legacy Pick List", async () => {
     // Break caught: CONFIRM_ALLOCATION or COMPLETE_PREPARATION authority must not be repurposed to authorize reservation abandonment.
     server.resetHandlers(http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: preparingPickList })));
-    renderDispensing();
+    renderDispensing(
+      "/dispensing/visit-42",
+      "assistant",
+      ["fulfillment:read", "fulfillment:prepare", "label:print"],
+      (visitId) => ({ ...dispensingJourney, visit: { ...dispensingJourney.visit, id: visitId, status: "PREPARING" }, allowedActions: ["CONFIRM_ALLOCATION", "COMPLETE_PREPARATION"] }),
+    );
     expect(await screen.findByLabelText("สแกนบาร์โค้ดยา")).toBeInTheDocument();
     expect(screen.queryByLabelText("เหตุผลการยกเลิกการเตรียมยา")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "ยกเลิกการเตรียมยา" })).not.toBeInTheDocument();
+  });
+
+  it("restores the exact supervised preparation-abandon recovery command through visible UI", async () => {
+    const user = userEvent.setup();
+    let body: unknown;
+    server.resetHandlers(
+      http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: preparingPickList })),
+      http.post("/api/dispensing/visit-42/reservation-release", async ({ request }) => {
+        body = await request.json();
+        return HttpResponse.json({ data: { ...basePickList, visit: { ...visit, status: "AWAITING_PREPARATION" as const, revision: 11 }, allowedActions: ["START_PREPARATION"] }, replayed: false }, { status: 201 });
+      }),
+    );
+    renderDispensing(
+      "/dispensing/visit-42",
+      "doctor",
+      ["fulfillment:read", "fulfillment:prepare", "label:print"],
+      (visitId) => ({ ...dispensingJourney, visit: { ...dispensingJourney.visit, id: visitId, status: "PREPARING" }, allowedActions: ["PRINT_LABEL", "ABANDON_PREPARATION"] }),
+    );
+    const reason = await screen.findByLabelText("เหตุผลการยกเลิกการเตรียมยา");
+    await user.type(reason, "ต้องจัดเตรียมใหม่");
+    await user.click(screen.getByRole("button", { name: "ยกเลิกการเตรียมยา" }));
+    await waitFor(() => expect(body).toMatchObject({
+      expectedRevisions: { visit: 10, preparation: 1 },
+      payload: { preparationId: "preparation-1", reservationId: "reservation-1", reason: "ต้องจัดเตรียมใหม่" },
+    }));
   });
 
   it("records a print request before opening print and calls it a request, not a physical success", async () => {

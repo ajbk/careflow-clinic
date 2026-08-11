@@ -7,11 +7,17 @@ export type JourneyDestination =
 
 const visitRoute: Partial<Record<JourneyAction, (visitId: string) => string>> = {
   OPEN_CONSULTATION: (id) => `/consultations/${encodeURIComponent(id)}`,
+  SAVE_CONSULTATION_DRAFT: (id) => `/consultations/${encodeURIComponent(id)}`,
+  FINALIZE_CONSULTATION: (id) => `/consultations/${encodeURIComponent(id)}`,
+  AMEND_CLINICAL_NOTE: (id) => `/consultations/${encodeURIComponent(id)}`,
+  REVISE_MEDICATION_DECISION: (id) => `/consultations/${encodeURIComponent(id)}`,
   START_PREPARATION: (id) => `/dispensing/${encodeURIComponent(id)}`,
   PRINT_LABEL: (id) => `/dispensing/${encodeURIComponent(id)}`,
   CONFIRM_ALLOCATION: (id) => `/dispensing/${encodeURIComponent(id)}`,
   COMPLETE_PREPARATION: (id) => `/dispensing/${encodeURIComponent(id)}`,
+  ABANDON_PREPARATION: (id) => `/dispensing/${encodeURIComponent(id)}`,
   RELEASE_MEDICATION: (id) => `/dispensing/${encodeURIComponent(id)}`,
+  REJECT_PREPARATION: (id) => `/dispensing/${encodeURIComponent(id)}`,
   HANDOFF_MEDICATION: (id) => `/dispensing/${encodeURIComponent(id)}`,
   FINALIZE_CHARGE: (id) => `/checkout/${encodeURIComponent(id)}`,
   RECORD_CASH: (id) => `/checkout/${encodeURIComponent(id)}`,

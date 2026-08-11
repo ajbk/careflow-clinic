@@ -49,7 +49,7 @@ const consultingJourneySummary = {
     permittedRoles: ["doctor" as const],
     availability: "AVAILABLE" as const,
   },
-  allowedActions: ["OPEN_CONSULTATION" as const],
+  allowedActions: ["OPEN_CONSULTATION" as const, "SAVE_CONSULTATION_DRAFT" as const, "FINALIZE_CONSULTATION" as const],
 };
 
 function summaryFor(action: string, labelTh: string) {
@@ -297,6 +297,36 @@ describe("connected shared queue workflow", () => {
     const row = within(await screen.findByRole("article", { name: /DEMO-000042/ }));
     expect(row.getByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" })).toBeInTheDocument();
     expect(row.queryByRole("link", { name: "เปิดห้องตรวจ" })).not.toBeInTheDocument();
+  });
+
+  it("keeps both Doctor Start Consultation and Allergy recovery reachable for WAITING UNKNOWN", async () => {
+    // Break caught: a blocker can describe the Allergy recovery, but it must not
+    // suppress the separately authorized Doctor start command.
+    const unknownWaiting = {
+      ...waitingItem,
+      journeySummary: {
+        ...waitingJourneySummary,
+        blockers: [{
+          code: "ALLERGY_UNKNOWN" as const,
+          titleTh: "ยังไม่ได้ถามประวัติแพ้ยา",
+          detailTh: "ต้องทบทวนก่อนลงนามการตรวจ",
+          primaryRole: "assistant" as const,
+          recoveryAction: "REVIEW_ALLERGY" as const,
+          medication: null,
+        }],
+        nextTask: {
+          ...waitingJourneySummary.nextTask,
+          availability: "AVAILABLE" as const,
+        },
+        allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"] as const,
+      },
+    };
+    server.use(http.get("/api/queue", () => HttpResponse.json({ data: [unknownWaiting] })));
+    renderRoute("/queue");
+    const row = within(await screen.findByRole("article", { name: /DEMO-000042/ }));
+    expect(row.getByRole("button", { name: "เริ่มการตรวจ" })).toBeEnabled();
+    expect(row.getByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" })).toBeEnabled();
+    expect(row.getAllByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" })).toHaveLength(1);
   });
 
   it("preserves and submits every item in a PRESENT Allergy assessment", async () => {

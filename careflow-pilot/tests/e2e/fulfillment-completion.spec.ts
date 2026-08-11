@@ -191,37 +191,11 @@ test("reject/reprint, stale evidence, inventory safeguards, and role denial rema
     await assistant.getByLabel("เหตุผลการยืนยันด้วยตนเอง").fill("เครื่องสแกนทดสอบไม่พร้อม");
     await assistant.getByRole("button", { name: "ยืนยันด้วยตนเอง" }).click();
     await assistant.getByRole("button", { name: "เสร็จสิ้นการเตรียมยา" }).click();
-    // Rejection is a protected Doctor API operation, not a Journey control. The
-    // UI contract deliberately must not repurpose RELEASE_MEDICATION authority
-    // into a rejection CTA, so exercise the server command from the Doctor
-    // session and retain its evidence/reprint assertions here.
-    const rejectionCandidate = (await (await doctor.request.get(`${server.baseURL}/api/dispensing/${patient.visitId}`)).json()).data as {
-      visit: { revision: number };
-      preparation: { id: string; revision: number; latestPrintEventId: string | null };
-      medicationDecision: { id: string; version: number };
-      label: { id: string };
-      reservation: { id: string };
-    };
-    const printEventId = rejectionCandidate.preparation.latestPrintEventId;
-    expect(printEventId).toBeTruthy();
-    if (!printEventId) throw new Error("Expected qualifying print evidence before Doctor rejection");
-    const rejected = await doctor.request.post(`${server.baseURL}/api/dispensing/${patient.visitId}/reject`, {
-      headers: { "idempotency-key": "completion-doctor-reject" },
-      data: {
-        expectedRevisions: { visit: rejectionCandidate.visit.revision, preparation: rejectionCandidate.preparation.revision },
-        payload: {
-          decisionId: rejectionCandidate.medicationDecision.id,
-          decisionVersion: rejectionCandidate.medicationDecision.version,
-          labelVersionId: rejectionCandidate.label.id,
-          labelPrintEventId: printEventId,
-          preparationId: rejectionCandidate.preparation.id,
-          reservationId: rejectionCandidate.reservation.id,
-          reason: "ฉลากต้องพิมพ์ใหม่เพื่อทบทวน",
-        },
-      },
-    });
-    expect(rejected.status()).toBe(201);
     await doctor.goto(`${server.baseURL}/dispensing/${patient.visitId}`);
+    // Reject uses its own restored Journey action and visible form; it must not
+    // be inferred from, or silently tunneled through, the release command.
+    await doctor.getByLabel("เหตุผลการปฏิเสธ").fill("ฉลากต้องพิมพ์ใหม่เพื่อทบทวน");
+    await doctor.getByRole("button", { name: "ปฏิเสธการจัดยา" }).click();
     await expect(doctor.getByText("AWAITING_PREPARATION", { exact: true })).toBeVisible();
     const invalidated = await doctor.request.get(`${server.baseURL}/api/dispensing/${patient.visitId}/labels`);
     await expect(invalidated.json()).resolves.toMatchObject({ data: { medicationDecisionVersion: 1, version: 1 } });

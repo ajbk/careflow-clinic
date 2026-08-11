@@ -46,6 +46,10 @@ export function usePatientAllergy(
   return useQuery({
     queryKey: queryKeys.patientAllergy(patientId ?? ""),
     enabled: patientId !== null && patientId.length > 0,
+    // Allergy context authorizes a mutation. A failed background refresh must
+    // surface immediately for explicit recovery rather than silently retrying
+    // while React Query retains a stale cached authority.
+    retry: false,
     queryFn: async ({ signal }): Promise<PatientAllergyContextDto> => {
       const response = await apiClient.get(
         `/api/patients/${encodeURIComponent(patientId ?? "")}/allergy-assessment`,

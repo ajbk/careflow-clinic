@@ -367,6 +367,63 @@ describe("connected Intake journey", () => {
     expect(intakePosts).toBe(0);
   });
 
+  it("fails closed when a cached Allergy context background refetch fails, then requires a fresh explicit reconfirmation", async () => {
+    // Break caught: React Query retains cached authority after a failed refetch.
+    // That cache must never leave Allergy inputs or Intake POST mutable.
+    const user = userEvent.setup();
+    let allergyContextRequests = 0;
+    let intakePosts = 0;
+    server.use(
+      validPatientSearch(),
+      http.get("/api/patients/patient-1/allergy-assessment", () => {
+        allergyContextRequests += 1;
+        if (allergyContextRequests === 2) {
+          return jsonError("ALLERGY_CONTEXT_UNAVAILABLE", "ไม่สามารถโหลดข้อมูลแพ้ยาล่าสุดได้", 503);
+        }
+        return HttpResponse.json(allergyContext());
+      }),
+      http.post("/api/visits/intake", () => {
+        intakePosts += 1;
+        return HttpResponse.json(intakeResponse, { status: 201 });
+      }),
+    );
+    const router = renderIntake();
+
+    await user.type(await screen.findByRole("textbox", { name: /ค้นหา|ผู้ป่วย/ }), "000123");
+    await waitFor(() => expect(screen.getByText(patient.displayName)).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: /เลือกผู้ป่วย/ }));
+    await confirmNoAllergy(user);
+    const complaint = screen.getByRole("textbox", { name: /อาการสำคัญ/ });
+    await user.type(complaint, "ไอที่ยังต้องเก็บไว้");
+    expect(screen.getByRole("button", { name: /ส่งพบแพทย์/ })).toBeEnabled();
+
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    await waitFor(() => expect(allergyContextRequests).toBeGreaterThan(1));
+    const staleCopy = "ยังโหลดข้อมูลแพ้ยาล่าสุดไม่สำเร็จ กรุณาลองโหลดอีกครั้งก่อนยืนยันคำตอบ";
+    expect(await screen.findByText(staleCopy)).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "ไม่แพ้" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /ส่งพบแพทย์/ })).toBeDisabled();
+    expect(complaint).toHaveValue("ไอที่ยังต้องเก็บไว้");
+    expect(intakePosts).toBe(0);
+
+    await user.click(screen.getByRole("button", { name: "โหลดข้อมูลแพ้ยาล่าสุดอีกครั้ง" }));
+    await waitFor(() => expect(allergyContextRequests).toBeGreaterThan(2));
+    expect(await screen.findByText("โหลดข้อมูลล่าสุดแล้ว กรุณายืนยันคำตอบประวัติแพ้ยาอีกครั้ง")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "ไม่แพ้" })).toBeEnabled();
+    expect(screen.getByRole("radio", { name: "ไม่แพ้" })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: /ส่งพบแพทย์/ })).toBeDisabled();
+    expect(complaint).toHaveValue("ไอที่ยังต้องเก็บไว้");
+    expect(intakePosts).toBe(0);
+
+    await confirmNoAllergy(user);
+    await user.click(screen.getByRole("button", { name: /ส่งพบแพทย์/ }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/queue"));
+    expect(intakePosts).toBe(1);
+  });
+
   it("removes a stale Intake retry attempt when a same-Patient background context revision changes", async () => {
     const user = userEvent.setup();
     const updatedPatient = { ...patient, revision: 5 };

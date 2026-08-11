@@ -171,7 +171,8 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
   const patientAllergy = usePatientAllergy(selectedPatient?.id ?? null, apiClient);
   const allergyContext = patientAllergy.data?.patient.id === selectedPatient?.id ? patientAllergy.data : undefined;
   const allergyAuthorityReloadPending = allergyReconfirmationState === "reloading" || allergyReconfirmationState === "reload-failed";
-  const allergyContextPending = selectedPatient !== null && (!allergyContext || patientAllergy.isFetching || allergyAuthorityReloadPending);
+  const cachedAllergyAuthorityFailed = Boolean(selectedPatient && allergyContext && patientAllergy.isError);
+  const allergyContextPending = selectedPatient !== null && (!allergyContext || patientAllergy.isFetching || cachedAllergyAuthorityFailed || allergyAuthorityReloadPending);
   const allergyChangeReasonRequired = requiresAllergyChangeReason(allergyContext?.allergy, allergyDraft);
   const reportedAllergyItemsValid = hasValidReportedAllergyItems(allergyDraft);
 
@@ -210,6 +211,20 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
     setRetryAttempt(null);
   }, [allergyContext, selectedPatient]);
 
+  useEffect(() => {
+    if (!selectedPatient || !allergyContext || !patientAllergy.isError) return;
+    const patientId = selectedPatient.id;
+    queueMicrotask(() => {
+      if (selectedPatientIdRef.current !== patientId) return;
+      setAllergyDraft((current) => ({ ...current, answer: null }));
+      setSubmitAttempt(null);
+      setRetryAttempt(null);
+      setSummaryError(null);
+      setActiveVisit(false);
+      setAllergyReconfirmationState("reload-failed");
+    });
+  }, [allergyContext, patientAllergy.isError, selectedPatient]);
+
   const generateMutation = useMutation({
     mutationFn: (attempt: SyntheticPatientAttempt) => createSyntheticPatient(apiClient, attempt),
     onSuccess: (result, attempt) => {
@@ -245,6 +260,11 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
     const reload = await patientAllergy.refetch();
     if (allergyReloadRequest.current !== reloadRequest || selectedPatientIdRef.current !== patientId) return;
     if (reload.isSuccess && reload.data?.patient.id === patientId) {
+      setAllergyDraft((current) => ({ ...current, answer: null }));
+      setSubmitAttempt(null);
+      setRetryAttempt(null);
+      setSummaryError(null);
+      setActiveVisit(false);
       setAllergyReconfirmationState("reconfirmation-required");
       return;
     }

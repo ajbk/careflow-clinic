@@ -37,11 +37,17 @@ const journeyActionLabels: Record<JourneyAction, string> = {
   START_CONSULTATION: "เริ่มตรวจ",
   REVIEW_ALLERGY: "ทบทวนข้อมูลแพ้ยา",
   OPEN_CONSULTATION: "เปิดห้องตรวจ",
+  SAVE_CONSULTATION_DRAFT: "บันทึกร่างการตรวจ",
+  FINALIZE_CONSULTATION: "ลงนามและส่งต่อ",
+  AMEND_CLINICAL_NOTE: "เพิ่มคำแก้ไข Clinical Note",
+  REVISE_MEDICATION_DECISION: "แก้ไขการตัดสินใจยา",
   START_PREPARATION: "เริ่มเตรียมยา",
   PRINT_LABEL: "บันทึกคำขอพิมพ์",
   CONFIRM_ALLOCATION: "ยืนยันรายการจัดยา",
   COMPLETE_PREPARATION: "เสร็จสิ้นการเตรียมยา",
+  ABANDON_PREPARATION: "ยกเลิกการเตรียมยา",
   RELEASE_MEDICATION: "ปล่อยยา",
+  REJECT_PREPARATION: "ปฏิเสธการจัดยา",
   HANDOFF_MEDICATION: "ยืนยันส่งมอบยา",
   FINALIZE_CHARGE: "ยืนยันยอดเพื่อรับชำระ",
   RECORD_CASH: "ยืนยันรับเงินสด",
@@ -52,35 +58,47 @@ const journeyActionLabels: Record<JourneyAction, string> = {
   RECEIVE_STOCK: "รับยาเข้าคลัง",
 };
 
-/** The one semantic-action permission map shared by Journey derivation and role projection. */
-export const journeyPermission: Record<JourneyAction, Permission> = {
-  START_CONSULTATION: "visit:start-consultation",
-  REVIEW_ALLERGY: "patient:update-allergy",
-  OPEN_CONSULTATION: "clinical:read",
-  START_PREPARATION: "fulfillment:prepare",
-  PRINT_LABEL: "label:print",
-  CONFIRM_ALLOCATION: "fulfillment:prepare",
-  COMPLETE_PREPARATION: "fulfillment:prepare",
-  RELEASE_MEDICATION: "fulfillment:release",
-  HANDOFF_MEDICATION: "fulfillment:handoff",
-  FINALIZE_CHARGE: "finance:finalize-charge",
-  RECORD_CASH: "finance:record-cash",
-  RECORD_PROMPTPAY: "finance:confirm-promptpay",
-  APPROVE_FULL_WAIVER: "finance:waive",
-  CLOSE_VISIT: "visit:close",
-  OPEN_OPD_CARD: "opd:read",
-  RECEIVE_STOCK: "inventory:receive",
+/** Exact permissions for each Journey action. `primaryRole` below is descriptive only. */
+export const journeyPermission: Record<JourneyAction, readonly Permission[]> = {
+  START_CONSULTATION: ["visit:start-consultation"],
+  REVIEW_ALLERGY: ["patient:update-allergy"],
+  OPEN_CONSULTATION: ["clinical:read"],
+  SAVE_CONSULTATION_DRAFT: ["clinical:save-draft"],
+  FINALIZE_CONSULTATION: ["clinical:sign", "medication:sign-decision"],
+  AMEND_CLINICAL_NOTE: ["clinical:amend"],
+  REVISE_MEDICATION_DECISION: ["medication:sign-decision"],
+  START_PREPARATION: ["fulfillment:prepare"],
+  PRINT_LABEL: ["label:print"],
+  CONFIRM_ALLOCATION: ["fulfillment:prepare"],
+  COMPLETE_PREPARATION: ["fulfillment:prepare"],
+  ABANDON_PREPARATION: ["fulfillment:prepare"],
+  RELEASE_MEDICATION: ["fulfillment:release"],
+  REJECT_PREPARATION: ["fulfillment:release"],
+  HANDOFF_MEDICATION: ["fulfillment:handoff"],
+  FINALIZE_CHARGE: ["finance:finalize-charge"],
+  RECORD_CASH: ["finance:record-cash"],
+  RECORD_PROMPTPAY: ["finance:confirm-promptpay"],
+  APPROVE_FULL_WAIVER: ["finance:waive"],
+  CLOSE_VISIT: ["visit:close"],
+  OPEN_OPD_CARD: ["opd:read"],
+  RECEIVE_STOCK: ["inventory:receive"],
 };
 
 const actionPrimaryRole: Record<JourneyAction, Actor["role"]> = {
   START_CONSULTATION: "doctor",
   REVIEW_ALLERGY: "assistant",
   OPEN_CONSULTATION: "doctor",
+  SAVE_CONSULTATION_DRAFT: "doctor",
+  FINALIZE_CONSULTATION: "doctor",
+  AMEND_CLINICAL_NOTE: "doctor",
+  REVISE_MEDICATION_DECISION: "doctor",
   START_PREPARATION: "assistant",
   PRINT_LABEL: "assistant",
   CONFIRM_ALLOCATION: "assistant",
   COMPLETE_PREPARATION: "assistant",
+  ABANDON_PREPARATION: "assistant",
   RELEASE_MEDICATION: "doctor",
+  REJECT_PREPARATION: "doctor",
   HANDOFF_MEDICATION: "assistant",
   FINALIZE_CHARGE: "doctor",
   RECORD_CASH: "assistant",
@@ -109,7 +127,9 @@ const fulfillmentActionMap: Partial<Record<string, JourneyAction>> = {
   PRINT_LABEL: "PRINT_LABEL",
   CONFIRM_ALLOCATION: "CONFIRM_ALLOCATION",
   COMPLETE_PREPARATION: "COMPLETE_PREPARATION",
+  ABANDON_PREPARATION: "ABANDON_PREPARATION",
   RELEASE: "RELEASE_MEDICATION",
+  REJECT: "REJECT_PREPARATION",
   HANDOFF: "HANDOFF_MEDICATION",
 };
 
@@ -174,7 +194,9 @@ function stepIndex(code: JourneyStepCode): number {
 
 function permittedRoles(action: JourneyAction): Array<Actor["role"]> {
   return (["assistant", "doctor"] as const).filter((role) =>
-    (permissionsByRole[role] as readonly Permission[]).includes(journeyPermission[action]),
+    journeyPermission[action].every((permission) =>
+      (permissionsByRole[role] as readonly Permission[]).includes(permission),
+    ),
   );
 }
 
@@ -196,9 +218,9 @@ function reviewAllergyAvailable(role: Actor["role"], status: VisitStatus): boole
 function permittedRolesForVisit(action: JourneyAction, status: VisitStatus): Array<Actor["role"]> {
   const roles = permittedRoles(action);
   if (action === "REVIEW_ALLERGY") return roles.filter((role) => reviewAllergyAvailable(role, status));
-  // Operational permissions are intentionally broad for supervised recovery, but the Journey is a
-  // role-owned handoff. It must expose a mutation CTA only to the role responsible for this step.
-  return roles.filter((role) => role === actionPrimaryRole[action]);
+  // Primary ownership guides handoff copy only. Journey authority is the
+  // lossless intersection of the command's domain guard and platform grants.
+  return roles;
 }
 
 function evidenceInconsistent(evidence: JourneyEvidence): boolean {
@@ -290,7 +312,38 @@ function fulfillmentDomainActions(evidence: JourneyEvidence): JourneyAction[] {
   });
   if (evidence.visit.status !== "PREPARING") return mapped;
   const next = plannedAction(evidence);
-  return next && mapped.includes(next) ? [next] : [];
+  // Confirm/complete are evidence-sequenced, but abandonment remains a real
+  // recovery command throughout active preparation.
+  return uniqueActions([
+    ...(next && mapped.includes(next) ? [next] : []),
+    ...mapped.filter((action) => action === "ABANDON_PREPARATION"),
+  ]);
+}
+
+const medicationRevisionStatuses: readonly VisitStatus[] = [
+  "AWAITING_ORDER_REVISION",
+  "AWAITING_PREPARATION",
+  "PREPARING",
+  "AWAITING_RELEASE",
+  "AWAITING_HANDOFF",
+  "AWAITING_CHARGE",
+];
+
+function clinicalDomainActions(evidence: JourneyEvidence, allergyUnknown: boolean): JourneyAction[] {
+  const actions: JourneyAction[] = [];
+  if (evidence.visit.status === "CONSULTING") {
+    actions.push("OPEN_CONSULTATION", "SAVE_CONSULTATION_DRAFT");
+    if (!allergyUnknown && evidence.clinical.canFinalize) actions.push("FINALIZE_CONSULTATION");
+  }
+  if (evidence.visit.status === "AWAITING_ORDER_REVISION") actions.push("OPEN_CONSULTATION");
+  if (!allergyUnknown && evidence.clinical.hasSignedNote) actions.push("AMEND_CLINICAL_NOTE");
+  if (
+    !allergyUnknown &&
+    evidence.medication !== null &&
+    !evidence.fulfillment.hasDispense &&
+    medicationRevisionStatuses.includes(evidence.visit.status)
+  ) actions.push("REVISE_MEDICATION_DECISION");
+  return actions;
 }
 
 function domainActions(actor: Actor, evidence: JourneyEvidence, blockers: readonly JourneyBlocker[]): JourneyAction[] {
@@ -299,9 +352,7 @@ function domainActions(actor: Actor, evidence: JourneyEvidence, blockers: readon
   const stockShort = blockers.some((blocker) => blocker.code === "STOCK_SHORTAGE");
   const actions: JourneyAction[] = [];
   if (evidence.visit.status === "WAITING") actions.push("START_CONSULTATION");
-  if (["CONSULTING", "AWAITING_ORDER_REVISION"].includes(evidence.visit.status)) {
-    actions.push("OPEN_CONSULTATION");
-  }
+  actions.push(...clinicalDomainActions(evidence, allergyUnknown));
   if (reviewAllergyAvailable(actor.role, evidence.visit.status)) actions.push("REVIEW_ALLERGY");
   // Legacy UNKNOWN is a safety boundary: existing workflow still permits Doctor consultation
   // work, but no fulfillment/financial mutation may make it look finalizable.
@@ -315,7 +366,8 @@ function domainActions(actor: Actor, evidence: JourneyEvidence, blockers: readon
   }
   if (evidence.visit.status === "CLOSED" && !evidence.hasClosure) return [];
   return uniqueActions(actions).filter((action) =>
-    permittedRolesForVisit(action, evidence.visit.status).includes(actor.role) && hasPermission(actor, journeyPermission[action]),
+    permittedRolesForVisit(action, evidence.visit.status).includes(actor.role) &&
+    journeyPermission[action].every((permission) => hasPermission(actor, permission)),
   );
 }
 
@@ -384,12 +436,24 @@ function deriveSummary(actor: Actor, evidence: JourneyEvidence): JourneySummaryD
     if (evidence.readiness && !evidence.readiness.ready) blockers.push(...stockBlockers(evidence.readiness));
   }
   const allowedActions = domainActions(actor, evidence, blockers);
-  const recovery = blockers.find((blocker) => blocker.recoveryAction !== null)?.recoveryAction ?? null;
+  // UNKNOWN requires a visible recovery path but does not revoke the existing
+  // Doctor start/open/draft path in WAITING or CONSULTING. At later states,
+  // retain the established branch behavior: the allergy recovery remains the
+  // only next task (and disappears when its real command guard has no role).
+  const allergyUnknown = blockers.some((blocker) => blocker.code === "ALLERGY_UNKNOWN");
+  const planned = plannedAction(evidence);
+  const preserveClinicalUnknownPath = allergyUnknown &&
+    ["WAITING", "CONSULTING"].includes(evidence.visit.status) &&
+    planned !== null &&
+    allowedActions.includes(planned);
+  const recovery = preserveClinicalUnknownPath
+    ? null
+    : blockers.find((blocker) => blocker.recoveryAction !== null)?.recoveryAction ?? null;
   const nextTask = blockers.some((blocker) => blocker.code === "EVIDENCE_INCONSISTENT")
     ? null
     : toNextTask(
       actor,
-      recovery ?? plannedAction(evidence),
+      recovery ?? planned,
       allowedActions,
       blockers,
       evidence.visit.status,
@@ -471,7 +535,7 @@ function committedQueueEvidence(item: QueueBaseItemDto): JourneyEvidence {
   return {
     visit: item.visit,
     allergyState: item.allergy.state,
-    clinical: { hasDraft: false, hasSignedNote: false },
+    clinical: { hasDraft: false, hasMedicationDraft: false, canFinalize: false, hasSignedNote: false },
     medication: null,
     fulfillment: {
       allowedActions: [],
