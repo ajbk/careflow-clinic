@@ -169,6 +169,16 @@ describe("shared Intake, Queue, and consultation workflow", () => {
 
     expect(response.statusCode).toBe(201);
     expect(response.json().data.visit).toMatchObject({ status: "WAITING", revision: 1 });
+    expect(response.json().data.journeySummary).toMatchObject({
+      steps: expect.arrayContaining([
+        expect.objectContaining({ code: "INTAKE", state: "COMPLETE" }),
+        expect.objectContaining({ code: "CONSULTATION", state: "CURRENT" }),
+      ]),
+      nextTask: expect.objectContaining({ action: "START_CONSULTATION", availability: "WAITING_FOR_ROLE" }),
+      allowedActions: ["REVIEW_ALLERGY"],
+    });
+    expect(response.json().data.journeySummary).not.toHaveProperty("visit");
+    expect(response.json().data.journeySummary).not.toHaveProperty("refreshedAt");
     expect(test.database.db.select().from(visits).all()).toHaveLength(1);
     expect(test.database.db.select().from(intakeObservations).all()).toHaveLength(1);
     expect(

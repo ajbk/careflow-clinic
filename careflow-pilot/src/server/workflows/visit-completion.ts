@@ -213,6 +213,8 @@ function toAmendment(amendment: typeof clinicalNoteAmendments.$inferSelect): Cli
 }
 
 export interface VisitCompletionWorkflow {
+  /** Presence-only Closure evidence for Journey; never returns Closure/OPD data. */
+  hasClosure(visitId: string): boolean;
   closeVisit(
     tx: AuditedTransaction,
     actor: Actor,
@@ -245,6 +247,13 @@ export function createVisitCompletionWorkflow(
   const idFactory = input.idFactory ?? randomUUID;
 
   return {
+    hasClosure(visitId) {
+      return !!input.database.db.select({ id: visitClosures.id })
+        .from(visitClosures)
+        .where(eq(visitClosures.visitId, visitId))
+        .get();
+    },
+
     closeVisit(tx, actor, visitId, command) {
       requirePermission(actor, "visit:close");
       const context = tx.select({ visit: visits, clinic: clinicConfig, patient: patients })

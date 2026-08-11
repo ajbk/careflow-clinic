@@ -4,7 +4,7 @@ import { visitStatusSchema } from "../../../shared/contracts.js";
 import type {
   Actor,
   IntakePayload,
-  QueueItemDto,
+  QueueBaseItemDto,
   ReviewAllergyBody,
   StartConsultationBody,
   SubmitIntakeBody,
@@ -59,20 +59,22 @@ export interface VisitServiceOptions {
 }
 
 export interface VisitService {
-  submitIntake(tx: AuditedTransaction, actor: Actor, body: SubmitIntakeBody): QueueItemDto;
-  listQueue(actor: Actor): QueueItemDto[];
+  submitIntake(tx: AuditedTransaction, actor: Actor, body: SubmitIntakeBody): QueueBaseItemDto;
+  listQueue(actor: Actor): QueueBaseItemDto[];
   getDashboardToday(): {
     waiting: number; consulting: number; awaitingOrderRevision: number;
     awaitingPreparation: number; preparing: number; awaitingRelease: number; awaitingHandoff: number; awaitingCharge: number; awaitingPayment: number; readyToClose: number; updatedAt: string;
   };
   getVisitSummary(visitId: string): VisitSummaryDto | null;
+  /** Minimal non-clinical Visit identity for the Journey read model. */
+  getJourneyVisit(visitId: string): { visit: VisitSummaryDto; patientId: string } | null;
   getWorkspaceBase(visitId: string): VisitWorkspaceBaseDto;
   startConsultation(
     tx: AuditedTransaction,
     actor: Actor,
     visitId: string,
     body: StartConsultationBody,
-  ): QueueItemDto;
+  ): QueueBaseItemDto;
   assertAllergyReviewVisit(
     tx: AuditedTransaction,
     actor: Actor,
@@ -150,7 +152,7 @@ function toVitals(row: IntakeRow): IntakePayload["vitals"] {
   };
 }
 
-function toQueuePatient(patient: PatientDto): QueueItemDto["patient"] {
+function toQueuePatient(patient: PatientDto): QueueBaseItemDto["patient"] {
   return {
     id: patient.id,
     hn: patient.hn,
@@ -161,7 +163,7 @@ function toQueuePatient(patient: PatientDto): QueueItemDto["patient"] {
   };
 }
 
-function allowedActions(actor: Actor, status: string): QueueItemDto["allowedActions"] {
+function allowedActions(actor: Actor, status: string): QueueBaseItemDto["allowedActions"] {
   if (status === "WAITING") return actor.role === "doctor"
     ? ["START_CONSULTATION", "REVIEW_ALLERGY"] : ["REVIEW_ALLERGY"];
   return actor.role === "doctor" && isClinicalWorkspaceStatus(status) ? ["OPEN_CONSULTATION"] : [];
@@ -173,7 +175,7 @@ function toQueueItem(
   patient: PatientDto,
   allergy: AllergyAssessmentDto,
   actor: Actor,
-): QueueItemDto {
+): QueueBaseItemDto {
   if (!isActiveQueueStatus(visit.status)) throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่รองรับคิวนี้" });
   return {
     visit: {
@@ -402,6 +404,23 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
         revision: visit.revision,
         arrivedAt: visit.arrivedAt,
         startedAt: visit.startedAt,
+      };
+    },
+
+    getJourneyVisit(visitId) {
+      const visit = input.database.db.select().from(visits)
+        .where(and(eq(visits.id, visitId), eq(visits.clinicId, "clinic")))
+        .get();
+      if (!visit) return null;
+      return {
+        visit: {
+          id: visit.id,
+          status: visitStatusSchema.parse(visit.status),
+          revision: visit.revision,
+          arrivedAt: visit.arrivedAt,
+          startedAt: visit.startedAt,
+        },
+        patientId: visit.patientId,
       };
     },
 

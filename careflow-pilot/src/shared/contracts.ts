@@ -420,17 +420,31 @@ export const inventoryLotBalanceSchema = inventoryLotSchema.extend({
 });
 export type InventoryLotBalanceDto = z.infer<typeof inventoryLotBalanceSchema>;
 
-export type ReservationReadinessDto = {
-  ready: boolean;
-  lines: Array<{
-    medicationId: string;
-    displayNameSnapshot: string;
-    required: number;
-    available: number;
-    shortfall: number;
-    unitSnapshot: string;
-  }>;
-};
+export const reservationReadinessLineSchema = z.strictObject({
+  medicationId: z.string().min(1),
+  displayNameSnapshot: z.string().min(1).max(200),
+  required: z.number().int().min(1).max(999_999),
+  available: z.number().int().min(0).max(999_999),
+  shortfall: z.number().int().min(0).max(999_999),
+  unitSnapshot: z.string().min(1).max(100),
+}).superRefine((line, context) => {
+  if (line.shortfall !== Math.max(0, line.required - line.available)) {
+    context.addIssue({
+      code: "custom",
+      path: ["shortfall"],
+      message: "จำนวนยาที่ขาดต้องสอดคล้องกับจำนวนที่ต้องการและพร้อมใช้",
+    });
+  }
+});
+export type ReservationReadinessLineDto = z.infer<typeof reservationReadinessLineSchema>;
+
+export const reservationReadinessSchema = rejectOwnPrototypeKeys(
+  z.strictObject({
+    ready: z.boolean(),
+    lines: z.array(reservationReadinessLineSchema),
+  }),
+);
+export type ReservationReadinessDto = z.infer<typeof reservationReadinessSchema>;
 
 export const inventoryLotsResponseSchema = z.strictObject({
   data: z.array(inventoryLotBalanceSchema),
@@ -683,6 +697,134 @@ export const visitSummarySchema = z.strictObject({
 });
 export type VisitSummaryDto = z.infer<typeof visitSummarySchema>;
 
+export const journeyStepCodeSchema = z.enum([
+  "INTAKE",
+  "SCREENING",
+  "CONSULTATION",
+  "MEDICATION_DECISION",
+  "PREPARATION",
+  "HANDOFF",
+  "PAYMENT",
+  "CLOSURE",
+]);
+export type JourneyStepCode = z.infer<typeof journeyStepCodeSchema>;
+
+export const journeyStepStateSchema = z.enum([
+  "COMPLETE",
+  "CURRENT",
+  "UPCOMING",
+  "SKIPPED",
+  "BLOCKED",
+]);
+export type JourneyStepState = z.infer<typeof journeyStepStateSchema>;
+
+export const journeyActionSchema = z.enum([
+  "START_CONSULTATION",
+  "REVIEW_ALLERGY",
+  "OPEN_CONSULTATION",
+  "START_PREPARATION",
+  "PRINT_LABEL",
+  "CONFIRM_ALLOCATION",
+  "COMPLETE_PREPARATION",
+  "RELEASE_MEDICATION",
+  "HANDOFF_MEDICATION",
+  "FINALIZE_CHARGE",
+  "RECORD_CASH",
+  "RECORD_PROMPTPAY",
+  "APPROVE_FULL_WAIVER",
+  "CLOSE_VISIT",
+  "OPEN_OPD_CARD",
+  "RECEIVE_STOCK",
+]);
+export type JourneyAction = z.infer<typeof journeyActionSchema>;
+
+export const journeyBlockerCodeSchema = z.enum([
+  "ALLERGY_UNKNOWN",
+  "STOCK_SHORTAGE",
+  "EVIDENCE_INCONSISTENT",
+]);
+export type JourneyBlockerCode = z.infer<typeof journeyBlockerCodeSchema>;
+
+export const journeyStepSchema = z.strictObject({
+  code: journeyStepCodeSchema,
+  labelTh: z.string().trim().min(1).max(200),
+  state: journeyStepStateSchema,
+});
+export type JourneyStepDto = z.infer<typeof journeyStepSchema>;
+
+function rejectDuplicateValues<T>(values: readonly T[], context: z.RefinementCtx, path: PropertyKey): void {
+  if (new Set(values).size !== values.length) {
+    context.addIssue({ code: "custom", path: [path], message: "รายการต้องไม่ซ้ำกัน" });
+  }
+}
+
+const journeyStepOrder: readonly JourneyStepCode[] = [
+  "INTAKE",
+  "SCREENING",
+  "CONSULTATION",
+  "MEDICATION_DECISION",
+  "PREPARATION",
+  "HANDOFF",
+  "PAYMENT",
+  "CLOSURE",
+];
+
+const journeyStepsSchema = z.array(journeyStepSchema).length(journeyStepOrder.length).superRefine((steps, context) => {
+  for (const [index, expectedCode] of journeyStepOrder.entries()) {
+    if (steps[index]?.code !== expectedCode) {
+      context.addIssue({ code: "custom", path: [index, "code"], message: "ลำดับขั้นตอน Journey ไม่ถูกต้อง" });
+    }
+  }
+});
+
+export const journeyNextTaskSchema = z.strictObject({
+  action: journeyActionSchema,
+  labelTh: z.string().trim().min(1).max(200),
+  primaryRole: roleSchema,
+  permittedRoles: z.array(roleSchema).min(1).max(2).superRefine((roles, context) => {
+    rejectDuplicateValues(roles, context, "permittedRoles");
+  }),
+  availability: z.enum(["AVAILABLE", "WAITING_FOR_ROLE", "BLOCKED"]),
+});
+export type JourneyNextTaskDto = z.infer<typeof journeyNextTaskSchema>;
+
+export const journeyBlockerSchema = z.strictObject({
+  code: journeyBlockerCodeSchema,
+  titleTh: z.string().trim().min(1).max(200),
+  detailTh: z.string().trim().min(1).max(500),
+  primaryRole: roleSchema,
+  recoveryAction: journeyActionSchema.nullable(),
+  medication: reservationReadinessLineSchema.nullable(),
+});
+export type JourneyBlocker = z.infer<typeof journeyBlockerSchema>;
+
+const journeySummaryStrictSchema = z.strictObject({
+  steps: journeyStepsSchema,
+  nextTask: journeyNextTaskSchema.nullable(),
+  blockers: z.array(journeyBlockerSchema).max(20),
+  allowedActions: z.array(journeyActionSchema).max(16).superRefine((actions, context) => {
+    rejectDuplicateValues(actions, context, "allowedActions");
+  }),
+});
+export const journeySummarySchema = rejectOwnPrototypeKeys(journeySummaryStrictSchema);
+export type JourneySummaryDto = z.infer<typeof journeySummarySchema>;
+
+const visitJourneyStrictSchema = journeySummaryStrictSchema.extend({
+  visit: z.strictObject({
+    id: z.string().min(1),
+    status: visitStatusSchema,
+    revision: z.number().int().min(1),
+  }),
+  refreshedAt: z.string().datetime(),
+});
+export const visitJourneySchema = rejectOwnPrototypeKeys(visitJourneyStrictSchema);
+export type VisitJourneyDto = z.infer<typeof visitJourneySchema>;
+
+export const visitJourneyResponseSchema = rejectOwnPrototypeKeys(
+  z.strictObject({ data: visitJourneySchema }),
+);
+export type VisitJourneyResponse = z.infer<typeof visitJourneyResponseSchema>;
+
 export const reviewAllergyPayloadSchema = rejectOwnPrototypeKeys(
   z.strictObject({
     visitId: z.string().trim().min(1).max(120),
@@ -782,7 +924,7 @@ const queuePatientSchema = patientSchema.pick({
   revision: true,
 });
 
-export const queueItemSchema = z.strictObject({
+export const queueBaseItemSchema = z.strictObject({
   visit: queueVisitSchema,
   patient: queuePatientSchema,
   allergy: allergyAssessmentSchema,
@@ -791,15 +933,18 @@ export const queueItemSchema = z.strictObject({
     .min(1)
     .refine((value) => Array.from(value).length <= 500, {
       message: "อาการสำคัญต้องมี 1–500 ตัวอักษร",
-    }),
+  }),
   vitals: intakeVitalsSchema,
   allowedActions: z.array(z.enum(["START_CONSULTATION", "REVIEW_ALLERGY", "OPEN_CONSULTATION"])),
 });
+export type QueueBaseItemDto = z.infer<typeof queueBaseItemSchema>;
+
+export const queueItemSchema = rejectOwnPrototypeKeys(
+  queueBaseItemSchema.extend({ journeySummary: journeySummarySchema }),
+);
 export type QueueItemDto = z.infer<typeof queueItemSchema>;
 
-export const queueResponseSchema = z.strictObject({
-  data: z.array(queueItemSchema),
-});
+export const queueResponseSchema = rejectOwnPrototypeKeys(z.strictObject({ data: z.array(queueItemSchema) }));
 export type QueueResponse = z.infer<typeof queueResponseSchema>;
 
 export const dashboardTodayResponseSchema = z.strictObject({

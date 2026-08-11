@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { ApiError } from "../../src/server/errors.js";
-import { apiErrorCodeSchema } from "../../src/shared/contracts.js";
+import { apiErrorCodeSchema, permissionSchema } from "../../src/shared/contracts.js";
+import { journeyPermission } from "../../src/server/workflows/journey.js";
 import * as auditModule from "../../src/server/modules/platform/audit.js";
 import * as platform from "../../src/server/modules/platform/index.js";
 import {
@@ -98,6 +99,30 @@ describe("stable API conflict codes", () => {
 });
 
 describe("role permissions", () => {
+  it("keeps every semantic Journey action bound to the authoritative permission vocabulary", () => {
+    expect(journeyPermission).toEqual({
+      START_CONSULTATION: "visit:start-consultation",
+      REVIEW_ALLERGY: "patient:update-allergy",
+      OPEN_CONSULTATION: "clinical:read",
+      START_PREPARATION: "fulfillment:prepare",
+      PRINT_LABEL: "label:print",
+      CONFIRM_ALLOCATION: "fulfillment:prepare",
+      COMPLETE_PREPARATION: "fulfillment:prepare",
+      RELEASE_MEDICATION: "fulfillment:release",
+      HANDOFF_MEDICATION: "fulfillment:handoff",
+      FINALIZE_CHARGE: "finance:finalize-charge",
+      RECORD_CASH: "finance:record-cash",
+      RECORD_PROMPTPAY: "finance:confirm-promptpay",
+      APPROVE_FULL_WAIVER: "finance:waive",
+      CLOSE_VISIT: "visit:close",
+      OPEN_OPD_CARD: "opd:read",
+      RECEIVE_STOCK: "inventory:receive",
+    });
+    for (const permission of Object.values(journeyPermission)) {
+      expect(permissionSchema.safeParse(permission).success).toBe(true);
+    }
+  });
+
   it("assigns clinical and inventory permissions only to the roles authorized to perform them", () => {
     expect(platform.permissionsByRole).toEqual({
       assistant: [

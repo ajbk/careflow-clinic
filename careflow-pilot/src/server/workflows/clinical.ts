@@ -81,6 +81,8 @@ function invalidReplayReference(): never {
 
 export interface ClinicalWorkflow {
   getWorkspace(visitId: string, actor: Actor): VisitWorkspaceDto;
+  /** Presence-only clinical evidence for Journey; no note prose, diagnoses, identifiers, or hashes escape. */
+  getJourneyEvidence(visitId: string): { hasDraft: boolean; hasSignedNote: boolean };
   reviewAllergy(
     tx: AuditedTransaction,
     actor: Actor,
@@ -308,6 +310,13 @@ export function createClinicalWorkflow(input: {
     };
   };
   return {
+    getJourneyEvidence(visitId) {
+      return {
+        hasDraft: input.notes.getDraft(visitId) !== null,
+        hasSignedNote: input.notes.getSignedNote(visitId) !== null,
+      };
+    },
+
     getWorkspace(visitId, actor) {
       if (!hasPermission(actor, "clinical:read")) {
         throw new ApiError({ code: "FORBIDDEN", messageTh: "บัญชีนี้ไม่มีสิทธิ์ดำเนินการ" });
