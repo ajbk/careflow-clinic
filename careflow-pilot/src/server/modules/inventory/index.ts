@@ -14,4 +14,5 @@ export {
   type InventoryService,
   type InventoryServiceOptions,
 } from "./service.js";
+export type { ReservationReadinessDto } from "../../../shared/contracts.js";
 export { registerInventoryRoutes } from "./routes.js";

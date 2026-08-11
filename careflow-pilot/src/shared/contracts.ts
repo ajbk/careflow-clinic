@@ -420,6 +420,18 @@ export const inventoryLotBalanceSchema = inventoryLotSchema.extend({
 });
 export type InventoryLotBalanceDto = z.infer<typeof inventoryLotBalanceSchema>;
 
+export type ReservationReadinessDto = {
+  ready: boolean;
+  lines: Array<{
+    medicationId: string;
+    displayNameSnapshot: string;
+    required: number;
+    available: number;
+    shortfall: number;
+    unitSnapshot: string;
+  }>;
+};
+
 export const inventoryLotsResponseSchema = z.strictObject({
   data: z.array(inventoryLotBalanceSchema),
 });
