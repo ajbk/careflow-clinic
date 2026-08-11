@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { focusManager } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { AppProviders } from "../../src/client/app/providers";
 import { appRoutes } from "../../src/client/app/router";
@@ -125,6 +125,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   server.resetHandlers();
+  vi.restoreAllMocks();
 });
 afterAll(() => server.close());
 
@@ -435,6 +436,106 @@ describe("connected Intake journey", () => {
     expect((bodies[0] as { expectedRevisions: { patient: number } }).expectedRevisions.patient).toBe(4);
     expect((bodies[1] as { expectedRevisions: { patient: number } }).expectedRevisions.patient).toBe(5);
     expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  it("keeps a failed revision-conflict Allergy reload in a truthful stale state", async () => {
+    const user = userEvent.setup();
+    let allergyContextRequests = 0;
+    let intakePosts = 0;
+    server.use(
+      validPatientSearch(),
+      http.get("/api/patients/patient-1/allergy-assessment", () => {
+        allergyContextRequests += 1;
+        return allergyContextRequests === 1
+          ? HttpResponse.json(allergyContext())
+          : jsonError("ALLERGY_CONTEXT_UNAVAILABLE", "ไม่สามารถโหลดข้อมูลแพ้ยาล่าสุดได้", 404);
+      }),
+      http.post("/api/visits/intake", () => {
+        intakePosts += 1;
+        return jsonError("REVISION_CONFLICT", "ข้อมูลผู้ป่วยเปลี่ยนแล้ว", 409, { currentRevisions: { patient: 5 } });
+      }),
+    );
+    renderIntake();
+
+    await user.type(await screen.findByRole("textbox", { name: /ค้นหา|ผู้ป่วย/ }), "000123");
+    await waitFor(() => expect(screen.getByText(patient.displayName)).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: /เลือกผู้ป่วย/ }));
+    await confirmNoAllergy(user);
+    const complaint = screen.getByRole("textbox", { name: /อาการสำคัญ/ });
+    const temperature = screen.getByRole("spinbutton", { name: "อุณหภูมิ" });
+    await user.type(complaint, "ไอ");
+    await user.type(temperature, "38.2");
+    await user.click(screen.getByRole("button", { name: /ส่งพบแพทย์/ }));
+
+    await waitFor(() => expect(allergyContextRequests).toBeGreaterThan(1));
+    const staleCopy = "ยังโหลดข้อมูลแพ้ยาล่าสุดไม่สำเร็จ กรุณาลองโหลดอีกครั้งก่อนยืนยันคำตอบ";
+    await waitFor(() => expect(screen.getByText(staleCopy)).toBeInTheDocument());
+    const staleAlert = screen.getByText(staleCopy).closest('[role="alert"]');
+    expect(staleAlert).toHaveTextContent("ข้อมูลแพ้ยาอาจเปลี่ยนแปลงแล้ว");
+    expect(staleAlert).not.toHaveTextContent("กรุณาตรวจสอบข้อมูล");
+    const reloadButton = screen.getByRole("button", { name: "โหลดข้อมูลแพ้ยาล่าสุดอีกครั้ง" });
+    await waitFor(() => expect(reloadButton).toHaveFocus());
+    expect(complaint).toHaveValue("ไอ");
+    expect(temperature).toHaveValue(38.2);
+    expect(screen.getByRole("radio", { name: "ไม่แพ้" })).not.toBeChecked();
+    expect(screen.getByRole("radio", { name: "ไม่แพ้" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /ส่งพบแพทย์/ })).toBeDisabled();
+    expect(intakePosts).toBe(1);
+  });
+
+  it("ignores a revision-conflict reload superseded by switching Patients", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    let firstPatientContextRequests = 0;
+    let intakePosts = 0;
+    let resolveOldReload: ((response: Response) => void) | undefined;
+    server.use(
+      http.get("/api/patients/search", () => HttpResponse.json({ data: [patient, secondPatient] })),
+      http.get("/api/patients/:patientId/allergy-assessment", ({ params }) => {
+        if (params.patientId === secondPatient.id) return HttpResponse.json(allergyContext(secondPatient));
+        firstPatientContextRequests += 1;
+        if (firstPatientContextRequests === 1) return HttpResponse.json(allergyContext());
+        return new Promise<Response>((resolve) => {
+          resolveOldReload = resolve;
+        });
+      }),
+      http.post("/api/visits/intake", () => {
+        intakePosts += 1;
+        return jsonError("REVISION_CONFLICT", "ข้อมูลผู้ป่วยเปลี่ยนแล้ว", 409, { currentRevisions: { patient: 5 } });
+      }),
+    );
+    renderIntake();
+
+    const search = await screen.findByRole("textbox", { name: /ค้นหา|ผู้ป่วย/ });
+    await user.type(search, "000");
+    await waitFor(() => expect(screen.getByText(patient.displayName)).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: `เลือกผู้ป่วย ${patient.displayName}` }));
+    await confirmNoAllergy(user);
+    const complaint = screen.getByRole("textbox", { name: /อาการสำคัญ/ });
+    await user.type(complaint, "ไอ");
+    await user.click(screen.getByRole("button", { name: /ส่งพบแพทย์/ }));
+
+    await waitFor(() => expect(firstPatientContextRequests).toBeGreaterThan(1));
+    await waitFor(() => expect(resolveOldReload).toBeTypeOf("function"));
+    await user.type(search, "000");
+    await waitFor(() => expect(screen.getByText(secondPatient.displayName)).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: `เลือกผู้ป่วย ${secondPatient.displayName}` }));
+    const secondPatientAnswer = await screen.findByRole("radio", { name: "ไม่แพ้" });
+    await waitFor(() => expect(secondPatientAnswer).toBeEnabled());
+    expect(complaint).toHaveValue("ไอ");
+
+    await act(async () => {
+      resolveOldReload?.(new Response(JSON.stringify(allergyContext({ ...patient, revision: 5 })), { status: 200 }));
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    });
+
+    expect(screen.queryByText("กรุณาตรวจสอบข้อมูล")).not.toBeInTheDocument();
+    expect(screen.queryByText("โหลดข้อมูลล่าสุดแล้ว กรุณายืนยันคำตอบประวัติแพ้ยาอีกครั้ง")).not.toBeInTheDocument();
+    expect(screen.queryByText("ยังโหลดข้อมูลแพ้ยาล่าสุดไม่สำเร็จ กรุณาลองโหลดอีกครั้งก่อนยืนยันคำตอบ")).not.toBeInTheDocument();
+    expect(secondPatientAnswer).not.toHaveFocus();
+    expect(secondPatientAnswer).not.toBeChecked();
+    expect(screen.getByRole("button", { name: /ส่งพบแพทย์/ })).toBeDisabled();
+    expect(intakePosts).toBe(1);
   });
 
   it("creates a new Intake attempt when an Allergy value changes after a failure", async () => {
