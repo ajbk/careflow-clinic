@@ -5,9 +5,10 @@ import { ScreenState } from "../components/careflow/ScreenState";
 import { isApiError } from "../lib/api-error";
 import { sanitizeReturnTo, useAuth } from "./AuthProvider";
 
-function loginTarget(pathname: string, search: string): string {
+function loginTarget(pathname: string, search: string, reason?: "AUTH_REQUIRED" | "SESSION_EXPIRED"): string {
   const returnTo = sanitizeReturnTo(`${pathname}${search}`);
-  return `/login?returnTo=${encodeURIComponent(returnTo)}`;
+  const sessionExpired = reason === "SESSION_EXPIRED";
+  return `/login?returnTo=${encodeURIComponent(returnTo)}${sessionExpired ? "&reason=session-expired" : ""}`;
 }
 
 function returnTarget(search: string): string {
@@ -26,11 +27,11 @@ export function SessionOnlyRoute({
   if (auth.isLoading) return <ScreenState kind="loading" />;
   if (auth.error) {
     if (isApiError(auth.error) && auth.error.status === 401) {
-      return <Navigate replace to={loginTarget(location.pathname, location.search)} />;
+      return <Navigate replace to={loginTarget(location.pathname, location.search, auth.unauthorizedReason ?? undefined)} />;
     }
     return <ScreenState kind={auth.error.code === "SERVER_UNAVAILABLE" ? "unavailable" : "error"} />;
   }
-  if (!auth.session) return <Navigate replace to={loginTarget(location.pathname, location.search)} />;
+  if (!auth.session) return <Navigate replace to={loginTarget(location.pathname, location.search, auth.unauthorizedReason ?? undefined)} />;
   if (requiredState === "pilot-rules") {
     if (auth.session.pilotAcknowledgedAt) {
       const target = returnTarget(location.search);
@@ -64,11 +65,11 @@ export function AuthGate({
   if (auth.isLoading) return <ScreenState kind="loading" showPilotBanner={showPilotBanner} />;
   if (auth.error) {
     if (isApiError(auth.error) && auth.error.status === 401) {
-      return <Navigate replace to={loginTarget(location.pathname, location.search)} />;
+      return <Navigate replace to={loginTarget(location.pathname, location.search, auth.unauthorizedReason ?? undefined)} />;
     }
     return <ScreenState kind={auth.error.code === "SERVER_UNAVAILABLE" ? "unavailable" : "error"} showPilotBanner={showPilotBanner} />;
   }
-  if (!auth.session) return <Navigate replace to={loginTarget(location.pathname, location.search)} />;
+  if (!auth.session) return <Navigate replace to={loginTarget(location.pathname, location.search, auth.unauthorizedReason ?? undefined)} />;
   if (requiredPermission && !auth.session.permissions.includes(requiredPermission)) return <ScreenState kind="denied" showPilotBanner={showPilotBanner} />;
   const target = sanitizeReturnTo(`${location.pathname}${location.search}`);
   if (!auth.session.pilotAcknowledgedAt && location.pathname !== "/pilot-rules") {

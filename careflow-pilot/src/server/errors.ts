@@ -3,6 +3,7 @@ import type { ApiErrorCode } from "../shared/contracts.js";
 const defaultStatusByCode: Record<ApiErrorCode, number> = {
   VALIDATION_FAILED: 422,
   AUTH_REQUIRED: 401,
+  SESSION_EXPIRED: 401,
   PASSWORD_CHANGE_REQUIRED: 403,
   PILOT_ACKNOWLEDGEMENT_REQUIRED: 403,
   FORBIDDEN: 403,

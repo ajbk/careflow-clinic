@@ -28,6 +28,7 @@ export interface SessionService {
     staffId: string,
     now: Date,
   ): { token: string; tokenHash: string };
+  isExpired(token: string | undefined, now: Date): boolean;
   authenticate(token: string | undefined, now: Date): AuthenticatedSession | undefined;
   revoke(token: string | undefined): void;
   revokeAll(staffId: string): void;
@@ -75,6 +76,26 @@ export function createSessionService(input: {
       const generated = values(staffId, now);
       tx.insert(sessions).values(generated.row).run();
       return { token: generated.token, tokenHash: generated.row.tokenHash };
+    },
+    isExpired(token, now) {
+      if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) return false;
+      const tokenHash = hashToken(token);
+      const row = input.database.sqlite
+        .prepare(
+          `SELECT s.created_at, s.last_seen_at, s.expires_at, a.active
+             FROM sessions s JOIN staff_accounts a ON a.id = s.staff_id
+            WHERE s.token_hash = ?`,
+        )
+        .get(tokenHash) as
+        | { created_at: string; last_seen_at: string; expires_at: string; active: number }
+        | undefined;
+      if (!row || row.active !== 1) return false;
+      const idleBoundary = Date.parse(row.last_seen_at) + idleMilliseconds;
+      const absoluteBoundary = Math.min(
+        Date.parse(row.expires_at),
+        Date.parse(row.created_at) + absoluteMilliseconds,
+      );
+      return now.getTime() >= idleBoundary || now.getTime() >= absoluteBoundary;
     },
     authenticate(token, now) {
       if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) return undefined;

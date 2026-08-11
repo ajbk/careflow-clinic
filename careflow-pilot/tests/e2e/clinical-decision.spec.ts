@@ -3,12 +3,18 @@ import { loginAndAcknowledge, startPilotServer } from "./fixtures.js";
 
 type DecisionKind = "ORDER" | "NO_MEDICATION";
 
+const allergyLabel: Record<"UNKNOWN" | "NONE_KNOWN", string> = {
+  UNKNOWN: "ยังไม่ทราบ",
+  NONE_KNOWN: "ยืนยันว่าไม่แพ้",
+};
+
 async function createQueuedPatient(page: Page, complaint: string): Promise<{ hn: string; visitId: string }> {
   await page.getByRole("button", { name: "สร้างผู้ป่วยสังเคราะห์" }).click();
   const header = page.locator(".patient-header");
   await expect(header).toBeVisible();
   const hn = (await header.innerText()).match(/HN DEMO-\d{6}/)?.[0];
   expect(hn).toMatch(/^HN DEMO-\d{6}$/);
+  await page.getByRole("radio", { name: "ไม่แพ้" }).check();
   await page.getByLabel("อาการสำคัญ *").fill(complaint);
   await page.getByRole("button", { name: "ส่งพบแพทย์" }).click();
   await expect(page).toHaveURL(/\/queue$/);
@@ -24,7 +30,7 @@ async function reviewAllergy(page: Page, state: "UNKNOWN" | "NONE_KNOWN"): Promi
   await page.getByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" }).click();
   const dialog = page.getByRole("dialog", { name: "ทบทวนประวัติแพ้ยา" });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: state }).click();
+  await dialog.getByRole("button", { name: allergyLabel[state] }).click();
   await dialog.getByRole("button", { name: "บันทึกการทบทวน" }).click();
   await expect(dialog).toHaveCount(0);
 }
@@ -69,7 +75,9 @@ async function signDecision(page: Page, kind: DecisionKind): Promise<{ noteHash:
 
 for (const journey of [
   { name: "ORDER", allergy: "NONE_KNOWN", expectedStatus: "รอจัดยา" },
-  { name: "NO_MEDICATION", allergy: "UNKNOWN", expectedStatus: "รอคิดเงิน" },
+  // A no-medication decision still requires explicit Allergy review before the
+  // Doctor can begin consultation; UNKNOWN is an Assistant-owned blocker.
+  { name: "NO_MEDICATION", allergy: "NONE_KNOWN", expectedStatus: "รอคิดเงิน" },
 ] as const) {
   test(`${journey.name} persists signed clinical evidence and shared pending state across reload`, async ({ browser }) => {
     const server = await startPilotServer();
@@ -85,10 +93,10 @@ for (const journey of [
       await loginAndAcknowledge(doctorPage, server.baseURL, "doctor");
       const doctorCard = doctorPage.locator(".queue-card").filter({ hasText: patient.hn });
       await expect(doctorCard).toHaveCount(1);
-      await doctorCard.getByRole("button", { name: "เริ่มการตรวจ" }).click();
+      await doctorCard.getByRole("button", { name: "เริ่มตรวจ" }).click();
       await expect(doctorPage).toHaveURL(/\/consultations\/[^/]+$/);
       const consultationPath = new URL(doctorPage.url()).pathname;
-      await expect(doctorPage.locator(".allergy-summary")).toContainText(journey.allergy);
+      await expect(doctorPage.locator(".allergy-summary")).toContainText(allergyLabel[journey.allergy]);
       const signed = await signDecision(doctorPage, journey.name);
 
       await doctorPage.reload();

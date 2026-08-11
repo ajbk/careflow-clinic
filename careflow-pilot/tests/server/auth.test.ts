@@ -50,6 +50,23 @@ describe("named account sessions", () => {
     expect(session.json().data.user.id).toBe(account.actor.id);
   });
 
+  it("distinguishes an elapsed browser session from an anonymous session read", async () => {
+    let now = new Date("2026-08-03T00:00:00.000Z");
+    const fixture = await createTestApp({ clock: () => now });
+    cleanups.push(fixture.cleanup);
+    const account = await seedAccount(fixture.database, { mustChangePassword: false });
+
+    const anonymous = await fixture.app.inject({ method: "GET", url: "/api/auth/session" });
+    expect(anonymous.statusCode).toBe(401);
+    expect(anonymous.json().error.code).toBe("AUTH_REQUIRED");
+
+    const cookie = cookieFrom(await login(fixture.app, account.username, account.password));
+    now = new Date("2026-08-03T00:15:00.000Z");
+    const expired = await fixture.app.inject({ method: "GET", url: "/api/auth/session", headers: { cookie } });
+    expect(expired.statusCode).toBe(401);
+    expect(expired.json().error.code).toBe("SESSION_EXPIRED");
+  });
+
   it("performs one real Argon2 verification for unknown, wrong, and disabled logins with one generic response", async () => {
     const verify = vi.fn((hash: string, password: string) => argon2.verify(hash, password));
     const fixture = await createTestApp({ passwordVerifier: verify });

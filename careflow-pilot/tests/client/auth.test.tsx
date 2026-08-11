@@ -73,6 +73,20 @@ describe("auth boundary", () => {
     expect(screen.queryByText("เซสชันหมดอายุ งานยังไม่ได้ถูกบันทึก")).not.toBeInTheDocument();
   });
 
+  it("marks a server-confirmed elapsed session on the first protected route load", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: { code: "SESSION_EXPIRED", messageTh: "กรุณาเข้าสู่ระบบ", requestId: "expired" } }), {
+        status: 401,
+      }),
+    );
+    const { router } = renderApp("/queue", fetchImpl);
+    await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
+    expect(router.state.location.search).toBe("?returnTo=%2Fqueue&reason=session-expired");
+    await waitFor(() => expect(screen.getByRole("heading", { name: /เข้าสู่ระบบ/ })).toBeInTheDocument());
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
   it("waits for the initial session result before acting on a generic unauthorized event", async () => {
     let resolveSession!: (response: Response) => void;
     const sessionResponse = new Promise<Response>((resolve) => { resolveSession = resolve; });

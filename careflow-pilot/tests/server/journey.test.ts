@@ -753,7 +753,7 @@ describe("Journey truth table and evidence branches", () => {
     const test = await fixture();
     const evidence = seedPreparingEvidence(test);
     const read = async () => test.app.inject({
-      method: "GET", url: `/api/visits/${evidence.visitId}/journey`, headers: { cookie: test.doctorCookie },
+      method: "GET", url: `/api/visits/${evidence.visitId}/journey`, headers: { cookie: test.assistantCookie },
     });
 
     let response = await read();
@@ -780,7 +780,7 @@ describe("Journey truth table and evidence branches", () => {
     const stalePrintEvidence = seedPreparingEvidence(test, 2);
     addPrint(test, stalePrintEvidence);
     response = await test.app.inject({
-      method: "GET", url: `/api/visits/${stalePrintEvidence.visitId}/journey`, headers: { cookie: test.doctorCookie },
+      method: "GET", url: `/api/visits/${stalePrintEvidence.visitId}/journey`, headers: { cookie: test.assistantCookie },
     });
     data = (response.json() as JourneyResponse).data;
     expect(data.nextTask).toMatchObject({ action: "PRINT_LABEL" });
@@ -813,8 +813,16 @@ describe("Journey truth table and evidence branches", () => {
     ]);
     expect(assistantData.nextTask).toMatchObject({ action: "RECEIVE_STOCK", primaryRole: "assistant", availability: "AVAILABLE" });
     expect(assistantData.allowedActions).toEqual(["RECEIVE_STOCK"]);
-    expect((doctor.json() as JourneyResponse).data.allowedActions).toEqual(expect.arrayContaining(["RECEIVE_STOCK"]));
-    expect((doctor.json() as JourneyResponse).data.allowedActions).not.toContain("START_PREPARATION");
+    const doctorData = (doctor.json() as JourneyResponse).data;
+    expect(doctorData).toMatchObject({
+      nextTask: {
+        action: "RECEIVE_STOCK",
+        primaryRole: "assistant",
+        permittedRoles: ["assistant"],
+        availability: "WAITING_FOR_ROLE",
+      },
+    });
+    expect(doctorData.allowedActions).not.toContain("RECEIVE_STOCK");
   });
 
   it("blocks UNKNOWN allergy without presenting a charge-state review action that the command guard rejects", async () => {

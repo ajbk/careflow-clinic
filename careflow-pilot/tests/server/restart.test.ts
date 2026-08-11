@@ -14,7 +14,7 @@ afterEach(async () => {
 });
 
 describe("real-file restart boundary", () => {
-  it("preserves sessions, signed ORDER prices, and multi-lot DISPENSE prices across real-file restarts", async () => {
+  it("preserves Intake Allergy, Journey, stock, Charge, Payment, Closure, and OPD evidence across real-file restarts", async () => {
     const directory = mkdtempSync(join(tmpdir(), "careflow-restart-"));
     const databasePath = join(directory, "careflow.sqlite");
     cleanups.push(() => rmSync(directory, { recursive: true, force: true }));
@@ -447,9 +447,12 @@ describe("real-file restart boundary", () => {
       })(),
     });
     await thirdApp.ready();
+    let thirdClosed = false;
     cleanups.push(async () => {
-      await thirdApp.close();
-      thirdDatabase.close();
+      if (!thirdClosed) {
+        await thirdApp.close();
+        thirdDatabase.close();
+      }
     });
     expect(thirdDatabase.sqlite.prepare(`
       SELECT line.lot_number_snapshot, snapshot.medication_id, snapshot.unit_price_baht_snapshot,
@@ -471,5 +474,185 @@ describe("real-file restart boundary", () => {
       grossTotalBaht: 115,
       netDueBaht: 115,
     });
+
+    const auditCountBeforeJourneyRead = Number(thirdDatabase.sqlite
+      .prepare("SELECT count(*) FROM audit_events")
+      .pluck()
+      .get());
+    const journeyBeforeCharge = await thirdApp.inject({
+      method: "GET",
+      url: `/api/visits/${visitId}/journey`,
+      headers: { cookie: doctorCookie },
+    });
+    expect(journeyBeforeCharge.statusCode).toBe(200);
+    const journeyBeforeChargeData = journeyBeforeCharge.json().data;
+    expect(journeyBeforeChargeData).toMatchObject({
+      visit: { id: visitId, status: "AWAITING_CHARGE", revision: 7 },
+      nextTask: { action: "FINALIZE_CHARGE", primaryRole: "doctor", availability: "AVAILABLE" },
+      blockers: [],
+    });
+    const repeatedJourneyRead = await thirdApp.inject({
+      method: "GET",
+      url: `/api/visits/${visitId}/journey`,
+      headers: { cookie: doctorCookie },
+    });
+    expect(repeatedJourneyRead.statusCode).toBe(200);
+    expect(repeatedJourneyRead.json().data).toEqual(journeyBeforeChargeData);
+    expect(Number(thirdDatabase.sqlite.prepare("SELECT count(*) FROM audit_events").pluck().get()))
+      .toBe(auditCountBeforeJourneyRead);
+
+    const charged = await thirdApp.inject({
+      method: "POST",
+      url: `/api/checkout/${visitId}/charge-finalizations`,
+      headers: { cookie: doctorCookie, "idempotency-key": "restart-finalize-charge" },
+      payload: {
+        expectedRevisions: { visit: 7, clinicPricing: 1 },
+        payload: { settlementIntent: "COLLECT" },
+      },
+    });
+    expect(charged.statusCode).toBe(201);
+    const chargedData = charged.json().data;
+    expect(chargedData).toMatchObject({
+      visit: { id: visitId, status: "AWAITING_PAYMENT", revision: 8 },
+      grossTotalBaht: 115,
+      netDueBaht: 115,
+      collectionState: "AWAITING_COLLECTION",
+      charge: { id: expect.any(String) },
+    });
+
+    const cash = await thirdApp.inject({
+      method: "POST",
+      url: `/api/checkout/${visitId}/payments/cash`,
+      headers: { cookie: assistantCookie, "idempotency-key": "restart-record-cash" },
+      payload: {
+        expectedRevisions: { visit: 8 },
+        payload: { chargeId: chargedData.charge.id, amountBaht: 115 },
+      },
+    });
+    expect(cash.statusCode).toBe(201);
+    const paymentId = thirdDatabase.sqlite
+      .prepare("SELECT id FROM finance_payments WHERE visit_id = ?")
+      .pluck()
+      .get(visitId) as string;
+    expect(paymentId).toMatch(/\S/);
+    expect(cash.json().data).toMatchObject({
+      visit: { id: visitId, status: "READY_TO_CLOSE", revision: 9 },
+      netDueBaht: 115,
+      resolution: { kind: "PAYMENT", paymentId, method: "CASH" },
+    });
+
+    const closed = await thirdApp.inject({
+      method: "POST",
+      url: `/api/visits/${visitId}/close`,
+      headers: { cookie: doctorCookie, "idempotency-key": "restart-close-visit" },
+      payload: {
+        expectedRevisions: { visit: 9 },
+        payload: { chargeId: chargedData.charge.id, resolution: { kind: "PAYMENT", paymentId } },
+      },
+    });
+    expect(closed.statusCode).toBe(201);
+    const closure = closed.json().data;
+    expect(closure).toMatchObject({ id: expect.any(String), visitId, chargeId: chargedData.charge.id });
+
+    const journeyAfterClosure = await thirdApp.inject({
+      method: "GET",
+      url: `/api/visits/${visitId}/journey`,
+      headers: { cookie: doctorCookie },
+    });
+    expect(journeyAfterClosure.statusCode).toBe(200);
+    const journeyAfterClosureData = journeyAfterClosure.json().data;
+    expect(journeyAfterClosureData).toMatchObject({
+      visit: { id: visitId, status: "CLOSED", revision: 10 },
+      nextTask: { action: "OPEN_OPD_CARD", primaryRole: "doctor", availability: "AVAILABLE" },
+      blockers: [],
+    });
+    const allergyAfterClosure = await thirdApp.inject({
+      method: "GET",
+      url: `/api/patients/${patient.id}/allergy-assessment`,
+      headers: { cookie: doctorCookie },
+    });
+    expect(allergyAfterClosure.statusCode).toBe(200);
+    const stockAfterClosure = thirdDatabase.sqlite.prepare(`
+      SELECT
+        COALESCE(SUM(quantity_delta), 0) AS onHand,
+        COALESCE((SELECT SUM(quantity) FROM inventory_reservation_allocations allocation
+          INNER JOIN inventory_reservations reservation ON reservation.id = allocation.reservation_id
+          WHERE allocation.lot_id IN (SELECT id FROM inventory_lots WHERE lot_number IN ('RESTART-EARLY', 'RESTART-LATE'))
+            AND reservation.status = 'ACTIVE'), 0) AS reserved
+      FROM inventory_stock_movements
+      WHERE lot_id IN (SELECT id FROM inventory_lots WHERE lot_number IN ('RESTART-EARLY', 'RESTART-LATE'))
+    `).get() as { onHand: number; reserved: number };
+    expect(stockAfterClosure).toEqual({ onHand: 0, reserved: 0 });
+    const durableEvidence = {
+      journey: journeyAfterClosureData,
+      allergy: allergyAfterClosure.json().data,
+      stock: stockAfterClosure,
+      checkout: (await thirdApp.inject({ method: "GET", url: `/api/checkout/${visitId}`, headers: { cookie: doctorCookie } })).json().data,
+      closure: thirdDatabase.sqlite.prepare(`
+        SELECT id, visit_id AS visitId, charge_id AS chargeId, payment_id AS paymentId, waiver_adjustment_id AS waiverAdjustmentId, content_hash AS contentHash
+        FROM visit_closures WHERE visit_id = ?
+      `).get(visitId),
+      opd: (await thirdApp.inject({ method: "GET", url: `/api/visits/${visitId}/opd-card`, headers: { cookie: doctorCookie } })).json().data,
+      counts: {
+        charges: thirdDatabase.sqlite.prepare("SELECT count(*) FROM finance_charges WHERE visit_id = ?").pluck().get(visitId),
+        payments: thirdDatabase.sqlite.prepare("SELECT count(*) FROM finance_payments WHERE visit_id = ?").pluck().get(visitId),
+        closures: thirdDatabase.sqlite.prepare("SELECT count(*) FROM visit_closures WHERE visit_id = ?").pluck().get(visitId),
+        dispenses: thirdDatabase.sqlite.prepare("SELECT count(*) FROM fulfillment_dispenses WHERE visit_id = ?").pluck().get(visitId),
+      },
+    };
+    expect(durableEvidence.checkout).toMatchObject({
+      visit: { status: "CLOSED", revision: 10 },
+      charge: { id: chargedData.charge.id },
+      resolution: { kind: "PAYMENT", paymentId, method: "CASH" },
+      collectionState: "CLOSED",
+    });
+    expect(durableEvidence.counts).toEqual({ charges: 1, payments: 1, closures: 1, dispenses: 1 });
+
+    await thirdApp.close();
+    thirdDatabase.close();
+    thirdClosed = true;
+
+    const fourthDatabase = openDatabase(databasePath);
+    const fourthApp = await buildApp({
+      db: fourthDatabase,
+      config: firstConfig,
+      clock: () => new Date("2026-08-03T00:00:00.000Z"),
+      idFactory: (() => {
+        let index = 0;
+        return () => `restart-fourth-${++index}`;
+      })(),
+    });
+    await fourthApp.ready();
+    cleanups.push(async () => {
+      await fourthApp.close();
+      fourthDatabase.close();
+    });
+    const afterFinalRestart = {
+      journey: (await fourthApp.inject({ method: "GET", url: `/api/visits/${visitId}/journey`, headers: { cookie: doctorCookie } })).json().data,
+      allergy: (await fourthApp.inject({ method: "GET", url: `/api/patients/${patient.id}/allergy-assessment`, headers: { cookie: doctorCookie } })).json().data,
+      stock: fourthDatabase.sqlite.prepare(`
+        SELECT
+          COALESCE(SUM(quantity_delta), 0) AS onHand,
+          COALESCE((SELECT SUM(quantity) FROM inventory_reservation_allocations allocation
+            INNER JOIN inventory_reservations reservation ON reservation.id = allocation.reservation_id
+            WHERE allocation.lot_id IN (SELECT id FROM inventory_lots WHERE lot_number IN ('RESTART-EARLY', 'RESTART-LATE'))
+              AND reservation.status = 'ACTIVE'), 0) AS reserved
+        FROM inventory_stock_movements
+        WHERE lot_id IN (SELECT id FROM inventory_lots WHERE lot_number IN ('RESTART-EARLY', 'RESTART-LATE'))
+      `).get(),
+      checkout: (await fourthApp.inject({ method: "GET", url: `/api/checkout/${visitId}`, headers: { cookie: doctorCookie } })).json().data,
+      closure: fourthDatabase.sqlite.prepare(`
+        SELECT id, visit_id AS visitId, charge_id AS chargeId, payment_id AS paymentId, waiver_adjustment_id AS waiverAdjustmentId, content_hash AS contentHash
+        FROM visit_closures WHERE visit_id = ?
+      `).get(visitId),
+      opd: (await fourthApp.inject({ method: "GET", url: `/api/visits/${visitId}/opd-card`, headers: { cookie: doctorCookie } })).json().data,
+      counts: {
+        charges: fourthDatabase.sqlite.prepare("SELECT count(*) FROM finance_charges WHERE visit_id = ?").pluck().get(visitId),
+        payments: fourthDatabase.sqlite.prepare("SELECT count(*) FROM finance_payments WHERE visit_id = ?").pluck().get(visitId),
+        closures: fourthDatabase.sqlite.prepare("SELECT count(*) FROM visit_closures WHERE visit_id = ?").pluck().get(visitId),
+        dispenses: fourthDatabase.sqlite.prepare("SELECT count(*) FROM fulfillment_dispenses WHERE visit_id = ?").pluck().get(visitId),
+      },
+    };
+    expect(afterFinalRestart).toEqual(durableEvidence);
   });
 });

@@ -11,6 +11,7 @@ async function createQueuedPatient(page: Page, baseURL: string, complaint: strin
   await expect(header).toBeVisible();
   const hn = (await header.innerText()).match(/HN DEMO-\d{6}/)?.[0];
   expect(hn).toMatch(/^HN DEMO-\d{6}$/);
+  await page.getByRole("radio", { name: "ไม่แพ้" }).check();
   await page.getByLabel("อาการสำคัญ *").fill(complaint);
   await page.getByRole("button", { name: "ส่งพบแพทย์" }).click();
   const card = page.locator(".queue-card").filter({ hasText: hn as string });
@@ -24,7 +25,7 @@ async function reviewNoneKnown(page: Page, hn: string): Promise<void> {
   const card = page.locator(".queue-card").filter({ hasText: hn });
   await card.getByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" }).click();
   const dialog = page.getByRole("dialog", { name: "ทบทวนประวัติแพ้ยา" });
-  await dialog.getByRole("button", { name: "NONE_KNOWN" }).click();
+  await dialog.getByRole("button", { name: "ยืนยันว่าไม่แพ้" }).click();
   await dialog.getByRole("button", { name: "บันทึกการทบทวน" }).click();
   await expect(dialog).toHaveCount(0);
 }
@@ -33,7 +34,7 @@ async function openConsultation(page: Page, baseURL: string, hn: string): Promis
   await page.goto(`${baseURL}/queue`);
   const card = page.locator(".queue-card").filter({ hasText: hn });
   await expect(card).toHaveCount(1);
-  await card.getByRole("button", { name: "เริ่มการตรวจ" }).click();
+  await card.getByRole("button", { name: "เริ่มตรวจ" }).click();
   await expect(page).toHaveURL(/\/consultations\/[^/]+$/);
 }
 
@@ -186,11 +187,12 @@ test("two browsers persist an ORDER multi-lot Charge, Assistant Cash, Doctor clo
     await doctor.goto(`${server.baseURL}/checkout/${patient.visitId}`);
     await expect(doctor.getByRole("button", { name: "ปิด Visit" })).toBeVisible();
     await doctor.getByRole("button", { name: "ปิด Visit" }).click();
-    await expect(doctor.getByRole("link", { name: "เปิดบัตร OPD" })).toBeVisible();
+    const journeyOpdLink = doctor.getByRole("region", { name: "งานถัดไป" }).getByRole("link", { name: "เปิดบัตร OPD" });
+    await expect(journeyOpdLink).toBeVisible();
     const closed = await readCheckout(doctor, server.baseURL, patient.visitId);
     expect(closed).toMatchObject({ visit: { status: "CLOSED" }, collectionState: "CLOSED", charge: { id: charge.id } });
 
-    await doctor.getByRole("link", { name: "เปิดบัตร OPD" }).click();
+    await journeyOpdLink.click();
     await expect(doctor).toHaveURL(new RegExp(`/visits/${patient.visitId}/opd-card$`));
     const opd = await doctor.locator(".opd-card");
     await expect(opd).toContainText("PILOT — ข้อมูลสังเคราะห์เท่านั้น ห้ามใช้รักษาจริง");

@@ -388,6 +388,14 @@ describe("guarded synthetic reset", () => {
       expect(beforeReset.prepare("SELECT status, revision FROM visits WHERE id = 'reset-finance-payment-visit'").get())
         .toEqual({ status: "CLOSED", revision: 4 });
       expect(beforeReset.prepare("SELECT count(*) FROM visit_closures WHERE id = 'reset-finance-closure'").pluck().get()).toBe(1);
+      // The initial Intake itself creates the first explicit NONE_KNOWN
+      // assessment; the synthetic fixture then appends one item-bearing
+      // revision. Reset must clear child items before both revisions.
+      expect(beforeReset.prepare("SELECT revision, state FROM patient_allergy_revisions ORDER BY revision").all()).toEqual([
+        { revision: 1, state: "NONE_KNOWN" },
+        { revision: 2, state: "NONE_KNOWN" },
+      ]);
+      expect(beforeReset.prepare("SELECT count(*) FROM patient_allergy_items").pluck().get()).toBe(1);
       expect(beforeReset.prepare(`
         SELECT line.lot_number_snapshot, snapshot.unit_price_baht_snapshot
         FROM fulfillment_dispense_price_snapshots AS snapshot
@@ -408,6 +416,8 @@ describe("guarded synthetic reset", () => {
     expect(result.errors).toEqual([]);
     const database = new Database(fixture.databasePath);
     try {
+      database.pragma("foreign_keys = ON");
+      expect(database.pragma("foreign_keys", { simple: true })).toBe(1);
       expect(database.prepare("SELECT count(*) FROM patients").pluck().get()).toBe(0);
       expect(database.prepare("SELECT count(*) FROM visits").pluck().get()).toBe(0);
       expect(database.prepare("SELECT count(*) FROM intake_observations").pluck().get()).toBe(0);

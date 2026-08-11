@@ -195,9 +195,10 @@ function reviewAllergyAvailable(role: Actor["role"], status: VisitStatus): boole
 
 function permittedRolesForVisit(action: JourneyAction, status: VisitStatus): Array<Actor["role"]> {
   const roles = permittedRoles(action);
-  return action === "REVIEW_ALLERGY"
-    ? roles.filter((role) => reviewAllergyAvailable(role, status))
-    : roles;
+  if (action === "REVIEW_ALLERGY") return roles.filter((role) => reviewAllergyAvailable(role, status));
+  // Operational permissions are intentionally broad for supervised recovery, but the Journey is a
+  // role-owned handoff. It must expose a mutation CTA only to the role responsible for this step.
+  return roles.filter((role) => role === actionPrimaryRole[action]);
 }
 
 function evidenceInconsistent(evidence: JourneyEvidence): boolean {
@@ -313,7 +314,9 @@ function domainActions(actor: Actor, evidence: JourneyEvidence, blockers: readon
     if (stockShort) actions.push("RECEIVE_STOCK");
   }
   if (evidence.visit.status === "CLOSED" && !evidence.hasClosure) return [];
-  return uniqueActions(actions).filter((action) => hasPermission(actor, journeyPermission[action]));
+  return uniqueActions(actions).filter((action) =>
+    permittedRolesForVisit(action, evidence.visit.status).includes(actor.role) && hasPermission(actor, journeyPermission[action]),
+  );
 }
 
 function plannedAction(evidence: JourneyEvidence): JourneyAction | null {

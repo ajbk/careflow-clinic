@@ -1700,6 +1700,7 @@ export interface CommandBody<TPayload, TRevisions extends Record<string, number>
 export const apiErrorCodeSchema = z.enum([
   "VALIDATION_FAILED",
   "AUTH_REQUIRED",
+  "SESSION_EXPIRED",
   "PASSWORD_CHANGE_REQUIRED",
   "PILOT_ACKNOWLEDGEMENT_REQUIRED",
   "FORBIDDEN",
