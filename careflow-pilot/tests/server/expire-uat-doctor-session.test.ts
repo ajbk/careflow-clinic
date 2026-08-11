@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { linkSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
@@ -159,6 +159,30 @@ describe("expire UAT Doctor session maintenance command", () => {
     expect(result.code).toBe(1);
     expect(result.errors).toEqual(["Doctor UAT session expiry failed"]);
     expect(hashFile(fixture.databasePath)).toBe(before);
+  });
+
+  it.each(["database", "-wal", "-shm"] as const)("rejects a hard-linked %s artifact before any mutation", async (artifactKind) => {
+    const fixture = await preparedUatSessionDatabase();
+    let keeper: Database.Database | undefined;
+    let artifactPath = fixture.databasePath;
+    if (artifactKind !== "database") {
+      keeper = new Database(fixture.databasePath);
+      keeper.pragma("journal_mode = WAL");
+      keeper.pragma("wal_autocheckpoint = 0");
+      keeper.pragma("user_version = 1");
+      artifactPath = `${fixture.databasePath}${artifactKind}`;
+      cleanups.push(async () => { keeper?.close(); });
+    }
+    const aliasPath = `${artifactPath}.hard-link`;
+    linkSync(artifactPath, aliasPath);
+    expect(statSync(artifactPath).nlink).toBe(2);
+    const protectedPaths = [...new Set([fixture.databasePath, artifactPath, aliasPath])];
+    const before = new Map(protectedPaths.map((path) => [path, hashFile(path)]));
+
+    const result = expire(fixture.databasePath);
+
+    expect(result).toEqual({ code: 1, output: [], errors: ["Doctor UAT session expiry failed"] });
+    expect(new Map(protectedPaths.map((path) => [path, hashFile(path)]))).toEqual(before);
   });
 
   it("rejects a non-Pilot database with the UAT filename before opening a writable handle", () => {

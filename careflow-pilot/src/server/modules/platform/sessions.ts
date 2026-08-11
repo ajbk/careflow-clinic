@@ -11,6 +11,18 @@ export const SESSION_MAX_AGE_SECONDS = 28_800;
 // Retain only the hashed identity long enough for concurrent browser requests
 // to receive the same expiry truth after the database row is consumed.
 const EXPIRED_SESSION_MARKER_RETENTION_MS = 60_000;
+export const MAX_EXPIRED_SESSION_MARKERS = 256;
+
+export function sweepExpiredSessionMarkers(markers: Map<string, number>, nowMilliseconds: number): void {
+  for (const [tokenHash, retainedUntil] of markers) {
+    if (retainedUntil <= nowMilliseconds) markers.delete(tokenHash);
+  }
+  while (markers.size > MAX_EXPIRED_SESSION_MARKERS) {
+    const oldestTokenHash = markers.keys().next().value;
+    if (oldestTokenHash === undefined) return;
+    markers.delete(oldestTokenHash);
+  }
+}
 
 export interface AuthenticatedSession {
   actor: Actor;
@@ -55,15 +67,18 @@ export function createSessionService(input: {
 
   const hashToken = (token: string): string => createHash("sha256").update(token).digest("hex");
   const expiredTokenMarkers = new Map<string, number>();
+  const sweepExpiredTokenMarkers = (now: Date): void => {
+    sweepExpiredSessionMarkers(expiredTokenMarkers, now.getTime());
+  };
   const isMarkedExpired = (tokenHash: string, now: Date): boolean => {
-    const retainedUntil = expiredTokenMarkers.get(tokenHash);
-    if (retainedUntil === undefined) return false;
-    if (now.getTime() < retainedUntil) return true;
-    expiredTokenMarkers.delete(tokenHash);
-    return false;
+    sweepExpiredTokenMarkers(now);
+    return expiredTokenMarkers.has(tokenHash);
   };
   const markExpired = (tokenHash: string, now: Date): void => {
+    sweepExpiredTokenMarkers(now);
+    expiredTokenMarkers.delete(tokenHash);
     expiredTokenMarkers.set(tokenHash, now.getTime() + EXPIRED_SESSION_MARKER_RETENTION_MS);
+    sweepExpiredTokenMarkers(now);
   };
   const values = (staffId: string, now: Date) => {
     const token = tokenFactory();
@@ -83,11 +98,13 @@ export function createSessionService(input: {
 
   const service: SessionService = {
     issue(staffId, now) {
+      sweepExpiredTokenMarkers(now);
       const generated = values(staffId, now);
       input.database.db.insert(sessions).values(generated.row).run();
       return { token: generated.token, tokenHash: generated.row.tokenHash };
     },
     issueInTransaction(tx, staffId, now) {
+      sweepExpiredTokenMarkers(now);
       const generated = values(staffId, now);
       tx.insert(sessions).values(generated.row).run();
       return { token: generated.token, tokenHash: generated.row.tokenHash };
@@ -178,6 +195,7 @@ export function createSessionService(input: {
       input.database.db.delete(sessions).where(eq(sessions.staffId, staffId)).run();
     },
     touch(session, now, force = false) {
+      sweepExpiredTokenMarkers(now);
       if (!force && now.getTime() - Date.parse(session.lastSeenAt) < 60_000) return;
       input.database.db
         .update(sessions)

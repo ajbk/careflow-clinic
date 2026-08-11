@@ -49,6 +49,7 @@ function assertExistingRegularDatabase(inputPath: string): void {
     const stat = lstatSync(inputPath);
     if (stat.isSymbolicLink()) fail("database target must not be a symbolic link");
     if (!stat.isFile()) fail("database target must be a file");
+    if (stat.nlink !== 1) fail("database target must not have filesystem aliases");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") fail("database file does not exist");
     throw error;
@@ -61,6 +62,7 @@ function assertSafeDatabaseArtifacts(databasePath: string): void {
       const stat = lstatSync(artifact);
       if (stat.isSymbolicLink()) fail("database artifacts must not be symbolic links");
       if (!stat.isFile()) fail("database artifacts must be regular files");
+      if (stat.nlink !== 1) fail("database artifacts must not have filesystem aliases");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
