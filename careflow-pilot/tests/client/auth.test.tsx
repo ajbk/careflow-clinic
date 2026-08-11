@@ -109,11 +109,15 @@ describe("auth boundary", () => {
   it("returns from an authenticated protected-query expiry with one truthful session notice", async () => {
     const user = userEvent.setup();
     let queueRequests = 0;
+    let sessionRequests = 0;
     let resolveSession!: (response: Response) => void;
     const sessionResponse = new Promise<Response>((resolve) => { resolveSession = resolve; });
     const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
-      if (path === "/api/auth/session") return sessionResponse;
+      if (path === "/api/auth/session") {
+        sessionRequests += 1;
+        return sessionRequests === 1 ? sessionResponse : new Response(JSON.stringify(session), { status: 200 });
+      }
       if (path === "/api/queue") {
         queueRequests += 1;
         return queueRequests === 1
@@ -140,6 +144,66 @@ describe("auth boundary", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/queue"));
     expect(await screen.findByText("เซสชันหมดอายุ งานยังไม่ได้ถูกบันทึก")).toHaveAttribute("role", "status");
     await waitFor(() => expect(router.state.location.state).toBeNull());
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it("clears a returned session notice after later same-shell navigation", async () => {
+    const user = userEvent.setup();
+    let queueRequests = 0;
+    let sessionRequests = 0;
+    let resolveSession!: (response: Response) => void;
+    const sessionResponse = new Promise<Response>((resolve) => { resolveSession = resolve; });
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/auth/session") {
+        sessionRequests += 1;
+        return sessionRequests === 1 ? sessionResponse : new Response(JSON.stringify(session), { status: 200 });
+      }
+      if (path === "/api/queue") {
+        queueRequests += 1;
+        return queueRequests === 1
+          ? new Response(JSON.stringify({ error: { code: "AUTH_REQUIRED", messageTh: "กรุณาเข้าสู่ระบบ", requestId: "expired" } }), { status: 401 })
+          : new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }
+      if (path === "/api/dashboard/today") {
+        return new Response(JSON.stringify({
+          data: {
+            waiting: 0,
+            consulting: 0,
+            awaitingOrderRevision: 0,
+            awaitingPreparation: 0,
+            preparing: 0,
+            awaitingRelease: 0,
+            awaitingHandoff: 0,
+            awaitingCharge: 0,
+            awaitingPayment: 0,
+            readyToClose: 0,
+            updatedAt: "2026-08-03T01:00:00.000Z",
+          },
+        }), { status: 200 });
+      }
+      if (path === "/api/auth/login" && init?.method === "POST") return new Response(JSON.stringify(session), { status: 200 });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const { router } = renderManagedApp("/queue", fetchImpl);
+
+    await waitFor(() => expect(fetchImpl).toHaveBeenCalledWith("/api/auth/session", expect.any(Object)));
+    resolveSession(new Response(JSON.stringify(session), { status: 200 }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
+
+    await user.type(screen.getByLabelText("ชื่อผู้ใช้"), "doctor");
+    await user.type(screen.getByLabelText("รหัสผ่าน"), "password");
+    await user.click(screen.getByRole("button", { name: "เข้าสู่ระบบ" }));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/queue"));
+    expect(await screen.findByText("เซสชันหมดอายุ งานยังไม่ได้ถูกบันทึก")).toHaveAttribute("role", "status");
+    await waitFor(() => expect(router.state.location.state).toBeNull());
+
+    await router.navigate("/overview");
+    await waitFor(() => expect(router.state.location.pathname).toBe("/overview"));
+    expect(await screen.findByRole("heading", { name: "ภาพรวมคลินิก" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("เซสชันหมดอายุ งานยังไม่ได้ถูกบันทึก")).not.toBeInTheDocument());
     expect(window.localStorage.length).toBe(0);
     expect(window.sessionStorage.length).toBe(0);
   });

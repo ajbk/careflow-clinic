@@ -65,6 +65,10 @@ describe("named account sessions", () => {
     const expired = await fixture.app.inject({ method: "GET", url: "/api/auth/session", headers: { cookie } });
     expect(expired.statusCode).toBe(401);
     expect(expired.json().error.code).toBe("SESSION_EXPIRED");
+
+    const repeatedExpiredRead = await fixture.app.inject({ method: "GET", url: "/api/auth/session", headers: { cookie } });
+    expect(repeatedExpiredRead.statusCode).toBe(401);
+    expect(repeatedExpiredRead.json().error.code).toBe("SESSION_EXPIRED");
   });
 
   it("performs one real Argon2 verification for unknown, wrong, and disabled logins with one generic response", async () => {

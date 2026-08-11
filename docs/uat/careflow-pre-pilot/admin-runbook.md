@@ -25,7 +25,7 @@ In another local terminal, verify only the loopback health endpoint:
 curl -fsS http://127.0.0.1:3001/api/health
 ```
 
-Record the exact database path in the checklist. Keep the same path for every planned restart so the restart evidence remains testable.
+Record the exact database path in the checklist. Keep the same path for every planned restart and every Scenario; do not reset it or make a new database between Scenarios. The two local role accounts for this UAT are named `uat-assistant` and `uat-doctor`; prepare their local access outside these documents and never record sign-in material here.
 
 ## Mandatory-stop handling
 
@@ -59,6 +59,26 @@ Only use this for the planned restart steps in the guide and only when no mandat
 
 4. Verify `curl -fsS http://127.0.0.1:3001/api/health` succeeds.
 5. Ask the tester to reload the existing browser windows and compare the visible Journey, Allergy, stock, Charge/collection, Closure, and Doctor OPD evidence with the checklist checkpoint. A mismatch is a mandatory stop.
+
+## Controlled Doctor session-expiry checkpoint
+
+Use this only for Scenario 5 / `S-02`, only after no mandatory-stop event, and only on the exact local synthetic UAT file `data/uat/careflow-uat.sqlite`. It has no patient input and accepts no sign-in material. It targets only the sole active `uat-doctor` session by changing its `expires_at` timestamp to the past; it does not delete or revoke a session and does not touch the Assistant session.
+
+Before running it:
+
+1. The Doctor must be the named `uat-doctor`, have exactly one active browser session, and be paused on the existing synthetic Visit. Do not open another Doctor session. Keep the Assistant session available for `S-03`.
+2. Stop the local host with `Ctrl-C` and confirm it is not listening with `lsof -nP -iTCP:3001 -sTCP:LISTEN`.
+3. From the repository's `careflow-pilot` directory, run exactly:
+
+   ```bash
+   npm run expire:uat-doctor-session -- --database "$PWD/data/uat/careflow-uat.sqlite" --confirm EXPIRE-UAT-DOCTOR-SESSION
+   ```
+
+4. A successful command ends with `Doctor UAT session timestamp expired`. Restart the same host/path using the command in the planned restart checkpoint, then have the Doctor reload the same Consultation page.
+
+Expected observable result: the server returns a true elapsed session, the browser goes to local sign-in, and after the approved local sign-in flow it returns to the original Consultation route once with `เซสชันหมดอายุ งานยังไม่ได้ถูกบันทึก`. The unsaved SOAP text is absent; the previously committed Intake/Allergy evidence remains.
+
+The command fails closed without writing when the path is not the exact UAT filename, the host is running, the file is not the known synthetic CareFlow UAT database, or there are zero/multiple/other Doctor sessions. If it fails, mark `S-02` BLOCKED, preserve the files, and escalate. Do not choose a different database, remove locks, reset, delete, revoke, or retry around the guard.
 
 ## Lock recovery is read-only until directed otherwise
 

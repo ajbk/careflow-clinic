@@ -25,6 +25,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --env-file-if-exists=.env --import tsx scripts/migrate.ts",
     "reset:synthetic": "node --env-file-if-exists=.env --import tsx scripts/reset-synthetic-data.ts",
+    "expire:uat-doctor-session": "node --env-file-if-exists=.env --import tsx scripts/expire-uat-doctor-session.ts",
     "users": "node --env-file-if-exists=.env --import tsx scripts/users.ts",
     "lint": "eslint ."
   },

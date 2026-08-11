@@ -2,11 +2,26 @@ import { expect, test, type Page } from "@playwright/test";
 import type { CheckoutDto, VisitJourneyDto } from "../../src/shared/contracts.js";
 import { E2E_PASSWORD, loginAndAcknowledge, startPilotServer } from "./fixtures.js";
 
-type ControlledPilotServer = Awaited<ReturnType<typeof startPilotServer>> & {
+type PilotServer = Awaited<ReturnType<typeof startPilotServer>>;
+
+type ControlledPilotServer = PilotServer & {
   expireSessionsForStaff(staffId: string): void;
 };
 
 type QueuedPatient = { hn: string; visitId: string };
+type DemoMedication = { id: string; optionName: RegExp; selectionName: RegExp };
+
+const demoMedicationA: DemoMedication = {
+  id: "DEMO-MED-001",
+  optionName: /\[DEMO\] ยาทดสอบชนิด A/,
+  selectionName: /เลือก \[DEMO\] ยาทดสอบชนิด A/,
+};
+
+const demoMedicationB: DemoMedication = {
+  id: "DEMO-MED-002",
+  optionName: /\[DEMO\] ยาทดสอบชนิด B/,
+  selectionName: /เลือก \[DEMO\] ยาทดสอบชนิด B/,
+};
 
 async function createQueuedNoAllergyPatient(page: Page, baseURL: string, complaint: string): Promise<QueuedPatient> {
   await page.goto(`${baseURL}/intake`);
@@ -47,11 +62,16 @@ async function completeClinicalNote(page: Page, suffix: string): Promise<void> {
   await page.getByRole("textbox", { name: "การวินิจฉัย", exact: true }).fill(`การวินิจฉัยสังเคราะห์ ${suffix}`);
 }
 
-async function signOrder(page: Page, quantity: number, suffix: string): Promise<void> {
+async function signOrder(
+  page: Page,
+  quantity: number,
+  suffix: string,
+  medication: DemoMedication = demoMedicationA,
+): Promise<void> {
   await completeClinicalNote(page, suffix);
   await page.getByRole("button", { name: "สั่งยาจากรายการทดสอบ" }).click();
-  await page.getByLabel("ค้นหารายการยา").fill("DEMO-MED-001");
-  await page.getByRole("button", { name: /เลือก \[DEMO\] ยาทดสอบชนิด A/ }).click();
+  await page.getByLabel("ค้นหารายการยา").fill(medication.id);
+  await page.getByRole("button", { name: medication.selectionName }).click();
   await page.getByLabel("จำนวน").fill(String(quantity));
   await page.getByLabel("วิธีใช้ยา").fill("รับประทานตามคำสั่งสังเคราะห์");
   await page.getByRole("button", { name: "บันทึกร่าง" }).click();
@@ -115,17 +135,40 @@ async function createQueuedPresentAllergyPatient(page: Page, baseURL: string, co
   return { hn: hn as string, visitId: visitId as string };
 }
 
-async function receiveSyntheticLot(page: Page, baseURL: string, input: { lotNumber: string; quantity: number }): Promise<void> {
+async function receiveSyntheticLot(
+  page: Page,
+  baseURL: string,
+  input: { lotNumber: string; quantity: number; medication?: DemoMedication },
+): Promise<void> {
+  const medication = input.medication ?? demoMedicationA;
   await page.goto(`${baseURL}/inventory/receive`);
-  await page.getByLabel("ค้นหายา").fill("DEMO-MED-001");
-  const medication = page.getByRole("option", { name: /\[DEMO\] ยาทดสอบชนิด A/ });
-  await expect(medication).toBeVisible();
-  await medication.click();
+  await page.getByLabel("ค้นหายา").fill(medication.id);
+  const medicationOption = page.getByRole("option", { name: medication.optionName });
+  await expect(medicationOption).toBeVisible();
+  await medicationOption.click();
   await page.getByLabel("จำนวนที่รับ").fill(String(input.quantity));
   await page.getByLabel("ผู้ผลิต / ผู้จัดจำหน่าย").fill("ผู้จำหน่ายสังเคราะห์ Guided UAT");
   await page.getByLabel("เลขที่ล็อต").fill(input.lotNumber);
   await page.getByLabel("วันหมดอายุ").fill("2033-12-31");
   await page.getByRole("button", { name: "ยืนยันการรับยา" }).click();
+}
+
+function medicationReadiness(server: PilotServer, medicationId: string): { onHand: number; reserved: number; available: number } {
+  const onHand = Number(server.database.sqlite.prepare(`
+    SELECT COALESCE(SUM(movement.quantity_delta), 0)
+    FROM inventory_stock_movements movement
+    INNER JOIN inventory_lots lot ON lot.id = movement.lot_id
+    WHERE lot.medication_id = ?
+  `).pluck().get(medicationId));
+  const reserved = Number(server.database.sqlite.prepare(`
+    SELECT COALESCE(SUM(allocation.quantity), 0)
+    FROM inventory_reservation_allocations allocation
+    INNER JOIN inventory_reservations reservation ON reservation.id = allocation.reservation_id
+    INNER JOIN inventory_lots lot ON lot.id = allocation.lot_id
+    WHERE lot.medication_id = ?
+      AND reservation.status = 'ACTIVE'
+  `).pluck().get(medicationId));
+  return { onHand, reserved, available: onHand - reserved };
 }
 
 test("returns safely after mid-Visit session expiry while retaining only committed Intake evidence", async ({ browser }) => {
@@ -454,7 +497,7 @@ test("skips dispensing for NO_MEDICATION, completes Doctor full waiver, and clos
   }
 });
 
-test("refetches a stock shortage after two visible final-lot reservation attempts without retrying", async ({ browser }) => {
+test("proves exactly one B-unit readiness before two visible final-lot reservation attempts without retrying", async ({ browser }) => {
   test.setTimeout(90_000);
   const server = await startPilotServer();
   const assistantContext = await browser.newContext();
@@ -467,13 +510,19 @@ test("refetches a stock shortage after two visible final-lot reservation attempt
     await loginAndAcknowledge(assistant, server.baseURL, "assistant");
     await loginAndAcknowledge(secondAssistant, server.baseURL, "assistant");
     await loginAndAcknowledge(doctor, server.baseURL, "doctor");
+    expect(medicationReadiness(server, demoMedicationB.id)).toEqual({ onHand: 0, reserved: 0, available: 0 });
     const first = await createQueuedNoAllergyPatient(assistant, server.baseURL, "ทดสอบแข่งจองล็อตสุดท้าย รายที่หนึ่ง");
     const second = await createQueuedNoAllergyPatient(assistant, server.baseURL, "ทดสอบแข่งจองล็อตสุดท้าย รายที่สอง");
     await openConsultation(doctor, server.baseURL, first);
-    await signOrder(doctor, 1, "FINAL-LOT-ONE");
+    await signOrder(doctor, 1, "FINAL-LOT-ONE", demoMedicationB);
     await openConsultation(doctor, server.baseURL, second);
-    await signOrder(doctor, 1, "FINAL-LOT-TWO");
-    await receiveSyntheticLot(assistant, server.baseURL, { lotNumber: "GUIDED-FINAL-LOT", quantity: 1 });
+    await signOrder(doctor, 1, "FINAL-LOT-TWO", demoMedicationB);
+    await receiveSyntheticLot(assistant, server.baseURL, {
+      lotNumber: "GUIDED-FINAL-LOT-B",
+      quantity: 1,
+      medication: demoMedicationB,
+    });
+    expect(medicationReadiness(server, demoMedicationB.id)).toEqual({ onHand: 1, reserved: 0, available: 1 });
 
     await assistant.goto(`${server.baseURL}/dispensing/${first.visitId}`);
     await secondAssistant.goto(`${server.baseURL}/dispensing/${second.visitId}`);
@@ -496,23 +545,14 @@ test("refetches a stock shortage after two visible final-lot reservation attempt
     const losing = activeVisitId === first.visitId
       ? { page: secondAssistant, visit: second, posts: () => secondReservationPosts }
       : { page: assistant, visit: first, posts: () => firstReservationPosts };
-    await expect(losing.page.locator(".journey-blocker-card")).toContainText("ขาด 1 เม็ด");
+    await expect(losing.page.locator(".journey-blocker-card")).toContainText("ขาด 1 แคปซูล");
     await expect(losing.page.getByRole("button", { name: "เริ่มเตรียมยา" })).toHaveCount(0);
     expect(firstReservationPosts).toBe(1);
     expect(secondReservationPosts).toBe(1);
     expect(losing.posts()).toBe(1);
-    const stock = server.database.sqlite.prepare(`
-      SELECT
-        COALESCE(SUM(movement.quantity_delta), 0) AS onHand,
-        COALESCE(SUM(allocation.quantity), 0) AS reserved
-      FROM inventory_lots lot
-      LEFT JOIN inventory_stock_movements movement ON movement.lot_id = lot.id
-      LEFT JOIN inventory_reservation_allocations allocation ON allocation.lot_id = lot.id
-      LEFT JOIN inventory_reservations reservation ON reservation.id = allocation.reservation_id AND reservation.status = 'ACTIVE'
-      WHERE lot.lot_number = 'GUIDED-FINAL-LOT'
-    `).get() as { onHand: number; reserved: number };
-    expect(stock).toEqual({ onHand: 1, reserved: 1 });
-    expect(stock.onHand - stock.reserved).toBeGreaterThanOrEqual(0);
+    const stock = medicationReadiness(server, demoMedicationB.id);
+    expect(stock).toEqual({ onHand: 1, reserved: 1, available: 0 });
+    expect(stock.available).toBeGreaterThanOrEqual(0);
   } finally {
     await assistantContext.close();
     await secondAssistantContext.close();

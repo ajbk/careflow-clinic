@@ -11,12 +11,13 @@ export function SessionReturnNotice() {
   const location = useLocation();
   const navigate = useNavigate();
   const returnedNotice = sessionNotice(location.state);
+  const locationKey = `${location.pathname}${location.search}${location.hash}`;
   const [notice] = useState(returnedNotice);
 
   useEffect(() => {
     if (returnedNotice !== "SESSION_EXPIRED") return;
-    navigate(`${location.pathname}${location.search}${location.hash}`, { replace: true, state: null });
-  }, [location.hash, location.pathname, location.search, navigate, returnedNotice]);
+    navigate(locationKey, { replace: true, state: null });
+  }, [locationKey, navigate, returnedNotice]);
 
   if (notice !== "SESSION_EXPIRED") return null;
   return <p className="session-return-notice" role="status">เซสชันหมดอายุ งานยังไม่ได้ถูกบันทึก</p>;

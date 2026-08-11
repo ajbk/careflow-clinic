@@ -8,6 +8,10 @@ import { clinicConfig, sessions } from "./schema.js";
 export const SESSION_COOKIE_NAME = "careflow_session";
 export const SESSION_MAX_AGE_SECONDS = 28_800;
 
+// Retain only the hashed identity long enough for concurrent browser requests
+// to receive the same expiry truth after the database row is consumed.
+const EXPIRED_SESSION_MARKER_RETENTION_MS = 60_000;
+
 export interface AuthenticatedSession {
   actor: Actor;
   account: {
@@ -50,6 +54,17 @@ export function createSessionService(input: {
   if (!clinic) throw new Error("Clinic configuration unavailable");
 
   const hashToken = (token: string): string => createHash("sha256").update(token).digest("hex");
+  const expiredTokenMarkers = new Map<string, number>();
+  const isMarkedExpired = (tokenHash: string, now: Date): boolean => {
+    const retainedUntil = expiredTokenMarkers.get(tokenHash);
+    if (retainedUntil === undefined) return false;
+    if (now.getTime() < retainedUntil) return true;
+    expiredTokenMarkers.delete(tokenHash);
+    return false;
+  };
+  const markExpired = (tokenHash: string, now: Date): void => {
+    expiredTokenMarkers.set(tokenHash, now.getTime() + EXPIRED_SESSION_MARKER_RETENTION_MS);
+  };
   const values = (staffId: string, now: Date) => {
     const token = tokenFactory();
     if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error("Invalid session token factory output");
@@ -80,6 +95,7 @@ export function createSessionService(input: {
     isExpired(token, now) {
       if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) return false;
       const tokenHash = hashToken(token);
+      if (isMarkedExpired(tokenHash, now)) return true;
       const row = input.database.sqlite
         .prepare(
           `SELECT s.created_at, s.last_seen_at, s.expires_at, a.active
@@ -100,6 +116,7 @@ export function createSessionService(input: {
     authenticate(token, now) {
       if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) return undefined;
       const tokenHash = hashToken(token);
+      if (isMarkedExpired(tokenHash, now)) return undefined;
       const row = input.database.sqlite
         .prepare(
           `SELECT s.token_hash, s.created_at, s.last_seen_at, s.expires_at,
@@ -135,6 +152,7 @@ export function createSessionService(input: {
       );
       if (now.getTime() >= idleBoundary || now.getTime() >= absoluteBoundary) {
         input.database.db.delete(sessions).where(eq(sessions.tokenHash, tokenHash)).run();
+        markExpired(tokenHash, now);
         return undefined;
       }
       return {
@@ -152,7 +170,9 @@ export function createSessionService(input: {
     },
     revoke(token) {
       if (!token) return;
-      input.database.db.delete(sessions).where(eq(sessions.tokenHash, hashToken(token))).run();
+      const tokenHash = hashToken(token);
+      expiredTokenMarkers.delete(tokenHash);
+      input.database.db.delete(sessions).where(eq(sessions.tokenHash, tokenHash)).run();
     },
     revokeAll(staffId) {
       input.database.db.delete(sessions).where(eq(sessions.staffId, staffId)).run();
