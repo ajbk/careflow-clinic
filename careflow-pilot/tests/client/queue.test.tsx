@@ -18,6 +18,40 @@ const patient = {
   createdAt: "2026-08-03T00:00:00.000Z",
 };
 
+const waitingJourneySummary = {
+  steps: [
+    { code: "INTAKE" as const, labelTh: "รับผู้ป่วย", state: "COMPLETE" as const },
+    { code: "SCREENING" as const, labelTh: "คัดกรอง", state: "COMPLETE" as const },
+    { code: "CONSULTATION" as const, labelTh: "ตรวจรักษา", state: "CURRENT" as const },
+    { code: "MEDICATION_DECISION" as const, labelTh: "ตัดสินใจเรื่องยา", state: "UPCOMING" as const },
+    { code: "PREPARATION" as const, labelTh: "เตรียมยา", state: "UPCOMING" as const },
+    { code: "HANDOFF" as const, labelTh: "ส่งมอบยา", state: "UPCOMING" as const },
+    { code: "PAYMENT" as const, labelTh: "ชำระเงิน", state: "UPCOMING" as const },
+    { code: "CLOSURE" as const, labelTh: "ปิด Visit", state: "UPCOMING" as const },
+  ],
+  nextTask: {
+    action: "START_CONSULTATION" as const,
+    labelTh: "เริ่มตรวจ",
+    primaryRole: "doctor" as const,
+    permittedRoles: ["doctor" as const],
+    availability: "AVAILABLE" as const,
+  },
+  blockers: [],
+  allowedActions: ["START_CONSULTATION" as const],
+};
+
+const consultingJourneySummary = {
+  ...waitingJourneySummary,
+  nextTask: {
+    action: "OPEN_CONSULTATION" as const,
+    labelTh: "เปิดห้องตรวจ",
+    primaryRole: "doctor" as const,
+    permittedRoles: ["doctor" as const],
+    availability: "AVAILABLE" as const,
+  },
+  allowedActions: ["OPEN_CONSULTATION" as const],
+};
+
 const waitingItem = {
   visit: {
     id: "visit-42",
@@ -46,6 +80,7 @@ const waitingItem = {
     spo2Percent: 98,
   },
   allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"] as const,
+  journeySummary: waitingJourneySummary,
 };
 
 const consultingItem = {
@@ -57,6 +92,7 @@ const consultingItem = {
     startedAt: "2026-08-03T01:15:00.000Z",
   },
   allowedActions: ["OPEN_CONSULTATION"] as const,
+  journeySummary: consultingJourneySummary,
 };
 
 const pendingItems = [
@@ -476,7 +512,7 @@ describe("connected shared queue workflow", () => {
     await vi.waitFor(() => expect(queueRequests).toBe(3));
   });
 
-  it("sends the current Queue revision and navigates only after a committed CONSULTING response", async () => {
+  it("sends the current Queue revision and navigates only after a client-decodable Journey-decorated CONSULTING response", async () => {
     const user = userEvent.setup();
     let requestBody: unknown;
     let requestKey = "";

@@ -73,10 +73,18 @@ export function registerVisitRoutes(input: {
       operation: "visit.start-consultation.v1",
       scope: visitId,
       requestBody: body,
-      work: (tx) => ({
-        statusCode: 200,
-        data: input.visits.startConsultation(tx, actor, visitId, body),
-      }),
+      work: (tx) => {
+        const item = input.visits.startConsultation(tx, actor, visitId, body);
+        return {
+          statusCode: 200,
+          // Persist the same safe CONSULTING summary with the idempotent response so first and
+          // replayed calls both satisfy the Queue client contract without a second read race.
+          data: {
+            ...item,
+            journeySummary: input.journey.summarizeCommittedStartConsultation(actor, item),
+          },
+        };
+      },
     });
     return reply.code(result.statusCode).send(result.body);
   });

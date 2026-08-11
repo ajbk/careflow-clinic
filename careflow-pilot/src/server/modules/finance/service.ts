@@ -1021,7 +1021,10 @@ export function createFinanceService(input: FinanceServiceOptions): FinanceServi
 
     getJourneyEvidence(actor, visitId) {
       const visit = readJourneyVisit(input.database.db, visitId);
-      const evidence = loadChargeEvidence(input.database.db, { visitId });
+      // Journey is a read-only projection, but it must not turn malformed immutable evidence
+      // into an apparently terminal action. Reuse the same hash/line/resolution validation as
+      // Checkout and let its safe, opaque error be mapped to a Journey blocker by the caller.
+      const evidence = readChargeEvidence(input.database.db, { visitId });
       if (!evidence) {
         return {
           collectionState: "PENDING_CHARGE",

@@ -5,7 +5,7 @@ import {
 } from "../../src/server/modules/platform/index.js";
 import { createPatientService } from "../../src/server/modules/patient/index.js";
 import { intakeObservations, createVisitService, visits } from "../../src/server/modules/visit/index.js";
-import type { IntakePayload, SubmitIntakeBody } from "../../src/shared/contracts.js";
+import { queueItemSchema, type IntakePayload, type SubmitIntakeBody } from "../../src/shared/contracts.js";
 import { cookieFrom, login, seedAccount } from "./helpers/auth.js";
 import { createTestApp } from "./helpers/database.js";
 
@@ -261,7 +261,7 @@ describe("shared Intake, Queue, and consultation workflow", () => {
     expect(test.database.db.select().from(visits).all()).toHaveLength(1);
   });
 
-  it("shares Queue state, gates Start Consultation to Doctor, and checks revisions", async () => {
+  it("shares Queue state, returns a client-decodable Journey on first/replayed Start Consultation, and checks revisions", async () => {
     const test = await fixture();
     const patient = await createPatient(test.app, test.assistantCookie);
     const created = await submitIntake(test.app, test.assistantCookie, patient.json().data.id);
@@ -314,6 +314,22 @@ describe("shared Intake, Queue, and consultation workflow", () => {
       },
     });
     expect(started.json().data.allowedActions).toEqual(["OPEN_CONSULTATION"]);
+    // Break caught: committing a raw QueueBaseItem makes the client decoder reject the
+    // response after the Visit state has already advanced.
+    expect(queueItemSchema.safeParse(started.json().data).success).toBe(true);
+    expect(started.json().data.journeySummary).toMatchObject({
+      nextTask: { action: "OPEN_CONSULTATION", availability: "AVAILABLE" },
+    });
+    const journey = await test.app.inject({
+      method: "GET",
+      url: `/api/visits/${visitId}/journey`,
+      headers: { cookie: test.doctorCookie },
+    });
+    expect(journey.statusCode).toBe(200);
+    const { visit: _summaryVisit, refreshedAt: _summaryRefreshedAt, ...expectedSummary } = journey.json().data;
+    void _summaryVisit;
+    void _summaryRefreshedAt;
+    expect(started.json().data.journeySummary).toEqual(expectedSummary);
 
     const replay = await test.app.inject({
       method: "POST",
@@ -323,6 +339,8 @@ describe("shared Intake, Queue, and consultation workflow", () => {
     });
     expect(replay.statusCode).toBe(200);
     expect(replay.json()).toEqual({ data: started.json().data, replayed: true });
+    expect(queueItemSchema.safeParse(replay.json().data).success).toBe(true);
+    expect(replay.json().data.journeySummary).toEqual(started.json().data.journeySummary);
 
     const assistantAfterStart = await test.app.inject({
       method: "GET",

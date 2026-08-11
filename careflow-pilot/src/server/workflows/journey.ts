@@ -135,6 +135,8 @@ type JourneyEvidence = {
   medication: MedicationEvidence;
   fulfillment: FulfillmentEvidence;
   finance: FinanceEvidence;
+  /** Finance reported structurally invalid immutable evidence; keep this opaque to Journey callers. */
+  financeInconsistent: boolean;
   readiness: ReservationReadinessDto | null;
   hasClosure: boolean;
 };
@@ -144,6 +146,8 @@ export interface JourneyService {
   getSummary(actor: Actor, visitId: string): JourneySummaryDto;
   /** Builds the committed Intake response without rereading a transaction that is still being committed. */
   summarizeCommittedIntake(actor: Actor, item: QueueBaseItemDto): JourneySummaryDto;
+  /** Builds the committed CONSULTING response without rereading a transaction that is still being committed. */
+  summarizeCommittedStartConsultation(actor: Actor, item: QueueBaseItemDto): JourneySummaryDto;
 }
 
 export interface JourneyServiceOptions {
@@ -178,12 +182,9 @@ function uniqueActions(actions: readonly JourneyAction[]): JourneyAction[] {
   return [...new Set(actions)];
 }
 
-function reviewAllergyAvailable(
-  allergyState: JourneyEvidence["allergyState"],
-  status: VisitStatus,
-): boolean {
+function reviewAllergyAvailable(role: Actor["role"], status: VisitStatus): boolean {
   if (status === "WAITING") return true;
-  return allergyState === "UNKNOWN" && [
+  return role === "doctor" && [
     "CONSULTING",
     "AWAITING_PREPARATION",
     "PREPARING",
@@ -192,7 +193,15 @@ function reviewAllergyAvailable(
   ].includes(status);
 }
 
+function permittedRolesForVisit(action: JourneyAction, status: VisitStatus): Array<Actor["role"]> {
+  const roles = permittedRoles(action);
+  return action === "REVIEW_ALLERGY"
+    ? roles.filter((role) => reviewAllergyAvailable(role, status))
+    : roles;
+}
+
 function evidenceInconsistent(evidence: JourneyEvidence): boolean {
+  if (evidence.financeInconsistent) return true;
   if (evidence.visit.status !== "CLOSED") return false;
   // A valid Closure is the only safe authority for post-close OPD access. Keep this test deliberately
   // opaque: it never exposes a missing Note, diagnosis, financial record, or other clinical evidence.
@@ -228,7 +237,7 @@ function inconsistentBlocker(): JourneyBlocker {
   return {
     code: "EVIDENCE_INCONSISTENT",
     titleTh: "หลักฐาน Visit ไม่สอดคล้องกัน",
-    detailTh: "Visit ปิดแล้วแต่ไม่พบหลักฐานการปิด Visit ที่ครบถ้วน",
+    detailTh: "พบหลักฐาน Visit ที่ไม่สอดคล้องกัน จึงยังดำเนินการต่อไม่ได้",
     primaryRole: "doctor",
     recoveryAction: null,
     medication: null,
@@ -292,7 +301,7 @@ function domainActions(actor: Actor, evidence: JourneyEvidence, blockers: readon
   if (["CONSULTING", "AWAITING_ORDER_REVISION"].includes(evidence.visit.status)) {
     actions.push("OPEN_CONSULTATION");
   }
-  if (reviewAllergyAvailable(evidence.allergyState, evidence.visit.status)) actions.push("REVIEW_ALLERGY");
+  if (reviewAllergyAvailable(actor.role, evidence.visit.status)) actions.push("REVIEW_ALLERGY");
   // Legacy UNKNOWN is a safety boundary: existing workflow still permits Doctor consultation
   // work, but no fulfillment/financial mutation may make it look finalizable.
   if (!allergyUnknown) {
@@ -331,28 +340,36 @@ function toNextTask(
   action: JourneyAction | null,
   allowedActions: readonly JourneyAction[],
   blockers: readonly JourneyBlocker[],
+  status: VisitStatus,
 ): JourneySummaryDto["nextTask"] {
   if (!action) return null;
   if (action === "OPEN_OPD_CARD" && actor.role !== "doctor") return null;
   const relevantBlocker = blockers.find((blocker) => blocker.recoveryAction === action);
   const primaryRole = relevantBlocker?.primaryRole ?? actionPrimaryRole[action];
+  const actionRoles = permittedRolesForVisit(action, status);
+  if (actionRoles.length === 0) return null;
   const availability = allowedActions.includes(action)
     ? "AVAILABLE"
-    : permittedRoles(action).includes(actor.role)
+    : actionRoles.includes(actor.role)
       ? "BLOCKED"
       : "WAITING_FOR_ROLE";
   return {
     action,
-    labelTh: actor.role === "assistant" && availability === "WAITING_FOR_ROLE" && [
-      "START_CONSULTATION",
-      "OPEN_CONSULTATION",
-    ].includes(action)
-      ? "รอแพทย์ตรวจและสั่งการรักษา"
+    labelTh: availability === "WAITING_FOR_ROLE"
+      ? waitingRoleLabel(action, primaryRole)
       : journeyActionLabels[action],
     primaryRole,
-    permittedRoles: permittedRoles(action),
+    permittedRoles: actionRoles,
     availability,
   };
+}
+
+function waitingRoleLabel(action: JourneyAction, primaryRole: Actor["role"]): string {
+  if (primaryRole === "doctor" && ["START_CONSULTATION", "OPEN_CONSULTATION"].includes(action)) {
+    return "รอแพทย์ตรวจและสั่งการรักษา";
+  }
+  const roleTh = primaryRole === "doctor" ? "แพทย์" : "ผู้ช่วย";
+  return `รอ${roleTh}${journeyActionLabels[action]}`;
 }
 
 function deriveSummary(actor: Actor, evidence: JourneyEvidence): JourneySummaryDto {
@@ -365,12 +382,15 @@ function deriveSummary(actor: Actor, evidence: JourneyEvidence): JourneySummaryD
   }
   const allowedActions = domainActions(actor, evidence, blockers);
   const recovery = blockers.find((blocker) => blocker.recoveryAction !== null)?.recoveryAction ?? null;
-  const nextTask = toNextTask(
-    actor,
-    recovery ?? plannedAction(evidence),
-    allowedActions,
-    blockers,
-  );
+  const nextTask = blockers.some((blocker) => blocker.code === "EVIDENCE_INCONSISTENT")
+    ? null
+    : toNextTask(
+      actor,
+      recovery ?? plannedAction(evidence),
+      allowedActions,
+      blockers,
+      evidence.visit.status,
+    );
   return {
     steps: deriveSteps(evidence, blockers),
     nextTask,
@@ -384,13 +404,30 @@ export function createJourneyService(input: JourneyServiceOptions): JourneyServi
     const journeyVisit = input.visits.getJourneyVisit(visitId);
     if (!journeyVisit) return notFound();
     const medication = input.medications.getJourneyDecision(visitId);
+    let finance: FinanceEvidence;
+    let financeInconsistent = false;
+    try {
+      finance = input.finance.getJourneyEvidence(actor, visitId);
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== "CHARGE_SOURCE_INCOMPLETE") throw error;
+      // Finance keeps validation and raw evidence private. Journey only receives this opaque,
+      // fail-closed boundary when immutable Charge/collection evidence is inconsistent.
+      finance = {
+        collectionState: "PENDING_CHARGE",
+        allowedActions: [],
+        hasCharge: false,
+        resolutionKind: null,
+      };
+      financeInconsistent = true;
+    }
     return {
       visit: journeyVisit.visit,
       allergyState: input.patients.getAllergyAssessment(journeyVisit.patientId).state,
       clinical: input.clinical.getJourneyEvidence(visitId),
       medication,
       fulfillment: input.fulfillment.getJourneyEvidence(visitId),
-      finance: input.finance.getJourneyEvidence(actor, visitId),
+      finance,
+      financeInconsistent,
       readiness: medication?.kind === "ORDER" && journeyVisit.visit.status === "AWAITING_PREPARATION"
         ? input.inventory.getReservationReadiness(visitId)
         : null,
@@ -418,31 +455,40 @@ export function createJourneyService(input: JourneyServiceOptions): JourneyServi
     },
 
     summarizeCommittedIntake(actor, item) {
-      return deriveSummary(actor, {
-        visit: item.visit,
-        allergyState: item.allergy.state,
-        clinical: { hasDraft: false, hasSignedNote: false },
-        medication: null,
-        fulfillment: {
-          allowedActions: [],
-          hasLabel: false,
-          hasReservation: false,
-          preparationStatus: null,
-          allocationCount: 0,
-          confirmationCount: 0,
-          hasPrint: false,
-          hasRelease: false,
-          hasDispense: false,
-        },
-        finance: {
-          collectionState: "PENDING_CHARGE",
-          allowedActions: [],
-          hasCharge: false,
-          resolutionKind: null,
-        },
-        readiness: null,
-        hasClosure: false,
-      });
+      return deriveSummary(actor, committedQueueEvidence(item));
     },
+
+    summarizeCommittedStartConsultation(actor, item) {
+      return deriveSummary(actor, committedQueueEvidence(item));
+    },
+  };
+}
+
+function committedQueueEvidence(item: QueueBaseItemDto): JourneyEvidence {
+  return {
+    visit: item.visit,
+    allergyState: item.allergy.state,
+    clinical: { hasDraft: false, hasSignedNote: false },
+    medication: null,
+    fulfillment: {
+      allowedActions: [],
+      hasLabel: false,
+      hasReservation: false,
+      preparationStatus: null,
+      allocationCount: 0,
+      confirmationCount: 0,
+      hasPrint: false,
+      hasRelease: false,
+      hasDispense: false,
+    },
+    finance: {
+      collectionState: "PENDING_CHARGE",
+      allowedActions: [],
+      hasCharge: false,
+      resolutionKind: null,
+    },
+    financeInconsistent: false,
+    readiness: null,
+    hasClosure: false,
   };
 }

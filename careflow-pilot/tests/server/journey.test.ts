@@ -616,18 +616,103 @@ describe("privacy-safe server Visit Journey", () => {
     expect(data.allowedActions).toEqual(expect.arrayContaining(["START_CONSULTATION", "REVIEW_ALLERGY"]));
   });
 
-  it("projects a clinically-active Allergy recovery from domain evidence before applying actor permissions", async () => {
-    // Break caught: role-specific domain inference can hide a permitted Allergy recovery from Assistant.
+  it("never advertises an Assistant Allergy review that the real CONSULTING command rejects", async () => {
+    // Break caught: a Journey action must not deterministically fail the command guard.
     const test = await fixture();
     const seeded = seedJourneyVisit(test, { status: "CONSULTING", allergy: "UNKNOWN" });
+    const command = await test.app.inject({
+      method: "POST", url: `/api/patients/${seeded.patientId}/allergy-revisions`,
+      headers: { cookie: test.assistantCookie, "idempotency-key": "journey-assistant-consulting-allergy" },
+      payload: {
+        expectedRevisions: { patient: 1, visit: 7 },
+        payload: {
+          visitId: seeded.visitId,
+          state: "NONE_KNOWN",
+          items: [],
+          sourceText: "Journey command parity",
+          reason: "Journey command parity",
+        },
+      },
+    });
+    expect(command.statusCode).toBe(409);
+    expect(command.json()).toMatchObject({ error: { code: "INVALID_STATE" } });
     const assistant = await test.app.inject({
       method: "GET", url: `/api/visits/${seeded.visitId}/journey`, headers: { cookie: test.assistantCookie },
     });
     expect(assistant.statusCode).toBe(200);
     expect((assistant.json() as JourneyResponse).data).toMatchObject({
-      nextTask: { action: "REVIEW_ALLERGY", availability: "AVAILABLE" },
-      allowedActions: ["REVIEW_ALLERGY"],
+      nextTask: {
+        action: "REVIEW_ALLERGY",
+        primaryRole: "doctor",
+        permittedRoles: ["doctor"],
+        availability: "WAITING_FOR_ROLE",
+      },
+      allowedActions: [],
     });
+  });
+
+  it.each([
+    { role: "assistant", status: "AWAITING_ORDER_REVISION" },
+    { role: "doctor", status: "AWAITING_ORDER_REVISION" },
+    { role: "assistant", status: "AWAITING_CHARGE" },
+    { role: "doctor", status: "AWAITING_CHARGE" },
+    { role: "assistant", status: "AWAITING_PAYMENT" },
+    { role: "doctor", status: "AWAITING_PAYMENT" },
+    { role: "assistant", status: "READY_TO_CLOSE" },
+    { role: "doctor", status: "READY_TO_CLOSE" },
+  ] as const)("omits a no-role Allergy recovery for $role at $status", async ({ role, status }) => {
+    // Break caught: a blocker action with no role allowed by the command state guard is a fake CTA.
+    const test = await fixture();
+    const seeded = seedJourneyVisit(test, { status, allergy: "UNKNOWN" });
+    const cookie = role === "assistant" ? test.assistantCookie : test.doctorCookie;
+    const journey = await test.app.inject({
+      method: "GET", url: `/api/visits/${seeded.visitId}/journey`, headers: { cookie },
+    });
+    const data = (journey.json() as JourneyResponse).data;
+    expect(data.allowedActions).not.toContain("REVIEW_ALLERGY");
+    expect(data.nextTask).toBeNull();
+
+    const command = await test.app.inject({
+      method: "POST", url: `/api/patients/${seeded.patientId}/allergy-revisions`,
+      headers: { cookie, "idempotency-key": `journey-no-role-allergy-${role}-${status}` },
+      payload: {
+        expectedRevisions: { patient: 1, visit: 7 },
+        payload: {
+          visitId: seeded.visitId,
+          state: "NONE_KNOWN",
+          items: [],
+          sourceText: "Journey command parity",
+          reason: "Journey command parity",
+        },
+      },
+    });
+    expect(command.statusCode).toBe(409);
+    expect(command.json()).toMatchObject({ error: { code: "INVALID_STATE" } });
+  });
+
+  it.each([
+    { status: "WAITING", action: "START_CONSULTATION", imperative: "เริ่มตรวจ" },
+    { status: "CONSULTING", action: "OPEN_CONSULTATION", imperative: "เปิดห้องตรวจ" },
+    { status: "AWAITING_RELEASE", action: "RELEASE_MEDICATION", imperative: "ปล่อยยา" },
+    { status: "AWAITING_CHARGE", action: "FINALIZE_CHARGE", imperative: "ยืนยันยอดเพื่อรับชำระ" },
+    { status: "READY_TO_CLOSE", action: "CLOSE_VISIT", imperative: "ปิด Visit" },
+  ] as const)("uses explanatory waiting copy for Assistant $action handoff", async ({ status, action, imperative }) => {
+    // Break caught: a waiting actor must not receive the same imperative mutation label as its owner.
+    const test = await fixture();
+    const seeded = seedJourneyVisit(test, { status });
+    const response = await test.app.inject({
+      method: "GET", url: `/api/visits/${seeded.visitId}/journey`, headers: { cookie: test.assistantCookie },
+    });
+    expect(response.statusCode).toBe(200);
+    const data = (response.json() as JourneyResponse).data;
+    expect(data.nextTask).toMatchObject({
+      action,
+      primaryRole: "doctor",
+      availability: "WAITING_FOR_ROLE",
+    });
+    expect(data.nextTask?.labelTh).toMatch(/^รอแพทย์/);
+    expect(data.nextTask?.labelTh).not.toBe(imperative);
+    expect(data.allowedActions).not.toContain(action);
   });
 });
 
@@ -732,8 +817,8 @@ describe("Journey truth table and evidence branches", () => {
     expect((doctor.json() as JourneyResponse).data.allowedActions).not.toContain("START_PREPARATION");
   });
 
-  it("keeps an UNKNOWN allergy recovery ahead of charge finalization while preserving Doctor consultation access", async () => {
-    // Break caught: a legacy UNKNOWN must not become a path around the server allergy finalization guard.
+  it("blocks UNKNOWN allergy without presenting a charge-state review action that the command guard rejects", async () => {
+    // Break caught: a legacy UNKNOWN must not become a path around either the allergy state guard or finalization guard.
     const test = await fixture();
     const charge = seedJourneyVisit(test, { status: "AWAITING_CHARGE", allergy: "UNKNOWN", decision: "NO_MEDICATION" });
     const waiting = seedJourneyVisit(test, { status: "WAITING", allergy: "UNKNOWN" });
@@ -745,7 +830,7 @@ describe("Journey truth table and evidence branches", () => {
     });
     const chargeData = (chargeResponse.json() as JourneyResponse).data;
     expect(chargeData.blockers[0]).toMatchObject({ code: "ALLERGY_UNKNOWN", recoveryAction: "REVIEW_ALLERGY" });
-    expect(chargeData.nextTask).toMatchObject({ action: "REVIEW_ALLERGY" });
+    expect(chargeData.nextTask).toBeNull();
     expect(chargeData.allowedActions).toEqual([]);
     expect(chargeData.allowedActions).not.toContain("FINALIZE_CHARGE");
     expect((waitingResponse.json() as JourneyResponse).data.allowedActions)
@@ -774,6 +859,32 @@ describe("Journey truth table and evidence branches", () => {
       expect(data.steps.find((step) => step.code === "PAYMENT")?.state)
         .toBe(resolution === "WAIVER" ? "SKIPPED" : "COMPLETE");
     }
+  });
+
+  it("fails closed on corrupt Finance evidence without adding a terminal action or writing", async () => {
+    // Break caught: Journey must use Finance integrity validation rather than raw Charge evidence.
+    const test = await fixture();
+    const finance = await seedResolvedFinance(test, "CASH");
+    if (!finance.paymentId) throw new Error("Cash fixture requires a Payment");
+    // Legacy corruption cannot pass the append-only guard; simulate the historic row before reading it.
+    test.database.sqlite.exec("DROP TRIGGER finance_payments_block_update");
+    test.database.sqlite.prepare("UPDATE finance_payments SET content_hash = ? WHERE id = ?")
+      .run("0".repeat(64), finance.paymentId);
+    const before = snapshotDomainTables(test.database.sqlite);
+
+    const response = await test.app.inject({
+      method: "GET", url: `/api/visits/${finance.visitId}/journey`, headers: { cookie: test.doctorCookie },
+    });
+    expect(response.statusCode).toBe(200);
+    const data = (response.json() as JourneyResponse).data;
+    expect(data.blockers).toEqual([expect.objectContaining({
+      code: "EVIDENCE_INCONSISTENT", recoveryAction: null,
+    })]);
+    expect(data.allowedActions).toEqual([]);
+    expect(data.allowedActions).not.toContain("CLOSE_VISIT");
+    expect(data.nextTask).toBeNull();
+    assertNoForbiddenKeys(data);
+    expect(snapshotDomainTables(test.database.sqlite)).toBe(before);
   });
 
   it("treats CLOSED without Closure as opaque inconsistent evidence, but a Closure authorizes only Doctor OPD", async () => {
