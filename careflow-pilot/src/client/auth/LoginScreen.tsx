@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { ScreenState } from "../components/careflow/ScreenState";
 import { ApiError } from "../lib/api-error";
-import { sanitizeReturnTo, useAuth } from "./AuthProvider";
+import { sanitizeReturnTo, type SessionReturnState, useAuth } from "./AuthProvider";
 
 export function AuthScreenLayout({ children }: { children: ReactElement }): ReactElement {
   return (
@@ -24,7 +24,11 @@ export function LoginScreen(): ReactElement {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<ApiError | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const target = sanitizeReturnTo(new URLSearchParams(location.search).get("returnTo"));
+  const search = new URLSearchParams(location.search);
+  const target = sanitizeReturnTo(search.get("returnTo"));
+  const returnState: SessionReturnState | null = search.get("reason") === "session-expired"
+    ? { authNotice: "SESSION_EXPIRED" }
+    : null;
 
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -37,7 +41,7 @@ export function LoginScreen(): ReactElement {
       } else if (session.mustChangePassword) {
         navigate(`/change-password?returnTo=${encodeURIComponent(target)}`, { replace: true });
       } else {
-        navigate(target, { replace: true });
+        navigate(target, { replace: true, state: returnState });
       }
     } catch (value) {
       setError(value instanceof ApiError ? value : new ApiError({ status: 0, code: "SERVER_UNAVAILABLE", messageTh: "ระบบไม่พร้อมใช้งาน" }));

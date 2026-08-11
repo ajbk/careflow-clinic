@@ -1,6 +1,12 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import { allergyReviewResultSchema, type ReviewAllergyBody, type VisitWorkspaceDto } from "../../shared/contracts";
+import {
+  allergyReviewResultSchema,
+  type AllergyAssessmentDto,
+  type AllergySeverity,
+  type ReviewAllergyBody,
+  type VisitWorkspaceDto,
+} from "../../shared/contracts";
 import { queryKeys } from "../app/query-client";
 import { ApiClient, apiClient as defaultApiClient } from "../lib/api-client";
 import { createCommandAttempt, type CommandAttempt } from "../lib/idempotency";
@@ -11,6 +17,19 @@ export type AllergyReviewContext = {
   patient: Pick<VisitWorkspaceDto["patient"], "id" | "revision">;
   visit: Pick<VisitWorkspaceDto["visit"], "id" | "revision">;
 };
+
+export function allergyStateLabelTh(state: AllergyAssessmentDto["state"]): string {
+  if (state === "NONE_KNOWN") return "ยืนยันว่าไม่แพ้";
+  if (state === "PRESENT") return "มีประวัติแพ้ยา";
+  return "ยังไม่ทราบ";
+}
+
+export function allergySeverityLabelTh(severity: AllergySeverity): string {
+  if (severity === "MILD") return "เล็กน้อย";
+  if (severity === "MODERATE") return "ปานกลาง";
+  if (severity === "SEVERE") return "รุนแรง";
+  return "ยังไม่ทราบ";
+}
 
 export function createReviewAllergyAttempt(context: AllergyReviewContext, payload: ReviewAllergyBody["payload"]): ReviewAllergyAttempt {
   return createCommandAttempt({ patient: context.patient.revision, visit: context.visit.revision }, payload);

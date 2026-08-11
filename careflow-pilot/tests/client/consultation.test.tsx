@@ -286,8 +286,9 @@ describe("Doctor consultation authoring", () => {
 
     const snapshot = await screen.findByRole("region", { name: "Patient Snapshot" });
     expect(snapshot).toHaveTextContent("ประวัติแพ้ยา");
+    expect(snapshot).toHaveTextContent("มีประวัติแพ้ยา");
     expect(snapshot).toHaveTextContent("เพนิซิลลิน");
-    expect(snapshot).toHaveTextContent("ความรุนแรง MILD");
+    expect(snapshot).toHaveTextContent("ความรุนแรง เล็กน้อย");
     expect(snapshot).toHaveTextContent("หมายเหตุ พกบัตรแพ้ยา");
     expect(snapshot).toHaveTextContent("ผู้ให้ข้อมูล ผู้ป่วยแจ้งประวัติ");
     expect(snapshot).toHaveTextContent("เหตุผล ทบทวนก่อนตรวจ");

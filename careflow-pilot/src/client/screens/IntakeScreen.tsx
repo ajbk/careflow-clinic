@@ -3,14 +3,23 @@ import { ClipboardPlus, Search, Send, Sparkles, UserPlus } from "lucide-react";
 import type { ChangeEvent, FormEvent, ReactElement } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import type { PatientDto } from "../../shared/contracts";
+import type { AllergyAssessmentDto, PatientDto } from "../../shared/contracts";
+import { IntakeAllergyCard } from "../components/careflow/IntakeAllergyCard";
 import { PatientHeader } from "../components/careflow/PatientHeader";
 import { ActionButton, Card, PageHeader, SectionHeading } from "../components/careflow/ui";
-import { createSyntheticPatient, type SyntheticPatientAttempt, usePatientSearch } from "../features/patients";
+import {
+  createSyntheticPatient,
+  type SyntheticPatientAttempt,
+  usePatientAllergy,
+  usePatientSearch,
+} from "../features/patients";
 import {
   createIntakeAttempt,
+  initialIntakeAllergyDraft,
   initialIntakeDraft,
+  intakeAllergyDraftFromContext,
   type IntakeAttempt,
+  type IntakeAllergyDraft,
   type IntakeDraft,
   useSubmitIntake,
   vitalFields,
@@ -19,7 +28,7 @@ import { ApiClient, apiClient as defaultApiClient } from "../lib/api-client";
 import { ApiError, isApiError, serverUnavailableError } from "../lib/api-error";
 import { createCommandAttempt } from "../lib/idempotency";
 
-const fieldOrder = [
+const intakeFieldOrder = [
   "chiefComplaint",
   "temperatureC",
   "systolicMmhg",
@@ -30,13 +39,28 @@ const fieldOrder = [
   "heightCm",
 ] as const;
 
-type FieldKey = (typeof fieldOrder)[number];
+function normalizeFieldKey(key: string): string | null {
+  const normalized = key.replace(/^payload\./, "");
+  if (normalized.startsWith("vitals.")) {
+    const vital = normalized.replace(/^vitals\./, "");
+    return (intakeFieldOrder as readonly string[]).includes(vital) ? vital : null;
+  }
+  if (normalized === "allergy.answer" || normalized === "allergy.changeReason") return normalized;
+  if (/^allergy\.items\.\d+\.(substance|reaction|severity|note)$/.test(normalized)) return normalized;
+  return (intakeFieldOrder as readonly string[]).includes(normalized) ? normalized : null;
+}
 
-function normalizeFieldKey(key: string): FieldKey | null {
-  const normalized = key
-    .replace(/^payload\./, "")
-    .replace(/^vitals\./, "");
-  return (fieldOrder as readonly string[]).includes(normalized) ? normalized as FieldKey : null;
+function fieldErrorRank(key: string): number {
+  const intakeIndex = (intakeFieldOrder as readonly string[]).indexOf(key);
+  if (intakeIndex >= 0) return intakeIndex;
+  if (key === "allergy.answer") return 100;
+  const item = /^allergy\.items\.(\d+)\.(substance|reaction|severity|note)$/.exec(key);
+  if (item) {
+    const propertyRank = { substance: 0, reaction: 1, severity: 2, note: 3 }[item[2]] ?? 4;
+    return 110 + Number(item[1]) * 4 + propertyRank;
+  }
+  if (key === "allergy.changeReason") return 300;
+  return 1_000;
 }
 
 function ageLabel(patient: PatientDto): string {
@@ -57,6 +81,24 @@ function sexLabel(patient: PatientDto): string {
 
 function hasDraftValues(draft: IntakeDraft): boolean {
   return Object.values(draft).some((value) => value.trim().length > 0);
+}
+
+function requiresAllergyChangeReason(
+  assessment: AllergyAssessmentDto | undefined,
+  draft: IntakeAllergyDraft,
+): boolean {
+  return assessment !== undefined && assessment.state !== "UNKNOWN" && (
+    (assessment.state === "PRESENT" && draft.answer === "NO") ||
+    (assessment.state === "NONE_KNOWN" && draft.answer === "YES")
+  );
+}
+
+function hasValidReportedAllergyItems(draft: IntakeAllergyDraft): boolean {
+  return draft.answer !== "YES" || (
+    draft.items.length >= 1 &&
+    draft.items.length <= 20 &&
+    draft.items.every((item) => item.substance.trim().length > 0 && item.reaction.trim().length > 0)
+  );
 }
 
 function describeError(error: unknown): ApiError {
@@ -96,6 +138,7 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedPatient, setSelectedPatient] = useState<PatientDto | null>(null);
   const [draft, setDraft] = useState<IntakeDraft>(initialIntakeDraft);
+  const [allergyDraft, setAllergyDraft] = useState<IntakeAllergyDraft>(initialIntakeAllergyDraft);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [activeVisit, setActiveVisit] = useState(false);
@@ -103,7 +146,9 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
   const [submitAttempt, setSubmitAttempt] = useState<IntakeAttempt | null>(null);
   const [retryAttempt, setRetryAttempt] = useState<IntakeAttempt | null>(null);
   const generateAttemptRef = useRef<SyntheticPatientAttempt | null>(null);
-  const fieldRefs = useRef<Record<string, HTMLInputElement | HTMLTextAreaElement | null>>({});
+  const loadedAllergyPatientId = useRef<string | null>(null);
+  const nextAllergyItemId = useRef(0);
+  const fieldRefs = useRef<Record<string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null>>({});
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearch(searchText.trim()), 250);
@@ -111,6 +156,23 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
   }, [searchText]);
 
   const patientSearch = usePatientSearch(debouncedSearch, apiClient);
+  const patientAllergy = usePatientAllergy(selectedPatient?.id ?? null, apiClient);
+  const allergyContext = patientAllergy.data?.patient.id === selectedPatient?.id ? patientAllergy.data : undefined;
+  const allergyContextPending = selectedPatient !== null && (!allergyContext || patientAllergy.isFetching);
+  const allergyChangeReasonRequired = requiresAllergyChangeReason(allergyContext?.allergy, allergyDraft);
+  const reportedAllergyItemsValid = hasValidReportedAllergyItems(allergyDraft);
+
+  useEffect(() => {
+    if (!selectedPatient) {
+      loadedAllergyPatientId.current = null;
+      return;
+    }
+    if (!allergyContext || loadedAllergyPatientId.current === selectedPatient.id) return;
+    loadedAllergyPatientId.current = selectedPatient.id;
+    nextAllergyItemId.current = allergyContext.allergy.items.length;
+    setAllergyDraft(intakeAllergyDraftFromContext(allergyContext));
+  }, [allergyContext, selectedPatient]);
+
   const generateMutation = useMutation({
     mutationFn: (attempt: SyntheticPatientAttempt) => createSyntheticPatient(apiClient, attempt),
     onSuccess: (result, attempt) => {
@@ -120,6 +182,9 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
       setDebouncedSearch("");
       setGenerateAttempt(null);
       generateAttemptRef.current = null;
+      loadedAllergyPatientId.current = null;
+      nextAllergyItemId.current = 0;
+      setAllergyDraft(initialIntakeAllergyDraft);
       setSubmitAttempt(null);
       setRetryAttempt(null);
       setFieldErrors({});
@@ -134,10 +199,18 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
     navigate("/queue", { replace: true });
   }, [navigate, submitMutation.isSuccess]);
 
-  function handleSubmitError(error: unknown): void {
+  async function handleSubmitError(error: unknown, attempt: IntakeAttempt): Promise<void> {
     const apiError = describeError(error);
     setActiveVisit(apiError.code === "ACTIVE_VISIT_EXISTS");
     setSummaryError(apiError.messageTh || "ยังบันทึกไม่ได้");
+    if (apiError.status === 409 && apiError.code === "REVISION_CONFLICT") {
+      setSubmitAttempt(null);
+      setRetryAttempt(null);
+      setAllergyDraft((current) => ({ ...current, answer: null }));
+      await patientAllergy.refetch();
+      return;
+    }
+    setRetryAttempt(attempt);
     if (apiError.status === 422 && apiError.fieldErrors) {
       const mapped = Object.fromEntries(
         Object.entries(apiError.fieldErrors)
@@ -149,7 +222,9 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
   }
 
   useEffect(() => {
-    const firstKey = fieldOrder.find((key) => fieldErrors[key]);
+    const firstKey = Object.keys(fieldErrors)
+      .filter((key) => fieldErrors[key])
+      .sort((left, right) => fieldErrorRank(left) - fieldErrorRank(right))[0];
     if (!firstKey) return;
     const element = fieldRefs.current[firstKey];
     if (!element) return;
@@ -166,6 +241,62 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
     setActiveVisit(false);
   };
 
+  const clearAllergyErrors = () => {
+    setFieldErrors((current) => Object.fromEntries(
+      Object.entries(current).filter(([key]) => !key.startsWith("allergy.")),
+    ));
+  };
+
+  const invalidateAllergyAttempt = () => {
+    setSubmitAttempt(null);
+    setRetryAttempt(null);
+    setSummaryError(null);
+    setActiveVisit(false);
+  };
+
+  const setAllergyAnswer = (answer: "NO" | "YES") => {
+    const firstItem = answer === "YES" && allergyDraft.items.length === 0
+      ? { key: `new-${nextAllergyItemId.current++}`, substance: "", reaction: "", severity: "UNKNOWN" as const, note: "" }
+      : null;
+    setAllergyDraft((current) => ({
+      ...current,
+      answer,
+      items: firstItem ? [firstItem] : current.items,
+    }));
+    clearAllergyErrors();
+    invalidateAllergyAttempt();
+  };
+
+  const updateAllergyItem = (key: string, patch: Partial<IntakeAllergyDraft["items"][number]>) => {
+    setAllergyDraft((current) => ({
+      ...current,
+      items: current.items.map((item) => item.key === key ? { ...item, ...patch } : item),
+    }));
+    clearAllergyErrors();
+    invalidateAllergyAttempt();
+  };
+
+  const addAllergyItem = () => {
+    if (allergyDraft.items.length >= 20) return;
+    const item = { key: `new-${nextAllergyItemId.current++}`, substance: "", reaction: "", severity: "UNKNOWN" as const, note: "" };
+    setAllergyDraft((current) => ({ ...current, items: [...current.items, item] }));
+    clearAllergyErrors();
+    invalidateAllergyAttempt();
+  };
+
+  const removeAllergyItem = (key: string) => {
+    if (allergyDraft.items.length <= 1) return;
+    setAllergyDraft((current) => ({ ...current, items: current.items.filter((item) => item.key !== key) }));
+    clearAllergyErrors();
+    invalidateAllergyAttempt();
+  };
+
+  const setAllergyChangeReason = (changeReason: string) => {
+    setAllergyDraft((current) => ({ ...current, changeReason }));
+    clearAllergyErrors();
+    invalidateAllergyAttempt();
+  };
+
   function choosePatient(patient: PatientDto): void {
     if (submitPending || generationPending) return;
     if (selectedPatient?.id === patient.id) return;
@@ -174,6 +305,9 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
       if (!confirmed) return;
     }
     setSelectedPatient(patient);
+    loadedAllergyPatientId.current = null;
+    nextAllergyItemId.current = 0;
+    setAllergyDraft(initialIntakeAllergyDraft);
     setGenerateAttempt(null);
     generateAttemptRef.current = null;
     setSubmitAttempt(null);
@@ -213,12 +347,15 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
       setSummaryError("กรุณาค้นหาหรือสร้างผู้ป่วยสังเคราะห์ก่อนส่งเข้าคิว");
       return;
     }
-    const attempt = submitAttempt ?? createIntakeAttempt(selectedPatient, draft);
+    if (!allergyContext || allergyContextPending || allergyDraft.answer === null || !reportedAllergyItemsValid || (allergyChangeReasonRequired && !allergyDraft.changeReason.trim())) {
+      setSummaryError("กรุณาโหลดและยืนยันข้อมูลแพ้ยาก่อนส่งเข้าคิว");
+      return;
+    }
+    const attempt = submitAttempt ?? createIntakeAttempt(allergyContext, draft, allergyDraft);
     if (!submitAttempt) setSubmitAttempt(attempt);
     submitMutation.mutate(attempt, {
       onError: (error) => {
-        setRetryAttempt(attempt);
-        handleSubmitError(error);
+        void handleSubmitError(error, attempt);
       },
     });
   }
@@ -246,8 +383,7 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
           {retryAttempt && (error.status === 0 || error.status >= 500) ? (
             <button className="inline-retry-button" type="button" onClick={() => submitMutation.mutate(retryAttempt, {
               onError: (nextError) => {
-                setRetryAttempt(retryAttempt);
-                handleSubmitError(nextError);
+                void handleSubmitError(nextError, retryAttempt);
               },
             })} disabled={submitPending}>
               {submitPending ? "กำลังลองใหม่…" : "ลองบันทึกอีกครั้ง"}
@@ -319,6 +455,30 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
           )}
         </Card>
 
+        <Card className="intake-card intake-allergy-panel">
+          <IntakeAllergyCard
+            assessment={allergyContext?.allergy}
+            draft={allergyDraft}
+            fieldErrors={fieldErrors}
+            disabled={!selectedPatient || allergyContextPending || submitPending}
+            onAnswerChange={setAllergyAnswer}
+            onItemChange={updateAllergyItem}
+            onAddItem={addAllergyItem}
+            onRemoveItem={removeAllergyItem}
+            onChangeReasonChange={setAllergyChangeReason}
+            onRegisterField={(key, element) => { fieldRefs.current[key] = element; }}
+          />
+          {selectedPatient && patientAllergy.error ? (
+            <div className="intake-error-summary intake-allergy-context-error" role="alert">
+              <strong>โหลดข้อมูลแพ้ยาไม่สำเร็จ</strong>
+              <span>{describeError(patientAllergy.error).messageTh}</span>
+              <button className="inline-retry-button" type="button" onClick={() => void patientAllergy.refetch()} disabled={patientAllergy.isFetching}>
+                {patientAllergy.isFetching ? "กำลังโหลด…" : "ลองโหลดอีกครั้ง"}
+              </button>
+            </div>
+          ) : null}
+        </Card>
+
         <Card className="intake-card">
           <SectionHeading icon={ClipboardPlus} title="สัญญาณชีพและอาการ" description="กรอกข้อมูลสำคัญก่อนพบแพทย์" />
           {!selectedPatient ? <p className="intake-form-hint">กรุณาเลือกผู้ป่วยด้านบนก่อนกรอกข้อมูล</p> : null}
@@ -360,7 +520,7 @@ export function IntakeScreen({ apiClient = defaultApiClient }: { apiClient?: Api
             </label>
           </div>
           <div className="form-actions">
-            <ActionButton type="submit" icon={Send} disabled={!selectedPatient || submitPending || generationPending}>
+            <ActionButton type="submit" icon={Send} disabled={!selectedPatient || !allergyContext || allergyContextPending || allergyDraft.answer === null || !reportedAllergyItemsValid || (allergyChangeReasonRequired && !allergyDraft.changeReason.trim()) || submitPending || generationPending}>
               {submitPending ? "กำลังส่งเข้าคิว…" : "ส่งพบแพทย์"}
             </ActionButton>
           </div>

@@ -226,6 +226,9 @@ describe("connected shared queue workflow", () => {
     renderRoute("/queue");
     await user.click(await screen.findByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" }));
 
+    expect(screen.getByRole("button", { name: "ยังไม่ทราบ" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ยืนยันว่าไม่แพ้" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "มีประวัติแพ้ยา" })).toBeInTheDocument();
     expect(screen.getAllByLabelText("สารที่แพ้")).toHaveLength(2);
     expect(screen.getAllByLabelText("อาการแพ้")).toHaveLength(2);
     expect(screen.getAllByLabelText("ความรุนแรง")).toHaveLength(2);
@@ -251,7 +254,7 @@ describe("connected shared queue workflow", () => {
     server.use(http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))));
     renderRoute("/queue");
     await user.click(await screen.findByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" }));
-    await user.click(screen.getByRole("button", { name: "PRESENT" }));
+    await user.click(screen.getByRole("button", { name: "มีประวัติแพ้ยา" }));
     await user.type(screen.getByLabelText("สารที่แพ้"), "ยา A");
     await user.type(screen.getByLabelText("อาการแพ้"), "ผื่น");
     await user.click(screen.getByRole("button", { name: "เพิ่มรายการแพ้" }));

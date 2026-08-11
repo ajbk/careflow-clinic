@@ -24,4 +24,12 @@ describe("QueryClient retry policy", () => {
     expect(checkout?.("visit-42")).toEqual(["checkout", "visit-42"]);
     expect(checkout?.("visit-43")).not.toEqual(checkout?.("visit-42"));
   });
+
+  it("has an isolated Patient Allergy context key", () => {
+    const keys = queryKeys as Record<string, unknown>;
+    expect(keys.patientAllergy).toBeTypeOf("function");
+    const patientAllergy = keys.patientAllergy as ((patientId: string) => readonly string[]) | undefined;
+    expect(patientAllergy?.("patient-42")).toEqual(["patient-allergy", "patient-42"]);
+    expect(patientAllergy?.("patient-43")).not.toEqual(patientAllergy?.("patient-42"));
+  });
 });

@@ -6,7 +6,7 @@ import type { QueueItemDto, ReviewAllergyPayload } from "../../shared/contracts"
 import { useAuth } from "../auth/AuthProvider";
 import { AllergyReviewDialog } from "../components/careflow/AllergyReviewDialog";
 import { ActionButton, Card, EmptyState, PageHeader, StatusBadge } from "../components/careflow/ui";
-import { createReviewAllergyAttempt, useReviewAllergy, type ReviewAllergyAttempt } from "../features/allergy";
+import { allergyStateLabelTh, createReviewAllergyAttempt, useReviewAllergy, type ReviewAllergyAttempt } from "../features/allergy";
 import { useQueue } from "../features/queue";
 import { createStartConsultationAttempt, useStartConsultation, type StartConsultationAttempt } from "../features/visit";
 import { ApiError, isApiError } from "../lib/api-error";
@@ -95,6 +95,7 @@ function QueueCard({ item, canStart, canOpenClinical, canFulfillment, canFinance
     <strong>{item.patient.displayName}</strong>
     <span>HN {item.patient.hn} · Visit {item.visit.id} · revision {item.visit.revision}</span>
     <p>{item.chiefComplaint}</p><p className="queue-vitals">{vitalSummary(item)}</p>
+    <p className="queue-allergy-state">ประวัติแพ้ยา: {allergyStateLabelTh(item.allergy.state)}</p>
     {blocked ? <div className="queue-blocked"><strong>{blocked.messageTh}</strong><span>ข้อมูลคิวอาจเปลี่ยนแปลงแล้ว กรุณาโหลดข้อมูลล่าสุดก่อนดำเนินการต่อ</span></div> : null}
     {startError ? <div className="queue-action-error" role="alert"><strong>เริ่มการตรวจไม่สำเร็จ</strong><span>{actionErrorMessage(startError)}</span></div> : null}
     {startAllowed ? <ActionButton className="queue-action" variant="secondary" onClick={() => onStart(item)} disabled={pending || Boolean(blocked)}>{pending ? "กำลังเริ่มห้องตรวจ…" : "เริ่มการตรวจ"}</ActionButton> : null}

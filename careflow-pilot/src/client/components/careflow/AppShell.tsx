@@ -12,6 +12,7 @@ import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { roleWorkspaceFor, type WorkspaceNavIcon } from "../../app/role-workspace";
 import { useAuth } from "../../auth/AuthProvider";
+import { SessionReturnNotice } from "./SessionReturnNotice";
 
 const icons: Record<WorkspaceNavIcon, typeof LayoutDashboard> = {
   dashboard: LayoutDashboard,
@@ -73,6 +74,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           className={mode === "focused" ? "focused-workspace-main" : "clinical-workspace-main"}
         >
           <p className="pilot-banner" role="status">PILOT — ข้อมูลสังเคราะห์เท่านั้น ห้ามกรอกข้อมูลผู้ป่วยจริง</p>
+          <SessionReturnNotice />
           {children}
         </main>
       </div>
@@ -115,6 +117,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </header>
         <main id="main-content" className="app-main">
           <p className="pilot-banner" role="status">PILOT — ข้อมูลสังเคราะห์เท่านั้น ห้ามกรอกข้อมูลผู้ป่วยจริง</p>
+          <SessionReturnNotice />
           {children}
         </main>
       </div>

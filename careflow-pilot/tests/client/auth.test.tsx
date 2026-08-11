@@ -1,8 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBrowserActivityAdapter } from "../../src/client/auth/AuthProvider";
+import { authRequiredEventName } from "../../src/client/app/query-client";
+import { AppProviders } from "../../src/client/app/providers";
 import { appRoutes } from "../../src/client/app/router";
 
 function renderApp(path: string, fetchImpl: typeof fetch) {
@@ -15,6 +18,17 @@ function renderApp(path: string, fetchImpl: typeof fetch) {
     </QueryClientProvider>,
   );
   return { router, client };
+}
+
+function renderManagedApp(path: string, fetchImpl: typeof fetch) {
+  vi.stubGlobal("fetch", fetchImpl);
+  const router = createMemoryRouter(appRoutes, { initialEntries: [path] });
+  render(
+    <AppProviders>
+      <RouterProvider router={router} />
+    </AppProviders>,
+  );
+  return { router };
 }
 
 const session = {
@@ -39,6 +53,8 @@ const assistantSession = {
 
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
+  window.sessionStorage.clear();
   vi.restoreAllMocks();
 });
 
@@ -52,7 +68,66 @@ describe("auth boundary", () => {
     const { router } = renderApp("/queue", fetchImpl);
     await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
     expect(router.state.location.search).toBe("?returnTo=%2Fqueue");
+    expect(router.state.location.search).not.toContain("session-expired");
     await waitFor(() => expect(screen.getByRole("heading", { name: /เข้าสู่ระบบ/ })).toBeInTheDocument());
+    expect(screen.queryByText("เซสชันหมดอายุ งานยังไม่ได้ถูกบันทึก")).not.toBeInTheDocument();
+  });
+
+  it("waits for the initial session result before acting on a generic unauthorized event", async () => {
+    let resolveSession!: (response: Response) => void;
+    const sessionResponse = new Promise<Response>((resolve) => { resolveSession = resolve; });
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/auth/session") return sessionResponse;
+      if (String(input) === "/api/queue") return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      throw new Error(`Unexpected request: ${String(input)}`);
+    });
+    const { router } = renderManagedApp("/queue", fetchImpl);
+
+    await waitFor(() => expect(fetchImpl).toHaveBeenCalledWith("/api/auth/session", expect.any(Object)));
+    window.dispatchEvent(new CustomEvent(authRequiredEventName, { detail: { reason: "AUTH_REQUIRED" } }));
+    expect(router.state.location.pathname).toBe("/queue");
+
+    resolveSession(new Response(JSON.stringify(session), { status: 200 }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/queue"));
+    expect(await screen.findByText("พญ. ทดสอบ")).toBeInTheDocument();
+  });
+
+  it("returns from an authenticated protected-query expiry with one truthful session notice", async () => {
+    const user = userEvent.setup();
+    let queueRequests = 0;
+    let resolveSession!: (response: Response) => void;
+    const sessionResponse = new Promise<Response>((resolve) => { resolveSession = resolve; });
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path === "/api/auth/session") return sessionResponse;
+      if (path === "/api/queue") {
+        queueRequests += 1;
+        return queueRequests === 1
+          ? new Response(JSON.stringify({ error: { code: "AUTH_REQUIRED", messageTh: "กรุณาเข้าสู่ระบบ", requestId: "expired" } }), { status: 401 })
+          : new Response(JSON.stringify({ data: [] }), { status: 200 });
+      }
+      if (path === "/api/auth/login" && init?.method === "POST") return new Response(JSON.stringify(session), { status: 200 });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const { router } = renderManagedApp("/queue", fetchImpl);
+
+    await waitFor(() => expect(fetchImpl).toHaveBeenCalledWith("/api/auth/session", expect.any(Object)));
+    expect(queueRequests).toBe(0);
+    resolveSession(new Response(JSON.stringify(session), { status: 200 }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
+    expect(router.state.location.search).toBe("?returnTo=%2Fqueue&reason=session-expired");
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+
+    await user.type(screen.getByLabelText("ชื่อผู้ใช้"), "doctor");
+    await user.type(screen.getByLabelText("รหัสผ่าน"), "password");
+    await user.click(screen.getByRole("button", { name: "เข้าสู่ระบบ" }));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/queue"));
+    expect(await screen.findByText("เซสชันหมดอายุ งานยังไม่ได้ถูกบันทึก")).toHaveAttribute("role", "status");
+    await waitFor(() => expect(router.state.location.state).toBeNull());
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
   });
 
   it("shows the named account and permanent banner for an acknowledged session", async () => {

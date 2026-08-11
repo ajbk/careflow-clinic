@@ -477,6 +477,24 @@
 .allergy-item-editor { display: grid; gap: 10px; padding: 14px; border: 1px solid rgba(112,121,116,.18); border-radius: 12px; background: var(--surface-container-low); }
 .allergy-item-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .allergy-item-heading strong { color: var(--primary); font-size: 13px; }
+.session-return-notice { margin: -8px 0 18px; padding: 11px 14px; border: 1px solid rgba(31, 96, 70, .28); border-radius: 12px; background: var(--secondary-container); color: var(--on-secondary-container); font-size: 13px; font-weight: 700; }
+.intake-allergy-panel { display: grid; gap: 12px; }
+.intake-allergy-card { display: grid; gap: 14px; }
+.intake-allergy-prior { display: grid; gap: 4px; padding: 13px 14px; border-radius: 12px; background: var(--surface-container-low); color: var(--on-surface-variant); font-size: 12px; }
+.intake-allergy-prior strong { color: var(--primary); font-size: 13px; }
+.intake-allergy-fieldset { display: grid; gap: 12px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.intake-allergy-fieldset > legend { padding: 0; color: var(--primary); font-size: 16px; font-weight: 800; }
+.intake-allergy-answers { display: flex; flex-wrap: wrap; gap: 10px; }
+.intake-allergy-answer { display: inline-flex; align-items: center; gap: 8px; min-height: 42px; padding: 8px 13px; border: 1px solid var(--outline); border-radius: 10px; background: var(--surface-container-lowest); color: var(--on-surface); cursor: pointer; font-weight: 700; }
+.intake-allergy-answer-selected { border-color: var(--primary); background: var(--primary-container); color: var(--on-primary-container); }
+.intake-allergy-answer:has(input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 2px; }
+.intake-allergy-items { display: grid; gap: 12px; }
+.intake-allergy-item { display: grid; gap: 10px; padding: 14px; border: 1px solid rgba(112,121,116,.18); border-radius: 12px; background: var(--surface-container-low); }
+.intake-allergy-item-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.intake-allergy-item-heading strong { color: var(--primary); font-size: 13px; }
+.intake-allergy-change-warning { display: grid; gap: 10px; padding: 13px; border: 1px solid rgba(150, 85, 0, .28); border-radius: 12px; background: var(--tertiary-container); color: var(--on-tertiary-container); }
+.intake-allergy-context-error { margin: 0; }
+.queue-allergy-state { margin: 0; color: var(--on-surface-variant); font-size: 11px; }
 .signed-evidence { display: grid; gap: 12px; padding: 24px; border-radius: 16px; background: var(--surface-container-low); }
 .signed-evidence p { margin: 0; }
 .signed-evidence code { overflow-wrap: anywhere; color: var(--on-surface-variant); font-size: 11px; }
