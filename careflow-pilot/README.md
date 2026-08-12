@@ -33,6 +33,8 @@ npm start
 
 ### Windows 11 PowerShell
 
+หากเป็นการติดตั้งครั้งแรก ให้เริ่มจาก [คู่มือติดตั้ง Windows สำหรับผู้เริ่มต้น](../docs/uat/careflow-pre-pilot/windows-install-guide-th.md) ซึ่งแบ่งขั้นตอนเป็น Checkpoint พร้อมผลที่ต้องเห็นและจุดหยุดเมื่อไม่ผ่าน.
+
 Run PowerShell as the dedicated local UAT account from either the repository root or its `careflow-pilot` directory:
 
 ```powershell

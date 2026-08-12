@@ -4,6 +4,8 @@ This runbook is for one local, synthetic UAT host only. Bind the service to `127
 
 Give testers the [Thai Journey guide](guide-th.md) and [result checklist](checklist.md). The local UAT owner provisions exactly the two approved role accounts with the safe interactive command below. Do not record or share any sign-in material in Markdown, tickets, screenshots, terminal history, or logs.
 
+ผู้ติดตั้งครั้งแรกควรเริ่มจาก [คู่มือติดตั้ง Windows สำหรับผู้เริ่มต้น](windows-install-guide-th.md) แล้วกลับมาใช้ runbook นี้เมื่อคู่มืออ้างถึงขั้นตอนผู้ดูแลหรือสถานะ `BLOCKED`.
+
 ## macOS/Linux (POSIX)
 
 ### Prepare the isolated UAT database
