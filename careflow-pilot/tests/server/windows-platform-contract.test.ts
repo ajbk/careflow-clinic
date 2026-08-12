@@ -391,4 +391,54 @@ describe("native Windows platform contract", () => {
       expect(pathConsumer).toBeGreaterThan(location);
     }
   });
+
+  it("publishes a beginner Windows installation guide without weakening UAT safety", () => {
+    const guidePath = "docs/uat/careflow-pre-pilot/windows-install-guide-th.md";
+    const guide = readRepositoryFile(guidePath);
+    const runbook = readRepositoryFile("docs/uat/careflow-pre-pilot/admin-runbook.md");
+    const readme = readRepositoryFile("careflow-pilot/README.md");
+
+    const checkpointTitles = [
+      "Checkpoint 1 - ตรวจเครื่อง Windows",
+      "Checkpoint 2 - เลือกโฟลเดอร์ภายในเครื่อง",
+      "Checkpoint 3 - ดาวน์โหลด CareFlow จาก GitHub",
+      "Checkpoint 4 - ติดตั้ง dependencies",
+      "Checkpoint 5 - ตรวจ native runtime",
+      "Checkpoint 6 - ทดสอบและ build",
+      "Checkpoint 7 - สร้างพื้นที่ฐานข้อมูลที่จำกัดสิทธิ์",
+      "Checkpoint 8 - สร้างโครงสร้างฐานข้อมูล",
+      "Checkpoint 9 - สร้างสองบัญชี UAT",
+      "Checkpoint 10 - เปิดระบบและเข้าสู่ระบบสองบทบาท",
+    ] as const;
+
+    for (const title of checkpointTitles) expect(guide).toContain(title);
+    for (const required of [
+      "SYNTHETIC UAT ONLY",
+      "RunningAsAdministrator",
+      "git clone https://github.com/ajbk/careflow-clinic.git",
+      "npm ci --ignore-scripts",
+      "npm run verify:native-runtime",
+      "npm test",
+      "npm run lint",
+      "npm run typecheck",
+      "npm run build",
+      "$administratorsSid = 'S-1-5-32-544'",
+      "npm run db:migrate -- \"$uatDb\"",
+      "--username uat-assistant",
+      "--username uat-doctor",
+      "$env:CAREFLOW_HOST = '127.0.0.1'",
+      "Invoke-RestMethod -Uri 'http://127.0.0.1:3001/api/health'",
+      "http://127.0.0.1:3001",
+      "guide-th.md",
+    ]) {
+      expect(guide).toContain(required);
+    }
+
+    expect(guide).not.toMatch(/(?:password|รหัสผ่าน)\s*[=:]\s*\S+/i);
+    expect(guide).not.toContain("0.0.0.0");
+    expect(guide).toContain("ห้ามใช้ข้อมูลผู้ป่วยจริง");
+    expect(guide).toContain("ห้ามใช้ข้อมูลการเงินจริง");
+    expect(runbook).toContain("[คู่มือติดตั้ง Windows สำหรับผู้เริ่มต้น](windows-install-guide-th.md)");
+    expect(readme).toContain("[คู่มือติดตั้ง Windows สำหรับผู้เริ่มต้น]");
+  });
 });
