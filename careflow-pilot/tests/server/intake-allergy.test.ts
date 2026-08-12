@@ -448,8 +448,9 @@ describe("atomic Intake allergy command", () => {
     expect(test.database.db.select().from(patientAllergyRevisions).all()).toHaveLength(2);
   });
 
-  it("rolls every Intake write boundary back to an identical evidence snapshot", async () => {
-    for (const stage of intakeWriteStages) {
+  it.each(intakeWriteStages)(
+    "rolls every Intake write boundary back to an identical evidence snapshot when %s fails",
+    async (stage) => {
       const test = await fixture({
         intakeFailureInjector: (current: string) => {
           if (current === stage) throw new Error(`fail:${stage}`);
@@ -462,8 +463,8 @@ describe("atomic Intake allergy command", () => {
 
       expect(response.statusCode).toBe(500);
       expect(readIntakeEvidence(test)).toEqual(before);
-    }
-  });
+    },
+  );
 
   it("replays the exact committed Intake data and rejects collision, duplicate, and concurrent writes", async () => {
     const test = await fixture();

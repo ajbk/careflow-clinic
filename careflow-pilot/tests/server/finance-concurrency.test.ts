@@ -5,6 +5,13 @@ import { createTestApp } from "./helpers/database.js";
 const NOW = "2026-08-10T00:00:00.000Z";
 const HASH = "d".repeat(64);
 const cleanups: Array<() => Promise<void>> = [];
+const terminalCollectionFailures = [
+  { name: "payment", endpoint: "cash", trigger: "finance_collection_fail_payment", table: "finance_payments", statement: "BEFORE INSERT ON finance_payments" },
+  { name: "waiver", endpoint: "waiver", trigger: "finance_collection_fail_waiver", table: "finance_charge_adjustments", statement: "BEFORE INSERT ON finance_charge_adjustments" },
+  { name: "audit", endpoint: "cash", trigger: "finance_collection_fail_audit", table: "audit_events", statement: "BEFORE INSERT ON audit_events" },
+  { name: "visit", endpoint: "cash", trigger: "finance_collection_fail_visit", table: "visits", statement: "BEFORE UPDATE OF status ON visits" },
+  { name: "idempotency", endpoint: "cash", trigger: "finance_collection_fail_idempotency", table: "idempotency_records", statement: "BEFORE INSERT ON idempotency_records" },
+] as const;
 
 type FinanceFixture = Awaited<ReturnType<typeof createTestApp>> & {
   doctorCookie: string;
@@ -256,16 +263,9 @@ describe("terminal collection concurrency and idempotency", () => {
     `).get()).toEqual({ status: "READY_TO_CLOSE", revision: 9 });
   });
 
-  it("rolls back every terminal collection write if an evidence, audit, Visit, or idempotency write fails", async () => {
-    const failures = [
-      { name: "payment", endpoint: "cash", trigger: "finance_collection_fail_payment", table: "finance_payments", statement: "BEFORE INSERT ON finance_payments" },
-      { name: "waiver", endpoint: "waiver", trigger: "finance_collection_fail_waiver", table: "finance_charge_adjustments", statement: "BEFORE INSERT ON finance_charge_adjustments" },
-      { name: "audit", endpoint: "cash", trigger: "finance_collection_fail_audit", table: "audit_events", statement: "BEFORE INSERT ON audit_events" },
-      { name: "visit", endpoint: "cash", trigger: "finance_collection_fail_visit", table: "visits", statement: "BEFORE UPDATE OF status ON visits" },
-      { name: "idempotency", endpoint: "cash", trigger: "finance_collection_fail_idempotency", table: "idempotency_records", statement: "BEFORE INSERT ON idempotency_records" },
-    ] as const;
-
-    for (const failure of failures) {
+  it.each(terminalCollectionFailures)(
+    "rolls back every terminal collection write if an evidence, audit, Visit, or idempotency write fails at $name",
+    async (failure) => {
       const test = await fixture({ idPrefix: `finance-rollback-${failure.name}` });
       const chargeId = await finalize(test, `finance-rollback-finalize-${failure.name}`);
       test.database.sqlite.exec(`
@@ -290,6 +290,6 @@ describe("terminal collection concurrency and idempotency", () => {
       expect(test.database.sqlite.prepare(`
         SELECT status, revision FROM visits WHERE id = 'finance-concurrency-visit'
       `).get(), failure.name).toEqual({ status: "AWAITING_PAYMENT", revision: 8 });
-    }
-  });
+    },
+  );
 });

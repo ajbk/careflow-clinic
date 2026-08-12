@@ -6,6 +6,37 @@ import { createTestApp } from "./helpers/database.js";
 const NOW = "2026-08-10T00:00:00.000Z";
 const HASH = "b".repeat(64);
 const cleanups: Array<() => Promise<void>> = [];
+const chargeFinalizationFailures = [
+  { name: "audit", trigger: "finance_fail_audit", table: "audit_events", statement: "BEFORE INSERT ON audit_events" },
+  { name: "visit", trigger: "finance_fail_visit", table: "visits", statement: "BEFORE UPDATE OF status ON visits" },
+  { name: "idempotency", trigger: "finance_fail_idempotency", table: "idempotency_records", statement: "BEFORE INSERT ON idempotency_records" },
+] as const;
+const fullWaiverFinalizationFailures = [
+  {
+    name: "adjustment",
+    trigger: "finance_fail_finalize_waiver_adjustment",
+    statement: "BEFORE INSERT ON finance_charge_adjustments",
+    when: "",
+  },
+  {
+    name: "visit",
+    trigger: "finance_fail_finalize_waiver_visit",
+    statement: "BEFORE UPDATE OF status ON visits",
+    when: "",
+  },
+  {
+    name: "waiver-audit",
+    trigger: "finance_fail_finalize_waiver_audit",
+    statement: "BEFORE INSERT ON audit_events",
+    when: "WHEN NEW.action = 'charge.waiver-approved'",
+  },
+  {
+    name: "idempotency",
+    trigger: "finance_fail_finalize_waiver_idempotency",
+    statement: "BEFORE INSERT ON idempotency_records",
+    when: "",
+  },
+] as const;
 
 type FinanceRouteFixture = Awaited<ReturnType<typeof createTestApp>> & {
   doctorCookie: string;
@@ -557,14 +588,9 @@ describe("finance checkout routes", () => {
     expect(countRows(test, "audit_events")).toBe(1);
   });
 
-  it("rolls back Charge, Visit, audit, and idempotency rows when each terminal write fails", async () => {
-    const failureCases = [
-      { name: "audit", trigger: "finance_fail_audit", table: "audit_events", statement: "BEFORE INSERT ON audit_events" },
-      { name: "visit", trigger: "finance_fail_visit", table: "visits", statement: "BEFORE UPDATE OF status ON visits" },
-      { name: "idempotency", trigger: "finance_fail_idempotency", table: "idempotency_records", statement: "BEFORE INSERT ON idempotency_records" },
-    ];
-
-    for (const failure of failureCases) {
+  it.each(chargeFinalizationFailures)(
+    "rolls back Charge, Visit, audit, and idempotency rows when the $name terminal write fails",
+    async (failure) => {
       const test = await fixture({ idPrefix: `finance-${failure.name}` });
       test.database.sqlite.exec(`
         CREATE TRIGGER ${failure.trigger} ${failure.statement}
@@ -579,45 +605,19 @@ describe("finance checkout routes", () => {
         payload: body(),
       });
       expect(response.statusCode, failure.name).toBe(500);
-      if (response.statusCode !== 500) continue;
+      if (response.statusCode !== 500) return;
       expect(countRows(test, "finance_charges"), failure.name).toBe(0);
       expect(countRows(test, "finance_charge_lines"), failure.name).toBe(0);
       expect(countRows(test, "audit_events"), failure.name).toBe(0);
       expect(countRows(test, "idempotency_records"), failure.name).toBe(0);
       expect(test.database.sqlite.prepare("SELECT status, revision FROM visits WHERE id = 'finance-route-visit'").get(), failure.name)
         .toEqual({ status: "AWAITING_CHARGE", revision: 7 });
-    }
-  });
+    },
+  );
 
-  it("rolls back every full-waiver finalization row when a terminal write fails", async () => {
-    const failureCases = [
-      {
-        name: "adjustment",
-        trigger: "finance_fail_finalize_waiver_adjustment",
-        statement: "BEFORE INSERT ON finance_charge_adjustments",
-        when: "",
-      },
-      {
-        name: "visit",
-        trigger: "finance_fail_finalize_waiver_visit",
-        statement: "BEFORE UPDATE OF status ON visits",
-        when: "",
-      },
-      {
-        name: "waiver-audit",
-        trigger: "finance_fail_finalize_waiver_audit",
-        statement: "BEFORE INSERT ON audit_events",
-        when: "WHEN NEW.action = 'charge.waiver-approved'",
-      },
-      {
-        name: "idempotency",
-        trigger: "finance_fail_finalize_waiver_idempotency",
-        statement: "BEFORE INSERT ON idempotency_records",
-        when: "",
-      },
-    ];
-
-    for (const failure of failureCases) {
+  it.each(fullWaiverFinalizationFailures)(
+    "rolls back every full-waiver finalization row when the $name terminal write fails",
+    async (failure) => {
       const test = await fixture({ idPrefix: `finance-finalize-waiver-${failure.name}` });
       test.database.sqlite.exec(`
         CREATE TRIGGER ${failure.trigger} ${failure.statement} ${failure.when}
@@ -640,6 +640,6 @@ describe("finance checkout routes", () => {
       expect(countRows(test, "idempotency_records"), failure.name).toBe(0);
       expect(test.database.sqlite.prepare("SELECT status, revision FROM visits WHERE id = 'finance-route-visit'").get(), failure.name)
         .toEqual({ status: "AWAITING_CHARGE", revision: 7 });
-    }
-  });
+    },
+  );
 });

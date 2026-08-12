@@ -56,13 +56,17 @@ describe("expired session marker cache", () => {
         absoluteHours: 8,
         tokenFactory: () => tokens[nextToken++] ?? tokenFor(0),
       });
-      const issued = tokens.map(() => service.issue(account.actor.id, now));
+      const issued = database.db.transaction((tx) =>
+        tokens.map(() => service.issueInTransaction(tx, account.actor.id, now)),
+      );
 
       now = new Date("2026-08-03T00:15:00.000Z");
-      for (const session of issued) {
-        expect(service.isExpired(session.token, now)).toBe(true);
-        expect(service.authenticate(session.token, now)).toBeUndefined();
-      }
+      database.sqlite.transaction(() => {
+        for (const session of issued) {
+          expect(service.isExpired(session.token, now)).toBe(true);
+          expect(service.authenticate(session.token, now)).toBeUndefined();
+        }
+      })();
 
       const reissuedOldest = service.issue(account.actor.id, now);
       expect(reissuedOldest.token).toBe(tokenFor(0));
