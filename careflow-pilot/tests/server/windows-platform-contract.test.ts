@@ -1,11 +1,35 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import serverVitestConfig, * as serverVitestConfigModule from "../../vitest.server.config.js";
 
 const repositoryRoot = resolve(process.cwd(), "..");
 const workflowPath = resolve(repositoryRoot, ".github/workflows/ci.yml");
 const readRepositoryFile = (path: string): string =>
   readFileSync(resolve(repositoryRoot, path), "utf8");
+
+const serverVitestConfigExports = serverVitestConfigModule as unknown as {
+  serverTestTimeoutForPlatform?: (platform: NodeJS.Platform) => number;
+};
+
+function resolvedGitAttribute(attribute: string, paths: readonly string[]): Record<string, string> {
+  return Object.fromEntries(
+    execFileSync("git", ["check-attr", attribute, "--", ...paths], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+    })
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => {
+        const [path, resolvedAttribute, value] = line.split(": ");
+        if (resolvedAttribute !== attribute || value === undefined) {
+          throw new Error(`Unexpected Git attribute output: ${line}`);
+        }
+        return [path, value];
+      }),
+  );
+}
 
 function sectionBetween(source: string, startMarker: string, endMarker?: string): string {
   const start = source.indexOf(startMarker);
@@ -87,6 +111,40 @@ function windowsJob(): string {
 }
 
 describe("native Windows platform contract", () => {
+  it("forces immutable Drizzle migrations and snapshots to LF through Git attributes", () => {
+    const protectedArtifacts = [
+      "careflow-pilot/drizzle/0000_platform.sql",
+      "careflow-pilot/drizzle/meta/0000_snapshot.json",
+    ] as const;
+
+    expect(resolvedGitAttribute("eol", protectedArtifacts)).toEqual({
+      "careflow-pilot/drizzle/0000_platform.sql": "lf",
+      "careflow-pilot/drizzle/meta/0000_snapshot.json": "lf",
+    });
+  });
+
+  it.each([
+    ["win32", 15_000],
+    ["linux", 5_000],
+    ["darwin", 5_000],
+  ] as const)("maps the %s server-test budget to %d ms", (platform, expectedTimeout) => {
+    const timeoutForPlatform = serverVitestConfigExports.serverTestTimeoutForPlatform;
+
+    expect(timeoutForPlatform).toBeTypeOf("function");
+    if (!timeoutForPlatform) return;
+
+    expect(timeoutForPlatform(platform)).toBe(expectedTimeout);
+  });
+
+  it("uses the mapped server-test budget in Vitest", () => {
+    const timeoutForPlatform = serverVitestConfigExports.serverTestTimeoutForPlatform;
+
+    expect(timeoutForPlatform).toBeTypeOf("function");
+    if (!timeoutForPlatform) return;
+
+    expect(serverVitestConfig.test?.testTimeout).toBe(timeoutForPlatform(process.platform));
+  });
+
   it("installs prebuilt packages before probing the native runtime", () => {
     const job = windowsJob();
     const installIndex = job.indexOf("- run: npm ci --ignore-scripts");

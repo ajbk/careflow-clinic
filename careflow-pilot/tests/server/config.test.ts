@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../../src/server/config.js";
 
@@ -48,7 +49,7 @@ describe("loadConfig", () => {
   it("loads a temporary .env through Node's real entrypoint while direct variables retain precedence", () => {
     const directory = mkdtempSync(join(tmpdir(), "careflow-env-test-"));
     const envPath = join(directory, ".env");
-    const configModule = resolve("src/server/config.ts");
+    const configModule = pathToFileURL(resolve("src/server/config.ts")).href;
     writeFileSync(
       envPath,
       [
@@ -62,6 +63,8 @@ describe("loadConfig", () => {
     );
 
     try {
+      expect(configModule).toMatch(/^file:/);
+
       const output = execFileSync(
         process.execPath,
         [
