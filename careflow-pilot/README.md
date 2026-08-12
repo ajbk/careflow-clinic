@@ -39,16 +39,10 @@ Run PowerShell as the dedicated local UAT account from the repository root:
 Set-Location careflow-pilot
 npm ci --ignore-scripts
 npm run verify:native-runtime
-$uatDir = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) 'data\uat'))
-$uatDb = [System.IO.Path]::GetFullPath((Join-Path $uatDir 'careflow-uat.sqlite'))
-New-Item -ItemType Directory -Path $uatDir -Force | Out-Null
-$env:CAREFLOW_DB_PATH = $uatDb
-npm run db:migrate -- "$uatDb"
 npm run build
-npm start
 ```
 
-Browse only to `http://127.0.0.1:3001`. Apply and verify the restricted Windows ACL, provision the two interactive UAT accounts, and run restart/session-expiry checks with the [administrator runbook](../docs/uat/careflow-pre-pilot/admin-runbook.md#windows-11-powershell) before starting the Thai Journey checklist.
+Before creating the UAT directory or database, complete the administrator runbook using its [Windows 11 PowerShell instructions](../docs/uat/careflow-pre-pilot/admin-runbook.md#windows-11-powershell). It establishes and verifies the exact restricted ACL, migrates the database, provisions exactly two interactive UAT accounts, and only then starts the loopback host. Browse only to `http://127.0.0.1:3001`, and use that runbook for every restart/session-expiry check before starting the Thai Journey checklist.
 
 Deployment, Windows service installation, backup/restore, network exposure, and real-data use remain explicitly disabled.
 

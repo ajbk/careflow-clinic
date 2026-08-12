@@ -35,12 +35,54 @@ npm run build
 
 $uatDir = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) 'data\uat'))
 $uatDb = [System.IO.Path]::GetFullPath((Join-Path $uatDir 'careflow-uat.sqlite'))
-if (Test-Path -LiteralPath $uatDb) { throw 'Use a new UAT database file' }
-New-Item -ItemType Directory -Path $uatDir -Force | Out-Null
+$uatParent = [System.IO.Path]::GetDirectoryName($uatDir)
+New-Item -ItemType Directory -Path $uatParent -Force -ErrorAction Stop | Out-Null
+if (Test-Path -LiteralPath $uatDir -PathType Any -ErrorAction Stop) { throw 'Use a new UAT directory' }
+New-Item -ItemType Directory -Path $uatDir -ErrorAction Stop | Out-Null
 $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-& icacls.exe $uatDir /inheritance:r /grant:r "*${currentSid}:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F"
-if ($LASTEXITCODE -ne 0) { throw 'UAT directory ACL failed' }
+$administratorsSid = 'S-1-5-32-544'
+$expectedSids = @($currentSid, $administratorsSid)
+$inheritanceFlags = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+$uatAcl = [System.Security.AccessControl.DirectorySecurity]::new()
+$uatAcl.SetAccessRuleProtection($true, $false)
+foreach ($sid in $expectedSids) {
+  $identity = [System.Security.Principal.SecurityIdentifier]::new($sid)
+  $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+    $identity,
+    [System.Security.AccessControl.FileSystemRights]::FullControl,
+    $inheritanceFlags,
+    [System.Security.AccessControl.PropagationFlags]::None,
+    [System.Security.AccessControl.AccessControlType]::Allow
+  )
+  [void]$uatAcl.AddAccessRule($rule)
+}
+Set-Acl -LiteralPath $uatDir -AclObject $uatAcl -ErrorAction Stop
+
+$actualAcl = Get-Acl -LiteralPath $uatDir -ErrorAction Stop
+$actualRules = @($actualAcl.Access)
+$invalidRules = @($actualRules | Where-Object {
+  $ruleSid = $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+  $ruleSid -notin $expectedSids -or
+  $_.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
+  $_.FileSystemRights -ne [System.Security.AccessControl.FileSystemRights]::FullControl -or
+  $_.InheritanceFlags -ne $inheritanceFlags -or
+  $_.PropagationFlags -ne [System.Security.AccessControl.PropagationFlags]::None -or
+  $_.IsInherited
+})
+$missingSids = @($expectedSids | Where-Object {
+  $expectedSid = $_
+  -not ($actualRules | Where-Object {
+    $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $expectedSid
+  })
+})
+if (-not $actualAcl.AreAccessRulesProtected -or
+    $actualRules.Count -ne $expectedSids.Count -or
+    $invalidRules.Count -ne 0 -or
+    $missingSids.Count -ne 0) {
+  throw 'UAT directory ACL validation failed; UAT is BLOCKED'
+}
 & icacls.exe $uatDir
+if ($LASTEXITCODE -ne 0) { throw 'UAT directory ACL display failed; UAT is BLOCKED' }
 
 $env:CAREFLOW_DB_PATH = $uatDb
 $env:CAREFLOW_HOST = '127.0.0.1'
@@ -55,6 +97,8 @@ Record the operating system, Node version, exact `$uatDb`, and `icacls.exe` resu
 ## Provision the only two UAT accounts before host startup
 
 On the clean migrated UAT file above, run the commands for the host platform exactly once, in order. They create exactly `uat-assistant` with Assistant role and `uat-doctor` with Doctor role; no migration or application source contains either account or a password.
+
+Both platform paths require an exact `SYNTHETIC-ONLY` acknowledgement, then ask for `New password` and `Confirm new password` using hidden terminal input. Use a local interactive TTY; do not place passwords in command arguments, environment variables, files, paste buffers, shell history, logs, tickets, screenshots, or this runbook. Each successful invocation ends with `User account command completed`; any failure is a provisioning failure and must not be retried with a different database. Do not create any other account or repeat either create command.
 
 ### macOS/Linux (POSIX)
 
@@ -78,6 +122,8 @@ curl -fsS http://127.0.0.1:3001/api/health
 ### Windows 11 PowerShell
 
 ```powershell
+Set-Location careflow-pilot
+$uatDb = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) 'data\uat\careflow-uat.sqlite'))
 $env:CAREFLOW_DB_PATH = $uatDb
 npm run users -- create --username uat-assistant --display-name Assistant --role assistant
 npm run users -- create --username uat-doctor --display-name Doctor --role doctor
@@ -103,8 +149,6 @@ In a second local PowerShell window, health is:
 ```powershell
 Invoke-RestMethod -Uri 'http://127.0.0.1:3001/api/health' -Method Get
 ```
-
-Each command prints the synthetic-only warning, requires an exact `SYNTHETIC-ONLY` acknowledgement, then asks for `New password` and `Confirm new password` using hidden terminal input. Use a local interactive TTY; do not place passwords in command arguments, environment variables, files, paste buffers, shell history, logs, tickets, screenshots, or this runbook. A successful invocation ends with `User account command completed`; a failure must be treated as provisioning failure, not retried with a different database. Do not create any other account or repeat either create command.
 
 Record the exact database path in the checklist. Keep the same path for every planned restart and every Scenario; do not reset it or make a new database between Scenarios. Verify provisioning through two separate browser profiles: sign in once as `uat-assistant` and once as `uat-doctor`, accept the Pilot acknowledgement, then change each initial password in the displayed first-login flow. Confirm the Assistant lands in the Assistant workspace and the Doctor lands in the Doctor workspace. This verifies the expected role-correct sessions while keeping credentials out of every record. For Scenario 5, retain exactly one active `uat-doctor` browser session; the guide and expiry checkpoint enforce that invariant.
 
@@ -160,14 +204,18 @@ Only use this for the planned restart steps in the guide and only when no mandat
 3. Verify no listener and inspect only matching Node processes:
 
    ```powershell
-   Get-NetTCPConnection -LocalPort 3001 -State Listen -ErrorAction SilentlyContinue
-   Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
+   $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop |
+     Where-Object { $_.LocalPort -eq 3001 })
+   $careFlowProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction Stop |
      Where-Object { $_.CommandLine -like '*dist/server/server.js*' } |
-     Select-Object ProcessId, CommandLine
-   Test-Path -LiteralPath "${uatDb}.careflow-running"
+     Select-Object ProcessId, CommandLine)
+   $runningLockExists = Test-Path -LiteralPath "${uatDb}.careflow-running" -PathType Any -ErrorAction Stop
+   if ($listeners.Count -ne 0) { throw 'Port 3001 listener remains; UAT is BLOCKED' }
+   if ($careFlowProcesses.Count -ne 0) { throw 'CareFlow Node process remains; UAT is BLOCKED' }
+   if ($runningLockExists) { throw 'CareFlow running lock remains; UAT is BLOCKED' }
    ```
 
-   No listener/process is the restart/maintenance precondition. A remaining lock is `BLOCKED`; do not delete it during UAT.
+   These queries fail closed: a query error or any listener, matching CareFlow Node process, or running lock is `BLOCKED`. Do not restart and do not delete the lock during UAT.
 
 4. Restart with `npm start` and, from another PowerShell window after reconstructing the same environment, verify health:
 
@@ -214,9 +262,19 @@ Use this only with the host stopped and exactly one active `uat-doctor` session:
    $env:CAREFLOW_HOST = '127.0.0.1'
    $env:CAREFLOW_PORT = '3001'
    $env:CAREFLOW_COOKIE_SECURE = 'false'
+
+   $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop |
+     Where-Object { $_.LocalPort -eq 3001 })
+   $careFlowProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction Stop |
+     Where-Object { $_.CommandLine -like '*dist/server/server.js*' } |
+     Select-Object ProcessId, CommandLine)
+   $runningLockExists = Test-Path -LiteralPath "${uatDb}.careflow-running" -PathType Any -ErrorAction Stop
+   if ($listeners.Count -ne 0) { throw 'Port 3001 listener remains; UAT is BLOCKED' }
+   if ($careFlowProcesses.Count -ne 0) { throw 'CareFlow Node process remains; UAT is BLOCKED' }
+   if ($runningLockExists) { throw 'CareFlow running lock remains; UAT is BLOCKED' }
    ```
 
-4. Run exactly:
+4. Any query error or nonempty listener/process/lock result is `BLOCKED`; do not run expiry and do not delete the lock. Otherwise run exactly:
 
    ```powershell
    npm run expire:uat-doctor-session -- --database "$uatDb" --confirm EXPIRE-UAT-DOCTOR-SESSION
