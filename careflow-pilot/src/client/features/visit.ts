@@ -20,8 +20,8 @@ const startConsultationResponseSchema = z.strictObject({
   replayed: z.boolean(),
 });
 
-export function createStartConsultationAttempt(item: QueueItemDto): StartConsultationAttempt {
-  return createCommandAttempt({ visit: item.visit.revision }, {});
+export function createStartConsultationAttempt(visit: Pick<QueueItemDto["visit"], "revision">): StartConsultationAttempt {
+  return createCommandAttempt({ visit: visit.revision }, {});
 }
 
 export function getVisitWorkspace(

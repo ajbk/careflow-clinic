@@ -762,8 +762,6 @@ describe("privacy-safe server Visit Journey", () => {
   });
 
   it.each([
-    { role: "assistant", status: "AWAITING_ORDER_REVISION" },
-    { role: "doctor", status: "AWAITING_ORDER_REVISION" },
     { role: "assistant", status: "AWAITING_CHARGE" },
     { role: "doctor", status: "AWAITING_CHARGE" },
     { role: "assistant", status: "AWAITING_PAYMENT" },
@@ -935,8 +933,9 @@ describe("Journey truth table and evidence branches", () => {
     expect(doctorData.allowedActions).toContain("RECEIVE_STOCK");
   });
 
-  it("blocks UNKNOWN allergy without presenting a charge-state review action that the command guard rejects", async () => {
-    // Break caught: a legacy UNKNOWN must not become a path around either the allergy state guard or finalization guard.
+  it("blocks UNKNOWN allergy from charge finalization while retaining its real decision-revision command", async () => {
+    // Break caught: UNKNOWN blocks financial finalization, but must not hide a
+    // medication-revision command that its authoritative guard still permits.
     const test = await fixture();
     const charge = seedJourneyVisit(test, { status: "AWAITING_CHARGE", allergy: "UNKNOWN", decision: "NO_MEDICATION" });
     const waiting = seedJourneyVisit(test, { status: "WAITING", allergy: "UNKNOWN" });
@@ -949,7 +948,7 @@ describe("Journey truth table and evidence branches", () => {
     const chargeData = (chargeResponse.json() as JourneyResponse).data;
     expect(chargeData.blockers[0]).toMatchObject({ code: "ALLERGY_UNKNOWN", recoveryAction: "REVIEW_ALLERGY" });
     expect(chargeData.nextTask).toBeNull();
-    expect(chargeData.allowedActions).toEqual([]);
+    expect(chargeData.allowedActions).toEqual(["REVISE_MEDICATION_DECISION"]);
     expect(chargeData.allowedActions).not.toContain("FINALIZE_CHARGE");
     expect((waitingResponse.json() as JourneyResponse).data.allowedActions)
       .toEqual(expect.arrayContaining(["START_CONSULTATION", "REVIEW_ALLERGY"]));

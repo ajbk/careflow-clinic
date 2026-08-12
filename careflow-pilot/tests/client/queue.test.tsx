@@ -325,8 +325,12 @@ describe("connected shared queue workflow", () => {
     renderRoute("/queue");
     const row = within(await screen.findByRole("article", { name: /DEMO-000042/ }));
     expect(row.getByRole("button", { name: "เริ่มการตรวจ" })).toBeEnabled();
-    expect(row.getByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" })).toBeEnabled();
-    expect(row.getAllByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" })).toHaveLength(1);
+    const allergyRecoveries = [
+      ...row.queryAllByRole("button", { name: "ยังไม่ได้ถามประวัติแพ้ยา" }),
+      ...row.queryAllByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" }),
+    ];
+    expect(allergyRecoveries).toHaveLength(1);
+    expect(allergyRecoveries[0]).toBeEnabled();
   });
 
   it("preserves and submits every item in a PRESENT Allergy assessment", async () => {

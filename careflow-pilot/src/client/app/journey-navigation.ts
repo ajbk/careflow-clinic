@@ -5,6 +5,9 @@ export type JourneyDestination =
   | { kind: "LOCAL"; action: "START_CONSULTATION" | "REVIEW_ALLERGY" }
   | { kind: "NONE" };
 
+export type JourneyLocalAction = Extract<JourneyAction, "START_CONSULTATION" | "REVIEW_ALLERGY">;
+export type JourneyLocalActionHandlers = Partial<Record<JourneyLocalAction, () => void>>;
+
 const visitRoute: Partial<Record<JourneyAction, (visitId: string) => string>> = {
   OPEN_CONSULTATION: (id) => `/consultations/${encodeURIComponent(id)}`,
   SAVE_CONSULTATION_DRAFT: (id) => `/consultations/${encodeURIComponent(id)}`,
@@ -46,6 +49,18 @@ export function journeyDestination(
   }
   const to = visitRoute[action]?.(visitId);
   return to ? { kind: "ROUTE", to } : { kind: "NONE" };
+}
+
+export function isJourneyActionResolvable(
+  action: JourneyAction,
+  visitId: string,
+  blocker: JourneyBlocker | undefined,
+  localActionHandlers: JourneyLocalActionHandlers | undefined,
+): boolean {
+  const destination = journeyDestination(action, visitId, blocker);
+  return destination.kind === "ROUTE" || (
+    destination.kind === "LOCAL" && typeof localActionHandlers?.[destination.action] === "function"
+  );
 }
 
 /** Keep return navigation within this single-origin application. */

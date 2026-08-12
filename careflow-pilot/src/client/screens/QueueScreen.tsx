@@ -67,7 +67,11 @@ function StaleQueueBanner({ error, fetching, onReload }: { error: unknown; fetch
 function QueueCard({ item, currentRole, pending, blocked, startError, stale, reviewPending, onStart, onReview }: { item: QueueItemDto; currentRole: "assistant" | "doctor"; pending: boolean; blocked?: ApiError; startError?: unknown; stale: boolean; reviewPending: boolean; onStart: (item: QueueItemDto) => void; onReview: (item: QueueItemDto) => void }): ReactElement {
   const status = statusFor(item.visit.status);
   const authorityReady = !stale && !blocked;
-  const reviewIsNext = item.journeySummary.nextTask?.action === "REVIEW_ALLERGY";
+  const reviewRenderedByJourney = item.journeySummary.nextTask?.action === "REVIEW_ALLERGY" || item.journeySummary.blockers.some((blocker) => blocker.recoveryAction === "REVIEW_ALLERGY");
+  const localActionHandlers = {
+    ...(pending ? {} : { START_CONSULTATION: () => onStart(item) }),
+    ...(reviewPending ? {} : { REVIEW_ALLERGY: () => onReview(item) }),
+  };
   return <article className="queue-card" aria-label={`${item.patient.hn} ${item.visit.id}`}>
     <div className="queue-card-top"><span className="queue-time"><Clock3 aria-hidden="true" size={15} /><span>มาถึง {formatThaiDateTime(item.visit.arrivedAt)}</span>{item.visit.startedAt ? <span className="queue-start-time">เริ่มตรวจ {formatThaiDateTime(item.visit.startedAt)}</span> : null}</span><StatusBadge tone={status.tone}>{status.label}</StatusBadge></div>
     <strong>{item.patient.displayName}</strong>
@@ -82,12 +86,9 @@ function QueueCard({ item, currentRole, pending, blocked, startError, stale, rev
       currentRole={currentRole}
       authorityReady={authorityReady}
       commandFailure={startError ? actionErrorMessage(startError) : undefined}
-      onLocalAction={(action) => {
-        if (action === "START_CONSULTATION" && !pending) onStart(item);
-        if (action === "REVIEW_ALLERGY" && !reviewPending) onReview(item);
-      }}
+      localActionHandlers={localActionHandlers}
     />
-    {!reviewIsNext ? <JourneyActionControl action="REVIEW_ALLERGY" labelTh={reviewPending ? "กำลังบันทึกการทบทวน…" : "ทบทวนข้อมูลแพ้ยา"} visitId={item.visit.id} allowedActions={item.journeySummary.allowedActions} authorityReady={authorityReady && !reviewPending} onLocalAction={() => onReview(item)} /> : null}
+    {!reviewRenderedByJourney ? <JourneyActionControl action="REVIEW_ALLERGY" labelTh={reviewPending ? "กำลังบันทึกการทบทวน…" : "ทบทวนข้อมูลแพ้ยา"} visitId={item.visit.id} allowedActions={item.journeySummary.allowedActions} authorityReady={authorityReady && !reviewPending} localActionHandlers={reviewPending ? undefined : { REVIEW_ALLERGY: () => onReview(item) }} /> : null}
   </article>;
 }
 
@@ -101,7 +102,7 @@ export function QueueScreen(): ReactElement {
   function start(item: QueueItemDto): void {
     if (pendingVisitId || blocked[item.visit.id] || !item.journeySummary.allowedActions.includes("START_CONSULTATION")) return;
     const visitId = item.visit.id; setPendingVisitId(visitId); setStartErrors((current) => { const next = { ...current }; delete next[visitId]; return next; });
-    const attempt = startAttemptsRef.current[visitId] ?? createStartConsultationAttempt(item); startAttemptsRef.current[visitId] = attempt;
+    const attempt = startAttemptsRef.current[visitId] ?? createStartConsultationAttempt(item.visit); startAttemptsRef.current[visitId] = attempt;
     startMutation.mutate({ visitId, attempt }, { onSuccess: () => { setPendingVisitId(null); setStartErrors((current) => { const next = { ...current }; delete next[visitId]; return next; }); navigate(`/consultations/${visitId}`); }, onError: (error) => { setPendingVisitId(null); if (isApiError(error) && (error.code === "REVISION_CONFLICT" || error.code === "INVALID_STATE")) { delete startAttemptsRef.current[visitId]; setBlocked((current) => ({ ...current, [visitId]: error })); return; } setStartErrors((current) => ({ ...current, [visitId]: error })); } });
   }
 

@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { JourneyBlocker, JourneySummaryDto } from "../../src/shared/contracts";
 import { queryKeys } from "../../src/client/app/query-client";
-import { journeyDestination, sanitizeJourneyReturnTo } from "../../src/client/app/journey-navigation";
+import { isJourneyActionResolvable, journeyDestination, sanitizeJourneyReturnTo } from "../../src/client/app/journey-navigation";
 import { JourneyBlockerCard } from "../../src/client/components/careflow/JourneyBlockerCard";
 import { JourneyNextTaskCard } from "../../src/client/components/careflow/JourneyNextTaskCard";
 import { VisitJourneyRibbon } from "../../src/client/components/careflow/VisitJourneyRibbon";
@@ -152,16 +152,16 @@ describe("shared Visit Journey UI", () => {
   it("uses only the authorized local action for the current role", async () => {
     // Break caught: a stale screen fixture can expose a mutation that the server Journey did not authorize.
     const user = userEvent.setup();
-    const onLocalAction = vi.fn();
+    const startConsultation = vi.fn();
     render(
       <MemoryRouter>
-        <JourneyNextTaskCard summary={waitingSummary} visitId="visit-1" currentRole="doctor" authorityReady onLocalAction={onLocalAction} />
+        <JourneyNextTaskCard summary={waitingSummary} visitId="visit-1" currentRole="doctor" authorityReady localActionHandlers={{ START_CONSULTATION: startConsultation }} />
       </MemoryRouter>,
     );
 
     expect(screen.getByText("บทบาทหลัก: แพทย์")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "เริ่มตรวจ" }));
-    expect(onLocalAction).toHaveBeenCalledWith("START_CONSULTATION");
+    expect(startConsultation).toHaveBeenCalledOnce();
   });
 
   it("gives a waiting role explanatory text instead of a disabled mutation button", () => {
@@ -286,6 +286,8 @@ describe("Journey navigation", () => {
       to: "/inventory/receive?medicationId=DEMO-MED-001&returnTo=%2Fdispensing%2Fvisit-1",
     });
     expect(journeyDestination("RECEIVE_STOCK", "visit-1")).toEqual({ kind: "NONE" });
+    expect(isJourneyActionResolvable("START_CONSULTATION", "visit-1", undefined, { START_CONSULTATION: vi.fn() })).toBe(true);
+    expect(isJourneyActionResolvable("REVIEW_ALLERGY", "visit-1", undefined, { START_CONSULTATION: vi.fn() })).toBe(false);
   });
 
   it("sanitizes stock recovery return paths to an in-app destination", () => {

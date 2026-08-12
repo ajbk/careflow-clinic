@@ -528,7 +528,7 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
       const allowed = visit.status === "WAITING" || (
         actor.role === "doctor" && (
           visit.status === "CONSULTING" || visit.status === "AWAITING_PREPARATION" || visit.status === "PREPARING" ||
-          visit.status === "AWAITING_RELEASE" || visit.status === "AWAITING_HANDOFF"
+          visit.status === "AWAITING_RELEASE" || visit.status === "AWAITING_HANDOFF" || visit.status === "AWAITING_ORDER_REVISION"
         )
       );
       if (!allowed) {

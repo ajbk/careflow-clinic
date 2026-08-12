@@ -101,6 +101,116 @@ describe("Doctor consultation authoring", () => {
     expect(screen.queryByRole("button", { name: "ลงนามและส่งต่อ" })).not.toBeInTheDocument();
   });
 
+  it("starts a WAITING UNKNOWN Visit exactly once after Overview opens the Doctor route", async () => {
+    // Break caught: the Overview link can open a real WAITING consultation
+    // route, where a generic local Journey callback used to render a Start
+    // button that ignored START_CONSULTATION.
+    const user = userEvent.setup();
+    const waitingVisit = { ...visit, status: "WAITING" as const, revision: 7, startedAt: null };
+    const consultingVisit = { ...visit, status: "CONSULTING" as const, revision: 8, startedAt: "2026-08-03T01:15:00.000Z" };
+    const waitingJourney = {
+      ...consultationJourney,
+      visit: { id: visit.id, status: waitingVisit.status, revision: waitingVisit.revision },
+      nextTask: { action: "START_CONSULTATION", labelTh: "เริ่มตรวจ", primaryRole: "doctor", permittedRoles: ["doctor"], availability: "AVAILABLE" },
+      blockers: [{ code: "ALLERGY_UNKNOWN", titleTh: "ยังไม่ได้ถามประวัติแพ้ยา", detailTh: "ต้องทบทวนก่อนลงนามการตรวจ", primaryRole: "assistant", recoveryAction: "REVIEW_ALLERGY", medication: null }],
+      allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"],
+    };
+    const consultingJourney = {
+      ...waitingJourney,
+      visit: { id: visit.id, status: consultingVisit.status, revision: consultingVisit.revision },
+      nextTask: { action: "OPEN_CONSULTATION", labelTh: "เปิดห้องตรวจ", primaryRole: "doctor", permittedRoles: ["doctor"], availability: "AVAILABLE" },
+      allowedActions: ["OPEN_CONSULTATION", "SAVE_CONSULTATION_DRAFT", "REVIEW_ALLERGY"],
+    };
+    const waitingQueueSummary = {
+      steps: waitingJourney.steps,
+      nextTask: waitingJourney.nextTask,
+      blockers: waitingJourney.blockers,
+      allowedActions: waitingJourney.allowedActions,
+    };
+    const consultingQueueSummary = {
+      steps: consultingJourney.steps,
+      nextTask: consultingJourney.nextTask,
+      blockers: consultingJourney.blockers,
+      allowedActions: consultingJourney.allowedActions,
+    };
+    const waitingWorkspace = { ...workspace, visit: waitingVisit, allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"] as const };
+    const consultingWorkspace = { ...workspace, visit: consultingVisit };
+    const waitingQueueItem = {
+      visit: waitingVisit,
+      patient: { id: patient.id, hn: patient.hn, displayName: patient.displayName, birthDate: patient.birthDate, sex: patient.sex, revision: patient.revision },
+      allergy: workspace.patientSnapshot.allergy,
+      chiefComplaint: workspace.intake.chiefComplaint,
+      vitals: workspace.intake.vitals,
+      allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"],
+      journeySummary: waitingQueueSummary,
+    };
+    const consultingQueueItem = {
+      ...waitingQueueItem,
+      visit: consultingVisit,
+      allowedActions: ["OPEN_CONSULTATION"],
+      journeySummary: consultingQueueSummary,
+    };
+    let started = false;
+    let startRequests = 0;
+    let startBody: unknown;
+    let resolveStart!: (response: Response) => void;
+    server.use(
+      http.get("/api/queue", () => HttpResponse.json({ data: [waitingQueueItem] })),
+      http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: started ? consultingWorkspace : waitingWorkspace })),
+      http.post("/api/visits/visit-42/start-consultation", async ({ request }) => {
+        startRequests += 1;
+        startBody = await request.json();
+        return new Promise((resolve) => { resolveStart = resolve; });
+      }),
+    );
+
+    const router = renderRoute("/overview", undefined, () => (started ? consultingJourney : waitingJourney));
+    await user.click(await screen.findByRole("link", { name: /ผู้ป่วยสังเคราะห์ 000042 รอพบแพทย์/ }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/consultations/visit-42"));
+    const start = await screen.findByRole("button", { name: "เริ่มตรวจ" });
+    expect(screen.getByRole("button", { name: "ยังไม่ได้ถามประวัติแพ้ยา" })).toBeEnabled();
+
+    await user.dblClick(start);
+    await waitFor(() => expect(startRequests).toBe(1));
+    expect(startBody).toEqual({ expectedRevisions: { visit: 7 }, payload: {} });
+    expect(screen.queryByRole("button", { name: "เริ่มตรวจ" })).not.toBeInTheDocument();
+
+    started = true;
+    resolveStart(HttpResponse.json({ data: consultingQueueItem, replayed: false }));
+    await waitFor(() => expect(screen.getAllByText("กำลังตรวจ").length).toBeGreaterThan(0));
+    expect(startRequests).toBe(1);
+    expect(screen.getByRole("button", { name: "ยังไม่ได้ถามประวัติแพ้ยา" })).toBeEnabled();
+  });
+
+  it("fails closed after a direct-route Start revision conflict while keeping Allergy recovery", async () => {
+    // Break caught: a stale direct-route Start must not remain a second POST
+    // affordance after the server rejects its revision.
+    const user = userEvent.setup();
+    const waitingVisit = { ...visit, status: "WAITING" as const, revision: 7, startedAt: null };
+    const waitingJourney = {
+      ...consultationJourney,
+      visit: { id: visit.id, status: waitingVisit.status, revision: waitingVisit.revision },
+      nextTask: { action: "START_CONSULTATION", labelTh: "เริ่มตรวจ", primaryRole: "doctor", permittedRoles: ["doctor"], availability: "AVAILABLE" },
+      blockers: [{ code: "ALLERGY_UNKNOWN", titleTh: "ยังไม่ได้ถามประวัติแพ้ยา", detailTh: "ต้องทบทวนก่อนลงนามการตรวจ", primaryRole: "assistant", recoveryAction: "REVIEW_ALLERGY", medication: null }],
+      allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"],
+    };
+    let startRequests = 0;
+    server.use(
+      http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: { ...workspace, visit: waitingVisit, allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"] } })),
+      http.post("/api/visits/visit-42/start-consultation", () => {
+        startRequests += 1;
+        return HttpResponse.json({ error: { code: "REVISION_CONFLICT", messageTh: "ข้อมูลคิวเปลี่ยนแปลงแล้ว", requestId: "start-conflict" } }, { status: 409 });
+      }),
+    );
+
+    renderRoute("/consultations/visit-42", undefined, () => waitingJourney);
+    await user.click(await screen.findByRole("button", { name: "เริ่มตรวจ" }));
+    expect(await screen.findByText("ข้อมูลคิวเปลี่ยนแปลงแล้ว")).toBeInTheDocument();
+    expect(startRequests).toBe(1);
+    expect(screen.queryByRole("button", { name: "เริ่มตรวจ" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ยังไม่ได้ถามประวัติแพ้ยา" })).toBeEnabled();
+  });
+
   it("renders UNKNOWN Allergy and four labeled SOAP fields", async () => {
     renderRoute();
     expect((await screen.findAllByText("UNKNOWN")).length).toBeGreaterThan(0);

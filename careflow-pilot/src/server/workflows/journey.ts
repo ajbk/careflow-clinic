@@ -212,6 +212,7 @@ function reviewAllergyAvailable(role: Actor["role"], status: VisitStatus): boole
     "PREPARING",
     "AWAITING_RELEASE",
     "AWAITING_HANDOFF",
+    "AWAITING_ORDER_REVISION",
   ].includes(status);
 }
 
@@ -336,9 +337,8 @@ function clinicalDomainActions(evidence: JourneyEvidence, allergyUnknown: boolea
     if (!allergyUnknown && evidence.clinical.canFinalize) actions.push("FINALIZE_CONSULTATION");
   }
   if (evidence.visit.status === "AWAITING_ORDER_REVISION") actions.push("OPEN_CONSULTATION");
-  if (!allergyUnknown && evidence.clinical.hasSignedNote) actions.push("AMEND_CLINICAL_NOTE");
+  if (evidence.clinical.hasSignedNote) actions.push("AMEND_CLINICAL_NOTE");
   if (
-    !allergyUnknown &&
     evidence.medication !== null &&
     !evidence.fulfillment.hasDispense &&
     medicationRevisionStatuses.includes(evidence.visit.status)

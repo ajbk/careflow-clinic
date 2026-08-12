@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactElement } from "react";
 import { Link } from "react-router-dom";
 import type { JourneyAction, JourneyBlocker } from "../../../shared/contracts";
-import { journeyDestination } from "../../app/journey-navigation";
+import { isJourneyActionResolvable, journeyDestination, type JourneyLocalActionHandlers } from "../../app/journey-navigation";
 import { ActionButton, Card } from "./ui";
 
 type Role = "assistant" | "doctor";
@@ -24,7 +24,7 @@ export function JourneyActionControl({
   blocker,
   allowedActions,
   authorityReady,
-  onLocalAction,
+  localActionHandlers,
 }: {
   action: JourneyAction;
   labelTh: string;
@@ -32,13 +32,14 @@ export function JourneyActionControl({
   blocker?: JourneyBlocker;
   allowedActions: readonly JourneyAction[];
   authorityReady: boolean;
-  onLocalAction?: (action: "START_CONSULTATION" | "REVIEW_ALLERGY") => void;
+  localActionHandlers?: JourneyLocalActionHandlers;
 }): ReactElement | null {
   if (!authorityReady || !allowedActions.includes(action)) return null;
   const destination = journeyDestination(action, visitId, blocker);
   if (destination.kind === "ROUTE") return <Link className="care-button care-button-primary journey-action-control" to={destination.to}>{labelTh}</Link>;
-  if (destination.kind === "LOCAL" && onLocalAction) {
-    return <ActionButton className="journey-action-control" type="button" onClick={() => onLocalAction(destination.action)}>{labelTh}</ActionButton>;
+  if (destination.kind === "LOCAL") {
+    const onLocalAction = localActionHandlers?.[destination.action];
+    if (onLocalAction) return <ActionButton className="journey-action-control" type="button" onClick={onLocalAction}>{labelTh}</ActionButton>;
   }
   return null;
 }
@@ -49,7 +50,7 @@ export function JourneyBlockerCard({
   currentRole,
   allowedActions,
   authorityReady,
-  onLocalAction,
+  localActionHandlers,
   commandFailure,
 }: {
   blocker: JourneyBlocker;
@@ -57,7 +58,7 @@ export function JourneyBlockerCard({
   currentRole: Role;
   allowedActions: readonly JourneyAction[];
   authorityReady: boolean;
-  onLocalAction?: (action: "START_CONSULTATION" | "REVIEW_ALLERGY") => void;
+  localActionHandlers?: JourneyLocalActionHandlers;
   commandFailure?: string;
 }): ReactElement {
   const alertRef = useRef<HTMLDivElement>(null);
@@ -65,7 +66,7 @@ export function JourneyBlockerCard({
     if (commandFailure) alertRef.current?.focus();
   }, [commandFailure]);
 
-  const canRecover = authorityReady && blocker.recoveryAction !== null && allowedActions.includes(blocker.recoveryAction);
+  const canRecover = authorityReady && blocker.recoveryAction !== null && allowedActions.includes(blocker.recoveryAction) && isJourneyActionResolvable(blocker.recoveryAction, visitId, blocker, localActionHandlers);
   const medication = blocker.medication;
   const medicationFacts = medication ? (
     <div className="journey-blocker-medication" aria-label={`รายละเอียดการขาด ${medication.displayNameSnapshot}`}>
@@ -90,7 +91,7 @@ export function JourneyBlockerCard({
       ) : medicationFacts}
       {blocker.recoveryAction ? (
         <div className="journey-blocker-recovery">
-          {canRecover ? <JourneyActionControl action={blocker.recoveryAction} labelTh={blocker.recoveryAction === "RECEIVE_STOCK" ? "รับยาเข้าคลัง" : blocker.titleTh} visitId={visitId} blocker={blocker} allowedActions={allowedActions} authorityReady={authorityReady} onLocalAction={onLocalAction} /> : null}
+          {canRecover ? <JourneyActionControl action={blocker.recoveryAction} labelTh={blocker.recoveryAction === "RECEIVE_STOCK" ? "รับยาเข้าคลัง" : blocker.titleTh} visitId={visitId} blocker={blocker} allowedActions={allowedActions} authorityReady={authorityReady} localActionHandlers={localActionHandlers} /> : null}
           {!canRecover ? <p className="journey-waiting-copy" role="status">{authorityReady ? waitingCopy(blocker) : "กำลังตรวจสอบสิทธิ์ล่าสุดก่อนดำเนินการ"}</p> : null}
         </div>
       ) : null}

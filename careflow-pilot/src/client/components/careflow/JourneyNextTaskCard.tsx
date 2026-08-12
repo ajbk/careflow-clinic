@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactElement } from "react";
 import type { JourneySummaryDto } from "../../../shared/contracts";
-import { journeyDestination } from "../../app/journey-navigation";
+import { isJourneyActionResolvable, type JourneyLocalActionHandlers } from "../../app/journey-navigation";
 import { Card } from "./ui";
 import { JourneyActionControl, JourneyBlockerCard } from "./JourneyBlockerCard";
 import { ActionButton } from "./ui";
@@ -34,14 +34,14 @@ export function JourneyNextTaskCard({
   visitId,
   currentRole,
   authorityReady,
-  onLocalAction,
+  localActionHandlers,
   commandFailure,
 }: {
   summary: JourneySummaryDto;
   visitId: string;
   currentRole: Role;
   authorityReady: boolean;
-  onLocalAction?: (action: "START_CONSULTATION" | "REVIEW_ALLERGY") => void;
+  localActionHandlers?: JourneyLocalActionHandlers;
   commandFailure?: string;
 }): ReactElement {
   const nextTask = summary.nextTask;
@@ -49,8 +49,7 @@ export function JourneyNextTaskCard({
   useEffect(() => {
     if (commandFailure && summary.blockers.length === 0) alertRef.current?.focus();
   }, [commandFailure, summary.blockers.length]);
-  const nextTaskDestination = nextTask ? journeyDestination(nextTask.action, visitId) : null;
-  const nextTaskIsResolvable = nextTaskDestination?.kind === "ROUTE" || (nextTaskDestination?.kind === "LOCAL" && Boolean(onLocalAction));
+  const nextTaskIsResolvable = nextTask ? isJourneyActionResolvable(nextTask.action, visitId, undefined, localActionHandlers) : false;
   const canAct = Boolean(
     authorityReady &&
     nextTask &&
@@ -74,7 +73,7 @@ export function JourneyNextTaskCard({
             {!authorityReady ? <p className="journey-waiting-copy" role="status">กำลังตรวจสอบสิทธิ์ล่าสุดก่อนดำเนินการ</p> : null}
             {authorityReady && !canAct ? <p className="journey-waiting-copy" role="status">{nextTask.labelTh}</p> : null}
             {commandFailure && summary.blockers.length === 0 ? <p ref={alertRef} className="journey-command-failure" role="alert" tabIndex={-1}>{commandFailure}</p> : null}
-            {canAct && !nextTaskIsBlockerRecovery ? <JourneyActionControl action={nextTask.action} labelTh={nextTask.labelTh} visitId={visitId} allowedActions={summary.allowedActions} authorityReady={authorityReady} onLocalAction={onLocalAction} /> : null}
+            {canAct && !nextTaskIsBlockerRecovery ? <JourneyActionControl action={nextTask.action} labelTh={nextTask.labelTh} visitId={visitId} allowedActions={summary.allowedActions} authorityReady={authorityReady} localActionHandlers={localActionHandlers} /> : null}
           </>
         ) : <p className="journey-waiting-copy">ยังไม่มีงานที่ดำเนินการได้สำหรับ Visit นี้</p>}
       </Card>
@@ -86,7 +85,7 @@ export function JourneyNextTaskCard({
           currentRole={currentRole}
           allowedActions={summary.allowedActions}
           authorityReady={authorityReady}
-          onLocalAction={onLocalAction}
+          localActionHandlers={localActionHandlers}
           commandFailure={index === focusedFailureBlockerIndex ? commandFailure : undefined}
         />
       ))}
