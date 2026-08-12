@@ -8,9 +8,9 @@ import {
   medicationOrderItems,
   type MedicationService,
 } from "../../src/server/modules/medication/index.js";
-import { clinicalNoteAmendments, clinicalNoteDrafts, clinicalNotes, createNoteService } from "../../src/server/modules/note/index.js";
+import { clinicalNoteAmendments, clinicalNoteDiagnoses, clinicalNoteDrafts, clinicalNotes, createNoteService } from "../../src/server/modules/note/index.js";
 import { createPatientService } from "../../src/server/modules/patient/index.js";
-import { createFulfillmentService } from "../../src/server/modules/fulfillment/index.js";
+import { createFulfillmentService, fulfillmentLabelVersions } from "../../src/server/modules/fulfillment/index.js";
 import { createInventoryService, inventoryReservationAllocations, inventoryReservations } from "../../src/server/modules/inventory/index.js";
 import { auditEvents, executeIdempotent, hashEvidence, idempotencyRecords } from "../../src/server/modules/platform/index.js";
 import { visits } from "../../src/server/modules/visit/index.js";
@@ -76,6 +76,7 @@ async function createConsultingVisit(test: Awaited<ReturnType<typeof fixture>>) 
           weightKg: 60, heightCm: 165, temperatureC: 37.5, systolicMmhg: 120,
           diastolicMmhg: 80, heartRateBpm: 80, spo2Percent: 98,
         },
+        allergy: { answer: "NO", items: [], changeReason: null },
       },
     },
   });
@@ -88,6 +89,34 @@ async function createConsultingVisit(test: Awaited<ReturnType<typeof fixture>>) 
   });
   expect(started.statusCode).toBe(200);
   return visitId;
+}
+
+async function createLegacyUnknownConsultingVisit(test: Awaited<ReturnType<typeof fixture>>) {
+  const patient = await test.app.inject({
+    method: "POST",
+    url: "/api/patients/synthetic",
+    headers: { cookie: test.assistantCookie, "idempotency-key": "clinical-legacy-unknown-patient" },
+    payload: { expectedRevisions: {}, payload: {} },
+  });
+  expect(patient.statusCode).toBe(201);
+  const patientId = patient.json().data.id as string;
+  const visitId = "clinical-legacy-unknown-visit";
+  const observationId = "clinical-legacy-unknown-observation";
+  const now = "2026-08-03T00:00:00.000Z";
+  test.database.sqlite.prepare(
+    "INSERT INTO visits (id, clinic_id, patient_id, status, chief_complaint, revision, arrived_at, started_at, closed_at, created_by) VALUES (?, 'clinic', ?, 'WAITING', 'อาการเดิม', 1, ?, NULL, NULL, ?)",
+  ).run(visitId, patientId, now, test.assistant.actor.id);
+  test.database.sqlite.prepare(
+    "INSERT INTO intake_observations (id, visit_id, weight_kg, height_cm, temperature_c, systolic_mmhg, diastolic_mmhg, heart_rate_bpm, spo2_percent, recorded_by, recorded_at) VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)",
+  ).run(observationId, visitId, test.assistant.actor.id, now);
+  const started = await test.app.inject({
+    method: "POST",
+    url: `/api/visits/${visitId}/start-consultation`,
+    headers: { cookie: test.doctorCookie, "idempotency-key": "clinical-legacy-unknown-start" },
+    payload: { expectedRevisions: { visit: 1 }, payload: {} },
+  });
+  expect(started.statusCode).toBe(200);
+  return { patientId, visitId };
 }
 
 function draftBody(): SaveConsultationDraftBody {
@@ -329,7 +358,7 @@ describe("consultation draft workflow", () => {
 
 function completeFinalizationBody() {
   return {
-    expectedRevisions: { visit: 2, patient: 1, noteDraft: 1, medicationDraft: 1 },
+    expectedRevisions: { visit: 2, patient: 2, noteDraft: 1, medicationDraft: 1 },
     payload: {},
   };
 }
@@ -441,6 +470,87 @@ describe("consultation finalization", () => {
       .toHaveLength(1);
   });
 
+  it("blocks finalization for a legacy UNKNOWN allergy before any signed write, then permits the same drafts after review", async () => {
+    const test = await fixture();
+    const { patientId, visitId } = await createLegacyUnknownConsultingVisit(test);
+    const draft = await saveDraft(test, visitId, {
+      expectedRevisions: { visit: 2, noteDraft: 0, medicationDraft: 0 },
+      payload: {
+        note: {
+          subjective: "อาการเดิม",
+          objective: "ผลตรวจเดิม",
+          assessment: "ประเมินเดิม",
+          plan: "แผนเดิม",
+          diagnoses: ["การวินิจฉัยเดิม"],
+        },
+        medicationDecision: { kind: "NO_MEDICATION", noMedicationReason: "ยังไม่มีข้อบ่งใช้ยา" },
+      },
+    }, "clinical-legacy-unknown-draft");
+    expect(draft.statusCode).toBe(200);
+    const workspace = await test.app.inject({
+      method: "GET",
+      url: `/api/visits/${visitId}/workspace`,
+      headers: { cookie: test.doctorCookie },
+    });
+    expect(workspace.statusCode).toBe(200);
+
+    const before = {
+      notes: test.database.db.select().from(clinicalNotes).all(),
+      diagnoses: test.database.db.select().from(clinicalNoteDiagnoses).all(),
+      decisions: test.database.db.select().from(medicationDecisions).all(),
+      labels: test.database.db.select().from(fulfillmentLabelVersions).all(),
+      visits: test.database.db.select().from(visits).all(),
+      audits: test.database.db.select().from(auditEvents).all(),
+      idempotency: test.database.db.select().from(idempotencyRecords).all(),
+    };
+    const blocked = await finalize(test, visitId, {
+      expectedRevisions: { visit: 2, patient: 1, noteDraft: 1, medicationDraft: 1 },
+      payload: {},
+    }, "clinical-legacy-unknown-finalize");
+
+    expect(blocked.statusCode).toBe(409);
+    expect(blocked.json().error).toMatchObject({
+      code: "INVALID_STATE",
+      messageTh: "ยังลงนามไม่ได้ กรุณาทบทวนประวัติแพ้ยาก่อน",
+    });
+    expect({
+      notes: test.database.db.select().from(clinicalNotes).all(),
+      diagnoses: test.database.db.select().from(clinicalNoteDiagnoses).all(),
+      decisions: test.database.db.select().from(medicationDecisions).all(),
+      labels: test.database.db.select().from(fulfillmentLabelVersions).all(),
+      visits: test.database.db.select().from(visits).all(),
+      audits: test.database.db.select().from(auditEvents).all(),
+      idempotency: test.database.db.select().from(idempotencyRecords).all(),
+    }).toEqual(before);
+
+    const reviewed = await test.app.inject({
+      method: "POST",
+      url: `/api/patients/${patientId}/allergy-revisions`,
+      headers: { cookie: test.doctorCookie, "idempotency-key": "clinical-legacy-unknown-review" },
+      payload: {
+        expectedRevisions: { patient: 1, visit: 2 },
+        payload: {
+          visitId,
+          state: "NONE_KNOWN",
+          items: [],
+          sourceText: "ทบทวนประวัติเดิม",
+          reason: "ยืนยันก่อนลงนาม",
+        },
+      },
+    });
+    expect(reviewed.statusCode).toBe(201);
+    const committed = await finalize(test, visitId, {
+      expectedRevisions: { visit: 2, patient: 2, noteDraft: 1, medicationDraft: 1 },
+      payload: {},
+    }, "clinical-legacy-unknown-finalize-after-review");
+    expect(committed.statusCode).toBe(200);
+    expect(committed.json().data).toMatchObject({
+      visit: { status: "AWAITING_CHARGE", revision: 3 },
+      clinicalNote: { visitId, version: 1 },
+      medicationDecision: { visitId, version: 1, kind: "NO_MEDICATION" },
+    });
+  });
+
   it("returns a sourced medication Snapshot for a signed NO_MEDICATION decision on a later Visit", async () => {
     const test = await fixture();
     const visitId = await createConsultingVisit(test);
@@ -455,11 +565,12 @@ describe("consultation finalization", () => {
       url: "/api/visits/intake",
       headers: { cookie: test.assistantCookie, "idempotency-key": "clinical-later-intake-no-medication" },
       payload: {
-        expectedRevisions: { patient: 1 },
+        expectedRevisions: { patient: 2 },
         payload: {
           patientId,
           chiefComplaint: "ติดตามอาการ",
           vitals: { weightKg: 60, heightCm: 165, temperatureC: 37, systolicMmhg: 120, diastolicMmhg: 80, heartRateBpm: 80, spo2Percent: 98 },
+          allergy: { answer: "NO", items: [], changeReason: null },
         },
       },
     });
@@ -533,7 +644,7 @@ describe("consultation finalization", () => {
     const allergy = await test.app.inject({
       method: "POST", url: `/api/patients/${patientId}/allergy-revisions`,
       headers: { cookie: test.doctorCookie, "idempotency-key": "clinical-finalize-allergy-001" },
-      payload: { expectedRevisions: { patient: 1, visit: 2 }, payload: {
+      payload: { expectedRevisions: { patient: 2, visit: 2 }, payload: {
         visitId, state: "NONE_KNOWN", items: [], sourceText: "ทบทวนก่อนลงนาม", reason: "ความปลอดภัย",
       } },
     });
@@ -541,7 +652,7 @@ describe("consultation finalization", () => {
 
     const response = await finalize(test, visitId);
     expect(response.statusCode).toBe(409);
-    expect(response.json().error.currentRevisions).toEqual({ patient: 2 });
+    expect(response.json().error.currentRevisions).toEqual({ patient: 3 });
     expect(test.database.db.select().from(clinicalNotes).all()).toHaveLength(0);
   });
 
@@ -559,9 +670,9 @@ describe("consultation finalization", () => {
   });
 
   it.each([
-    ["Visit", { visit: 1, patient: 1, noteDraft: 1, medicationDraft: 1 }, "visit", 2],
-    ["Note draft", { visit: 2, patient: 1, noteDraft: 2, medicationDraft: 1 }, "noteDraft", 1],
-    ["Medication draft", { visit: 2, patient: 1, noteDraft: 1, medicationDraft: 2 }, "medicationDraft", 1],
+    ["Visit", { visit: 1, patient: 2, noteDraft: 1, medicationDraft: 1 }, "visit", 2],
+    ["Note draft", { visit: 2, patient: 2, noteDraft: 2, medicationDraft: 1 }, "noteDraft", 1],
+    ["Medication draft", { visit: 2, patient: 2, noteDraft: 1, medicationDraft: 2 }, "medicationDraft", 1],
   ])("rejects stale %s revisions without a partial signature", async (_name, expectedRevisions, key, current) => {
     const test = await fixture();
     const visitId = await createConsultingVisit(test);
@@ -587,7 +698,7 @@ describe("consultation finalization", () => {
     const first = await finalize(test, visitId);
     const replay = await finalize(test, visitId);
     const collision = await finalize(test, visitId, {
-      expectedRevisions: { visit: 2, patient: 1, noteDraft: 2, medicationDraft: 1 }, payload: {},
+      expectedRevisions: { visit: 2, patient: 2, noteDraft: 2, medicationDraft: 1 }, payload: {},
     });
     const stored = test.database.db.select().from(idempotencyRecords).all()
       .find((record) => record.key === "clinical-finalize-001");
@@ -731,7 +842,7 @@ function reviseDecision(
     url: `/api/visits/${visitId}/medication-decision-revisions`,
     headers: { cookie: input.cookie ?? test.doctorCookie, "idempotency-key": input.key ?? "clinical-decision-revision-001" },
     payload: {
-      expectedRevisions: { visit: input.visit ?? 3, patient: input.patient ?? 1, medicationDecision: input.decision ?? 1 },
+      expectedRevisions: { visit: input.visit ?? 3, patient: input.patient ?? 2, medicationDecision: input.decision ?? 1 },
       payload: {
         revisionReason: input.reason ?? "ปรับคำสั่งตามข้อมูลใหม่",
         decision: kind === "NO_MEDICATION"
@@ -889,7 +1000,7 @@ describe("signed evidence amendments and safety revisions", () => {
     const preparingRevision = await reviseDecision(test, visitId, { key: "clinical-revision-preparing" });
 
     expect(staleVisit.json().error).toMatchObject({ code: "REVISION_CONFLICT", currentRevisions: { visit: 3 } });
-    expect(stalePatient.json().error).toMatchObject({ code: "REVISION_CONFLICT", currentRevisions: { patient: 1 } });
+    expect(stalePatient.json().error).toMatchObject({ code: "REVISION_CONFLICT", currentRevisions: { patient: 2 } });
     expect(staleDecision.json().error).toMatchObject({ code: "REVISION_CONFLICT", currentRevisions: { medicationDecision: 1 } });
     expect(staleCatalog.json().error).toMatchObject({ code: "REVISION_CONFLICT", currentRevisions: { "medication.DEMO-MED-001": 2 } });
     expect(assistant.statusCode).toBe(403);
@@ -911,7 +1022,7 @@ describe("signed evidence amendments and safety revisions", () => {
       beforeDecisionRevisionTransition: () => { throw new Error("injected decision revision failure"); },
     });
     const body = {
-      expectedRevisions: { visit: 3, patient: 1, medicationDecision: 1 },
+      expectedRevisions: { visit: 3, patient: 2, medicationDecision: 1 },
       payload: { revisionReason: "ทดสอบ rollback", decision: { kind: "NO_MEDICATION" as const, noMedicationReason: "ไม่มีข้อบ่งชี้" } },
     };
 
@@ -943,7 +1054,7 @@ describe("signed evidence amendments and safety revisions", () => {
       url: `/api/patients/${patientId}/allergy-revisions`,
       headers: { cookie: test.doctorCookie, "idempotency-key": "clinical-allergy-safety-001" },
       payload: {
-        expectedRevisions: { patient: 1, visit: 3 },
+        expectedRevisions: { patient: 2, visit: 3 },
         payload: { visitId, state: "PRESENT", items: [{ substance: "ยาทดสอบ", reaction: "ผื่น", severity: "MILD", note: null }], sourceText: "พบประวัติแพ้", reason: "ป้องกันการจ่ายยา" },
       },
     });
@@ -1013,7 +1124,7 @@ describe("signed evidence amendments and safety revisions", () => {
       const response = await test.app.inject({
         method: "POST", url: `/api/patients/${patientId}/allergy-revisions`,
         headers: { cookie: test.doctorCookie, "idempotency-key": `allergy-transition-${status}` },
-        payload: { expectedRevisions: { patient: 1, visit: 4 }, payload: { visitId, state: "PRESENT", items: [{ substance: "ยาทดสอบ", reaction: "ผื่น", severity: "MILD", note: null }], sourceText: "พบประวัติแพ้", reason: "ความปลอดภัย" } },
+        payload: { expectedRevisions: { patient: 2, visit: 4 }, payload: { visitId, state: "PRESENT", items: [{ substance: "ยาทดสอบ", reaction: "ผื่น", severity: "MILD", note: null }], sourceText: "พบประวัติแพ้", reason: "ความปลอดภัย" } },
       });
       expect(response.statusCode).toBe(201);
       expect(response.json().data.visit).toMatchObject({ status: "AWAITING_ORDER_REVISION", revision: 5 });

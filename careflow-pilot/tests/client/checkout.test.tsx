@@ -69,6 +69,27 @@ const previewCheckout = {
   closeBlockers: ["charge"],
 };
 
+const checkoutJourney = {
+  visit: { id: "visit-42", status: "AWAITING_CHARGE", revision: 7 }, refreshedAt: "2026-08-09T03:00:00.000Z",
+  steps: [
+    { code: "INTAKE", labelTh: "รับผู้ป่วย", state: "COMPLETE" }, { code: "SCREENING", labelTh: "คัดกรอง", state: "COMPLETE" },
+    { code: "CONSULTATION", labelTh: "ตรวจรักษา", state: "COMPLETE" }, { code: "MEDICATION_DECISION", labelTh: "ตัดสินใจเรื่องยา", state: "COMPLETE" },
+    { code: "PREPARATION", labelTh: "เตรียมยา", state: "COMPLETE" }, { code: "HANDOFF", labelTh: "ส่งมอบยา", state: "COMPLETE" },
+    { code: "PAYMENT", labelTh: "ชำระเงิน", state: "CURRENT" }, { code: "CLOSURE", labelTh: "ปิด Visit", state: "UPCOMING" },
+  ],
+  nextTask: { action: "FINALIZE_CHARGE", labelTh: "ยืนยันยอดเพื่อรับชำระ", primaryRole: "doctor", permittedRoles: ["doctor"], availability: "AVAILABLE" }, blockers: [], allowedActions: ["FINALIZE_CHARGE"],
+};
+function journeyActionsForPermissions(permissions: readonly string[]) {
+  const actions: string[] = [];
+  if (permissions.includes("finance:finalize-charge")) actions.push("FINALIZE_CHARGE");
+  if (permissions.includes("finance:waive")) actions.push("APPROVE_FULL_WAIVER");
+  if (permissions.includes("finance:record-cash")) actions.push("RECORD_CASH");
+  if (permissions.includes("finance:confirm-promptpay")) actions.push("RECORD_PROMPTPAY");
+  if (permissions.includes("visit:close")) actions.push("CLOSE_VISIT");
+  if (permissions.includes("opd:read")) actions.push("OPEN_OPD_CARD");
+  return actions;
+}
+
 const awaitingPaymentCheckout = {
   ...previewCheckout,
   visit: { ...previewCheckout.visit, status: "AWAITING_PAYMENT", revision: 8 },
@@ -155,6 +176,7 @@ function renderCheckout(
   server.use(
     http.get("/api/auth/session", () => HttpResponse.json(session(role, permissions))),
     http.get("/api/checkout/visit-42", () => HttpResponse.json({ data: checkout })),
+    http.get("/api/visits/:visitId/journey", ({ params }) => HttpResponse.json({ data: { ...checkoutJourney, visit: { ...checkoutJourney.visit, id: String(params.visitId) }, allowedActions: journeyActionsForPermissions(permissions) } })),
   );
   const router = createMemoryRouter(appRoutes, { initialEntries: ["/checkout/visit-42"] });
   render(<AppProviders><RouterProvider router={router} /></AppProviders>);
@@ -180,6 +202,12 @@ afterEach(() => {
 afterAll(() => server.close());
 
 describe("Thai checkout workflow", () => {
+  it("reads Journey authority alongside Checkout evidence", async () => {
+    renderCheckout();
+    expect(await screen.findByRole("navigation", { name: "เส้นทางผู้ป่วย" })).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { name: "ยืนยันยอดเพื่อรับชำระ" }).length).toBeGreaterThan(0);
+  });
+
   it("keeps the current authorized job beside financial evidence in one Checkout grid", async () => {
     renderCheckout();
     const evidence = await screen.findByRole("region", { name: "หลักฐานรายการคิดเงิน" });
@@ -188,6 +216,20 @@ describe("Thai checkout workflow", () => {
     const job = within(grid as HTMLElement).getByRole("region", { name: "งานชำระเงินปัจจุบัน" });
     expect(within(job).getByRole("button", { name: "ยืนยันยอดเพื่อรับชำระ" })).toBeInTheDocument();
     expect(evidence.nextElementSibling).toBe(job);
+  });
+
+  it("uses Journey finance authority when a legacy Checkout action list is stale", async () => {
+    // Break caught: legacy Checkout actions must not override the current semantic Journey authority.
+    const user = userEvent.setup();
+    let requests = 0;
+    server.use(http.post("/api/checkout/visit-42/charge-finalizations", () => {
+      requests += 1;
+      return HttpResponse.json({ data: awaitingPaymentCheckout, replayed: false }, { status: 201 });
+    }));
+    renderCheckout({ ...previewCheckout, allowedActions: [] });
+
+    await user.click(await screen.findByRole("button", { name: "ยืนยันยอดเพื่อรับชำระ" }));
+    await waitFor(() => expect(requests).toBe(1));
   });
 
   it("renders immutable server line evidence and exact whole-Baht values without clinical content", async () => {
@@ -368,7 +410,16 @@ describe("Thai checkout workflow", () => {
     expect(dialog).toContainElement(document.activeElement as HTMLElement);
     expect(document.body).not.toHaveFocus();
 
-    server.use(http.get("/api/checkout/visit-42", () => HttpResponse.json({ data: refreshedCheckout })));
+    server.use(
+      http.get("/api/checkout/visit-42", () => HttpResponse.json({ data: refreshedCheckout })),
+      http.get("/api/visits/:visitId/journey", ({ params }) => HttpResponse.json({
+        data: {
+          ...checkoutJourney,
+          visit: { id: String(params.visitId), status: refreshedCheckout.visit.status, revision: refreshedCheckout.visit.revision },
+          allowedActions: [],
+        },
+      })),
+    );
     await user.click(reload);
     await waitFor(() => expect(reason).toBeDisabled());
     expect(reason).toHaveValue("เกณฑ์ช่วยเหลือผู้ป่วย");

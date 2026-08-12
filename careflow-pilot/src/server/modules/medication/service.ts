@@ -40,6 +40,8 @@ export interface MedicationService {
   ): MedicationDto;
   getDecisionDraft(visitId: string): MedicationDecisionDraftDto | null;
   getSignedDecision(visitId: string): SignedMedicationDecisionDto | null;
+  /** Minimal decision identity for the Journey read model; never exposes signed content or hashes. */
+  getJourneyDecision(visitId: string): null | { id: string; version: number; kind: "ORDER" | "NO_MEDICATION" };
   getSignedDecisionById(decisionId: string): SignedMedicationDecisionDto | null;
   getRecentSignedDecisionsForPatient(patientId: string): SignedMedicationDecisionDto[];
   saveDecisionDraft(
@@ -252,6 +254,22 @@ export function createMedicationService(input: MedicationServiceOptions): Medica
         .where(eq(medicationDecisions.visitId, visitId))
         .orderBy(desc(medicationDecisions.version)).get();
       return decision ? toSignedDecisionDto(input.database.db, decision) : null;
+    },
+
+    getJourneyDecision(visitId) {
+      const decision = input.database.db.select({
+        id: medicationDecisions.id,
+        version: medicationDecisions.version,
+        kind: medicationDecisions.kind,
+      }).from(medicationDecisions)
+        .where(eq(medicationDecisions.visitId, visitId))
+        .orderBy(desc(medicationDecisions.version)).get();
+      if (!decision) return null;
+      return {
+        id: decision.id,
+        version: decision.version,
+        kind: decision.kind === "ORDER" ? "ORDER" : "NO_MEDICATION",
+      };
     },
 
     getSignedDecisionById(decisionId) {

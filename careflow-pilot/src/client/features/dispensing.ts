@@ -13,6 +13,7 @@ import {
   type FulfillmentHandoffBody,
 } from "../../shared/contracts";
 import { queryKeys } from "../app/query-client";
+import { invalidateJourney } from "./journey";
 import { ApiClient, apiClient as defaultApiClient } from "../lib/api-client";
 import { createCommandAttempt, type CommandAttempt } from "../lib/idempotency";
 
@@ -104,16 +105,17 @@ export function createHandoffAttempt(data: FulfillmentPickListDto): HandoffAttem
   });
 }
 
-function invalidateAfterCommand(queryClient: ReturnType<typeof useQueryClient>, visitId: string, data: FulfillmentPickListDto): void {
+function invalidateAfterCommand(queryClient: ReturnType<typeof useQueryClient>, visitId: string, data: FulfillmentPickListDto): Promise<void> {
   queryClient.setQueryData(queryKeys.dispensing(visitId), data);
   queryClient.invalidateQueries({ queryKey: queryKeys.dispensing(visitId), refetchType: "none" });
   queryClient.invalidateQueries({ queryKey: queryKeys.label(visitId), refetchType: "none" });
-  void Promise.all([
+  return Promise.all([
     queryClient.invalidateQueries({ queryKey: queryKeys.inventory }),
     queryClient.invalidateQueries({ queryKey: queryKeys.visit(visitId) }),
+    invalidateJourney(queryClient, visitId),
     queryClient.invalidateQueries({ queryKey: queryKeys.queue }),
     queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
-  ]);
+  ]).then(() => undefined);
 }
 
 export function useDispensingPickList(visitId: string, client: ApiClient = defaultApiClient) {

@@ -48,17 +48,18 @@ async function populatedDatabase() {
       payload: {
         patientId: patient.id,
         chiefComplaint: "ไอ",
-        vitals: {
-          weightKg: 60,
-          heightCm: 165,
-          temperatureC: 37,
-          systolicMmhg: 120,
-          diastolicMmhg: 80,
-          heartRateBpm: 80,
-          spo2Percent: 98,
+          vitals: {
+            weightKg: 60,
+            heightCm: 165,
+            temperatureC: 37,
+            systolicMmhg: 120,
+            diastolicMmhg: 80,
+            heartRateBpm: 80,
+            spo2Percent: 98,
+          },
+          allergy: { answer: "NO", items: [], changeReason: null },
         },
       },
-    },
   });
   expect(intakeResponse.statusCode).toBe(201);
   const accountAuditCount = fixture.database.sqlite
@@ -89,7 +90,7 @@ function seedClinicalEvidence(databasePath: string): void {
     const patientId = database.prepare("SELECT id FROM patients").pluck().get() as string;
     const visitId = database.prepare("SELECT id FROM visits").pluck().get() as string;
     database.exec(`
-      INSERT INTO patient_allergy_revisions VALUES ('reset-allergy-revision', '${patientId}', 1, 'NONE_KNOWN', 'source', 'reason', 'reset-assistant-001', '${now}');
+      INSERT INTO patient_allergy_revisions VALUES ('reset-allergy-revision', '${patientId}', 2, 'NONE_KNOWN', 'source', 'reason', 'reset-assistant-001', '${now}');
       INSERT INTO patient_allergy_items VALUES ('reset-allergy-item', 'reset-allergy-revision', 0, 'substance', 'reaction', 'MILD', NULL);
       INSERT INTO clinical_note_drafts VALUES ('reset-note-draft', '${visitId}', 1, '', '', '', '', 'reset-assistant-001', 'reset-assistant-001', '${now}', '${now}');
       INSERT INTO clinical_note_draft_diagnoses VALUES ('reset-note-draft-diagnosis', 'reset-note-draft', 0, 'diagnosis');
@@ -387,6 +388,14 @@ describe("guarded synthetic reset", () => {
       expect(beforeReset.prepare("SELECT status, revision FROM visits WHERE id = 'reset-finance-payment-visit'").get())
         .toEqual({ status: "CLOSED", revision: 4 });
       expect(beforeReset.prepare("SELECT count(*) FROM visit_closures WHERE id = 'reset-finance-closure'").pluck().get()).toBe(1);
+      // The initial Intake itself creates the first explicit NONE_KNOWN
+      // assessment; the synthetic fixture then appends one item-bearing
+      // revision. Reset must clear child items before both revisions.
+      expect(beforeReset.prepare("SELECT revision, state FROM patient_allergy_revisions ORDER BY revision").all()).toEqual([
+        { revision: 1, state: "NONE_KNOWN" },
+        { revision: 2, state: "NONE_KNOWN" },
+      ]);
+      expect(beforeReset.prepare("SELECT count(*) FROM patient_allergy_items").pluck().get()).toBe(1);
       expect(beforeReset.prepare(`
         SELECT line.lot_number_snapshot, snapshot.unit_price_baht_snapshot
         FROM fulfillment_dispense_price_snapshots AS snapshot
@@ -407,6 +416,8 @@ describe("guarded synthetic reset", () => {
     expect(result.errors).toEqual([]);
     const database = new Database(fixture.databasePath);
     try {
+      database.pragma("foreign_keys = ON");
+      expect(database.pragma("foreign_keys", { simple: true })).toBe(1);
       expect(database.prepare("SELECT count(*) FROM patients").pluck().get()).toBe(0);
       expect(database.prepare("SELECT count(*) FROM visits").pluck().get()).toBe(0);
       expect(database.prepare("SELECT count(*) FROM intake_observations").pluck().get()).toBe(0);

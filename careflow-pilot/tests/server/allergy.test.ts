@@ -50,28 +50,15 @@ async function createPatientAndVisit(test: Awaited<ReturnType<typeof fixture>>) 
     payload: { expectedRevisions: {}, payload: {} },
   });
   const patientId = patientResponse.json().data.id as string;
-  const intakeResponse = await test.app.inject({
-    method: "POST",
-    url: "/api/visits/intake",
-    headers: { cookie: test.assistantCookie, "idempotency-key": "allergy-intake-001" },
-    payload: {
-      expectedRevisions: { patient: 1 },
-      payload: {
-        patientId,
-        chiefComplaint: "อาการทดสอบ",
-        vitals: {
-          weightKg: null,
-          heightCm: null,
-          temperatureC: null,
-          systolicMmhg: null,
-          diastolicMmhg: null,
-          heartRateBpm: null,
-          spo2Percent: null,
-        },
-      },
-    },
-  });
-  return { patientId, visitId: intakeResponse.json().data.visit.id as string };
+  const visitId = "allergy-legacy-visit-001";
+  const recordedAt = "2026-08-03T00:00:00.000Z";
+  test.database.sqlite.prepare(
+    "INSERT INTO visits (id, clinic_id, patient_id, status, chief_complaint, revision, arrived_at, started_at, closed_at, created_by) VALUES (?, 'clinic', ?, 'WAITING', 'อาการทดสอบ', 1, ?, NULL, NULL, ?)",
+  ).run(visitId, patientId, recordedAt, test.assistant.actor.id);
+  test.database.sqlite.prepare(
+    "INSERT INTO intake_observations (id, visit_id, weight_kg, height_cm, temperature_c, systolic_mmhg, diastolic_mmhg, heart_rate_bpm, spo2_percent, recorded_by, recorded_at) VALUES (?, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)",
+  ).run("allergy-legacy-observation-001", visitId, test.assistant.actor.id, recordedAt);
+  return { patientId, visitId };
 }
 
 function review(
@@ -468,6 +455,91 @@ describe("versioned allergy review", () => {
     } });
     expect(test.database.db.select().from(auditEvents).all().find((event) => event.action === "visit.allergy-safety-changed"))
       .toMatchObject({ reason: "หยุดทบทวนคำสั่งยา" });
+  });
+
+  it("keeps Doctor Allergy recovery executable in order revision without granting it to Assistant", async () => {
+    // Break caught: allowing UNKNOWN after a signed order must retain the real
+    // Doctor recovery command and its Journey authority, rather than strand
+    // the Visit after the safety transition.
+    const test = await fixture();
+    const { patientId, visitId } = await createPatientAndVisit(test);
+    prepareAwaitingPreparationOrder(test, visitId);
+    test.database.sqlite.exec(`
+      INSERT INTO clinical_notes (
+        id, visit_id, version, subjective, objective, assessment, plan, source_draft_revision,
+        signed_by, signed_by_display_name, signed_at, content_hash
+      ) VALUES (
+        'allergy-safety-note-001', '${visitId}', 1, 'อาการ', 'ผลตรวจ', 'การประเมิน', 'แผน', 1,
+        '${test.doctor.actor.id}', '${test.doctor.actor.displayName}', '2026-08-03T00:00:00.000Z', '${"a".repeat(64)}'
+      );
+      INSERT INTO clinical_note_diagnoses (id, clinical_note_id, position, diagnosis_text)
+      VALUES ('allergy-safety-diagnosis-001', 'allergy-safety-note-001', 0, 'การวินิจฉัย');
+    `);
+
+    const unknown = await review(test, {
+      patientId,
+      visitId,
+      cookie: test.doctorCookie,
+      state: "UNKNOWN",
+      sourceText: "ยังยืนยันประวัติไม่ได้",
+      reason: "ต้องทบทวนคำสั่งยา",
+      key: "allergy-order-unknown-001",
+    });
+    expect(unknown.statusCode).toBe(201);
+    expect(unknown.json().data).toMatchObject({ allergy: { state: "UNKNOWN", revision: 1 }, visit: { status: "AWAITING_ORDER_REVISION", revision: 2 } });
+
+    const doctorJourney = await test.app.inject({ method: "GET", url: `/api/visits/${visitId}/journey`, headers: { cookie: test.doctorCookie } });
+    const assistantJourney = await test.app.inject({ method: "GET", url: `/api/visits/${visitId}/journey`, headers: { cookie: test.assistantCookie } });
+    expect(doctorJourney.statusCode).toBe(200);
+    expect(doctorJourney.json().data).toMatchObject({
+      nextTask: { action: "REVIEW_ALLERGY", availability: "AVAILABLE" },
+      allowedActions: expect.arrayContaining(["REVIEW_ALLERGY", "AMEND_CLINICAL_NOTE", "REVISE_MEDICATION_DECISION"]),
+    });
+    expect(assistantJourney.statusCode).toBe(200);
+    expect(assistantJourney.json().data).toMatchObject({
+      nextTask: { action: "REVIEW_ALLERGY", primaryRole: "doctor", permittedRoles: ["doctor"], availability: "WAITING_FOR_ROLE" },
+      allowedActions: [],
+    });
+
+    const beforeAssistant = JSON.stringify({
+      visits: test.database.db.select().from(visits).all(),
+      allergies: test.database.db.select().from(patientAllergyRevisions).all(),
+      audits: test.database.db.select().from(auditEvents).all(),
+      idempotency: test.database.db.select().from(idempotencyRecords).all(),
+    });
+    const assistant = await review(test, {
+      patientId,
+      visitId,
+      patientRevision: 2,
+      visitRevision: 2,
+      state: "NONE_KNOWN",
+      cookie: test.assistantCookie,
+      key: "allergy-order-assistant-denied-001",
+    });
+    expect(assistant.statusCode).toBe(409);
+    expect(assistant.json().error.code).toBe("INVALID_STATE");
+    expect(JSON.stringify({
+      visits: test.database.db.select().from(visits).all(),
+      allergies: test.database.db.select().from(patientAllergyRevisions).all(),
+      audits: test.database.db.select().from(auditEvents).all(),
+      idempotency: test.database.db.select().from(idempotencyRecords).all(),
+    })).toBe(beforeAssistant);
+
+    const resolved = await review(test, {
+      patientId,
+      visitId,
+      patientRevision: 2,
+      visitRevision: 2,
+      state: "NONE_KNOWN",
+      cookie: test.doctorCookie,
+      key: "allergy-order-resolve-001",
+    });
+    expect(resolved.statusCode).toBe(201);
+    expect(resolved.json().data).toMatchObject({
+      patient: { revision: 3 },
+      allergy: { state: "NONE_KNOWN", revision: 2 },
+      visit: { status: "AWAITING_ORDER_REVISION", revision: 2 },
+    });
   });
 
   it("denies Assistant and AWAITING_CHARGE allergy safety transitions without an append", async () => {

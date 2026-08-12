@@ -10,6 +10,7 @@ async function createQueuedPatient(page: Page, complaint: string): Promise<{ hn:
   await expect(header).toBeVisible();
   const hn = (await header.innerText()).match(/HN DEMO-\d{6}/)?.[0];
   expect(hn).toMatch(/^HN DEMO-\d{6}$/);
+  await page.getByRole("radio", { name: "ไม่แพ้" }).check();
   await page.getByLabel("อาการสำคัญ *").fill(complaint);
   await page.getByRole("button", { name: "ส่งพบแพทย์" }).click();
   const card = page.locator(".queue-card").filter({ hasText: hn as string });
@@ -25,7 +26,7 @@ async function reviewAllergy(page: Page, hn?: string): Promise<void> {
     : page.getByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" });
   await button.click();
   const dialog = page.getByRole("dialog", { name: "ทบทวนประวัติแพ้ยา" });
-  await dialog.getByRole("button", { name: "NONE_KNOWN" }).click();
+  await dialog.getByRole("button", { name: "ยืนยันว่าไม่แพ้" }).click();
   await dialog.getByRole("button", { name: "บันทึกการทบทวน" }).click();
   await expect(dialog).toHaveCount(0);
 }
@@ -67,7 +68,7 @@ async function queueDoctorIntoConsultation(page: Page, hn: string): Promise<void
   await page.goto(`${new URL(page.url()).origin}/queue`);
   const card = page.locator(".queue-card").filter({ hasText: hn });
   await expect(card).toHaveCount(1);
-  await card.getByRole("button", { name: "เริ่มการตรวจ" }).click();
+  await card.getByRole("button", { name: "เริ่มตรวจ" }).click();
   await expect(page).toHaveURL(/\/consultations\/[^/]+$/);
 }
 
@@ -191,22 +192,26 @@ test("reject/reprint, stale evidence, inventory safeguards, and role denial rema
     await assistant.getByRole("button", { name: "ยืนยันด้วยตนเอง" }).click();
     await assistant.getByRole("button", { name: "เสร็จสิ้นการเตรียมยา" }).click();
     await doctor.goto(`${server.baseURL}/dispensing/${patient.visitId}`);
+    // Reject uses its own restored Journey action and visible form; it must not
+    // be inferred from, or silently tunneled through, the release command.
     await doctor.getByLabel("เหตุผลการปฏิเสธ").fill("ฉลากต้องพิมพ์ใหม่เพื่อทบทวน");
     await doctor.getByRole("button", { name: "ปฏิเสธการจัดยา" }).click();
     await expect(doctor.getByText("AWAITING_PREPARATION", { exact: true })).toBeVisible();
     const invalidated = await doctor.request.get(`${server.baseURL}/api/dispensing/${patient.visitId}/labels`);
     await expect(invalidated.json()).resolves.toMatchObject({ data: { medicationDecisionVersion: 1, version: 1 } });
 
-    // Re-preparing must request fresh print evidence; a release attempted with a
-    // stale artifact must fail before it can alter the Visit.
+    // Re-preparing makes a fresh print request the next visible Assistant
+    // action. Confirmation controls remain unavailable until that evidence is
+    // recorded, rather than allowing a stale-label completion.
     await assistant.goto(`${server.baseURL}/dispensing/${patient.visitId}`);
     await assistant.getByRole("button", { name: "เริ่มเตรียมยา" }).click();
-    await assistant.getByLabel("เหตุผลการยืนยันด้วยตนเอง").fill("ยืนยันรอบที่สองเพื่อทดสอบฉลากใหม่");
-    await assistant.getByRole("button", { name: "ยืนยันด้วยตนเอง" }).click();
-    await assistant.getByRole("button", { name: "เสร็จสิ้นการเตรียมยา" }).click();
-    await expect(assistant.getByRole("alert")).toContainText("คำขอพิมพ์ฉลากรอบใหม่");
+    await expect(assistant.getByRole("region", { name: "งานถัดไป" }).getByRole("link", { name: "บันทึกคำขอพิมพ์" })).toBeVisible();
+    await expect(assistant.getByLabel("เหตุผลการยืนยันด้วยตนเอง")).toHaveCount(0);
+    await expect(assistant.getByRole("button", { name: "เสร็จสิ้นการเตรียมยา" })).toHaveCount(0);
     await printCurrentLabel(assistant, server.baseURL, patient.visitId);
     await assistant.goto(`${server.baseURL}/dispensing/${patient.visitId}`);
+    await assistant.getByLabel("เหตุผลการยืนยันด้วยตนเอง").fill("ยืนยันรอบที่สองเพื่อทดสอบฉลากใหม่");
+    await assistant.getByRole("button", { name: "ยืนยันด้วยตนเอง" }).click();
     await assistant.getByRole("button", { name: "เสร็จสิ้นการเตรียมยา" }).click();
     await expect(assistant.getByText("AWAITING_RELEASE", { exact: true })).toBeVisible();
     const current = await assistant.request.get(`${server.baseURL}/api/dispensing/${patient.visitId}`);

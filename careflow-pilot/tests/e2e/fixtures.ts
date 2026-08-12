@@ -14,6 +14,7 @@ interface PilotServer {
   readonly database: DatabaseHandle;
   directory: string;
   readonly baseURL: string;
+  expireSessionsForStaff: (staffId: string) => void;
   restart: () => Promise<void>;
   close: () => Promise<void>;
 }
@@ -74,6 +75,10 @@ export async function startPilotServer(): Promise<PilotServer> {
     get database() { return activeDatabase; },
     directory,
     get baseURL() { return activeBaseURL; },
+    expireSessionsForStaff: (staffId) => {
+      activeDatabase.sqlite.prepare("UPDATE sessions SET last_seen_at = ? WHERE staff_id = ?")
+        .run(new Date(Date.now() - 16 * 60_000).toISOString(), staffId);
+    },
     restart: async () => {
       await activeApp.close();
       activeDatabase.close();
@@ -95,6 +100,9 @@ export async function loginAndAcknowledge(page: Page, baseURL: string, username:
   await page.getByLabel("ชื่อผู้ใช้").fill(username);
   await page.getByLabel("รหัสผ่าน").fill(E2E_PASSWORD);
   await page.getByRole("button", { name: "เข้าสู่ระบบ" }).click();
-  await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "ยืนยันและดำเนินการต่อ" }).click();
+  const acknowledgement = page.getByRole("checkbox");
+  if (await acknowledgement.waitFor({ state: "visible", timeout: 5_000 }).then(() => true).catch(() => false)) {
+    await acknowledgement.check();
+    await page.getByRole("button", { name: "ยืนยันและดำเนินการต่อ" }).click();
+  }
 }

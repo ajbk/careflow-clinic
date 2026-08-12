@@ -1,8 +1,10 @@
 import type { KeyboardEvent, ReactElement, Ref } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { CheckoutDto } from "../../shared/contracts";
+import type { CheckoutDto, JourneyAction } from "../../shared/contracts";
 import { useAuth } from "../auth/AuthProvider";
+import { JourneyAuthorityBanner, JourneyNextTaskCard } from "../components/careflow/JourneyNextTaskCard";
+import { VisitJourneyRibbon } from "../components/careflow/VisitJourneyRibbon";
 import { ActionButton, Card, Field, PageHeader, SectionHeading, StatusBadge, TextAreaField } from "../components/careflow/ui";
 import {
   createApproveFullWaiverAttempt,
@@ -23,6 +25,7 @@ import {
   type FinalizeChargeAttempt,
   type RecordCashAttempt,
 } from "../features/finance";
+import { journeyAuthorityUnavailable, useVisitJourney } from "../features/journey";
 import { isApiError } from "../lib/api-error";
 
 type WaiverMode = "finalize" | "approve";
@@ -78,12 +81,14 @@ function fieldError(error: unknown, field: string): string | undefined {
   return isApiError(error) ? error.fieldErrors?.[field] : undefined;
 }
 
-function can(data: CheckoutDto, action: CheckoutDto["allowedActions"][number]): boolean {
-  return data.allowedActions.includes(action);
-}
-
-function canUseWaiverMode(data: CheckoutDto, mode: WaiverMode): boolean {
-  return can(data, mode === "finalize" ? "FINALIZE_CHARGE" : "APPROVE_FULL_WAIVER");
+function journeyActionForCheckout(action: CheckoutDto["allowedActions"][number]): JourneyAction | null {
+  if (action === "FINALIZE_CHARGE") return "FINALIZE_CHARGE";
+  if (action === "APPROVE_FULL_WAIVER") return "APPROVE_FULL_WAIVER";
+  if (action === "RECORD_CASH") return "RECORD_CASH";
+  if (action === "CONFIRM_PROMPTPAY") return "RECORD_PROMPTPAY";
+  if (action === "CLOSE_VISIT") return "CLOSE_VISIT";
+  if (action === "READ_OPD") return "OPEN_OPD_CARD";
+  return null;
 }
 
 function CheckoutUnavailable({ error, onReload }: { error: unknown; onReload: () => void }): ReactElement {
@@ -133,8 +138,9 @@ function CheckoutEvidence({ data, jobPanel }: { data: CheckoutDto; jobPanel: Rea
 interface CheckoutJobPanelProps {
   data: CheckoutDto;
   panelRef: Ref<HTMLElement>;
-  isDoctor: boolean;
+  waitingForRole?: "assistant" | "doctor";
   disabled: boolean;
+  canAction(action: CheckoutDto["allowedActions"][number]): boolean;
   finalizePending: boolean;
   cashPending: boolean;
   promptPayPending: boolean;
@@ -152,8 +158,9 @@ interface CheckoutJobPanelProps {
 function CheckoutJobPanel({
   data,
   panelRef,
-  isDoctor,
+  waitingForRole,
   disabled,
+  canAction,
   finalizePending,
   cashPending,
   promptPayPending,
@@ -168,9 +175,10 @@ function CheckoutJobPanel({
   onManualReferenceChange,
 }: CheckoutJobPanelProps): ReactElement {
   const status = checkoutStatus(data);
-  const hasCollectionAction = can(data, "RECORD_CASH") || can(data, "CONFIRM_PROMPTPAY") || can(data, "APPROVE_FULL_WAIVER");
-  const canClose = isDoctor && can(data, "CLOSE_VISIT");
-  const canReadOpd = isDoctor && can(data, "READ_OPD");
+  const hasCollectionAction = canAction("RECORD_CASH") || canAction("CONFIRM_PROMPTPAY") || canAction("APPROVE_FULL_WAIVER");
+  const canClose = canAction("CLOSE_VISIT");
+  const canReadOpd = canAction("READ_OPD");
+  const waitingForDoctor = waitingForRole === "doctor";
 
   return (
     <section ref={panelRef} className="checkout-state-summary checkout-job-panel" aria-label="งานชำระเงินปัจจุบัน" tabIndex={-1}>
@@ -183,7 +191,7 @@ function CheckoutJobPanel({
       </dl>
       <div className="checkout-job-body">
         {data.visit.status === "AWAITING_CHARGE" ? (
-          can(data, "FINALIZE_CHARGE") ? (
+          canAction("FINALIZE_CHARGE") ? (
             <>
               <div><h3>ยืนยันยอด</h3><p>ยืนยันจากหลักฐานที่แสดงเพื่อเปิดขั้นตอนรับชำระ หรือยกเว้นเต็มจำนวนในคำสั่งเดียว</p></div>
               <div className="checkout-action-row">
@@ -191,15 +199,15 @@ function CheckoutJobPanel({
                 <ActionButton type="button" variant="secondary" onClick={() => onOpenWaiver("finalize")} disabled={disabled}>ยกเว้นเต็มจำนวน</ActionButton>
               </div>
             </>
-          ) : <p className="field-hint">{isDoctor ? "ระบบยังไม่อนุญาตให้ยืนยันยอด" : "รอแพทย์ยืนยันยอด"}</p>
+          ) : <p className="field-hint">{waitingForDoctor ? "รอแพทย์ยืนยันยอด" : "ระบบยังไม่อนุญาตให้ยืนยันยอด"}</p>
         ) : null}
         {data.visit.status === "AWAITING_PAYMENT" ? (
           <>
             <div><h3>รับชำระเงิน</h3><p>ยอดที่ส่งคำสั่งจะใช้ยอดสุทธิจากระบบโดยตรง</p></div>
             {hasCollectionAction ? <div className="checkout-payment-actions">
-              {can(data, "RECORD_CASH") ? <ActionButton type="button" onClick={onCash} disabled={disabled}>{cashPending ? "กำลังบันทึกเงินสด…" : `ยืนยันรับเงินสด ${formatBaht(data.netDueBaht)}`}</ActionButton> : null}
-              {can(data, "CONFIRM_PROMPTPAY") ? <div className="checkout-promptpay"><Field label="เลขอ้างอิง PromptPay" value={manualReference} error={promptPayError} onChange={(event) => onManualReferenceChange(event.target.value)} disabled={disabled} /><ActionButton type="button" variant="secondary" onClick={onPromptPay} disabled={disabled || !manualReference.trim()}>{promptPayPending ? "กำลังยืนยัน PromptPay…" : "ยืนยัน PromptPay"}</ActionButton></div> : null}
-              {can(data, "APPROVE_FULL_WAIVER") ? <ActionButton type="button" variant="secondary" onClick={() => onOpenWaiver("approve")} disabled={disabled}>ยกเว้นเต็มจำนวน</ActionButton> : null}
+              {canAction("RECORD_CASH") ? <ActionButton type="button" onClick={onCash} disabled={disabled}>{cashPending ? "กำลังบันทึกเงินสด…" : `ยืนยันรับเงินสด ${formatBaht(data.netDueBaht)}`}</ActionButton> : null}
+              {canAction("CONFIRM_PROMPTPAY") ? <div className="checkout-promptpay"><Field label="เลขอ้างอิง PromptPay" value={manualReference} error={promptPayError} onChange={(event) => onManualReferenceChange(event.target.value)} disabled={disabled} /><ActionButton type="button" variant="secondary" onClick={onPromptPay} disabled={disabled || !manualReference.trim()}>{promptPayPending ? "กำลังยืนยัน PromptPay…" : "ยืนยัน PromptPay"}</ActionButton></div> : null}
+              {canAction("APPROVE_FULL_WAIVER") ? <ActionButton type="button" variant="secondary" onClick={() => onOpenWaiver("approve")} disabled={disabled}>ยกเว้นเต็มจำนวน</ActionButton> : null}
             </div> : <p className="field-hint">รอผู้มีสิทธิ์รับชำระจากระบบ</p>}
           </>
         ) : null}
@@ -207,7 +215,7 @@ function CheckoutJobPanel({
           canClose ? <>
             <div><h3>ปิด Visit</h3><p>ระบบจะตรึงหลักฐาน Visit, Charge และการรับชำระที่แสดงไว้ในคำสั่งเดียว</p></div>
             <div className="checkout-action-row"><ActionButton type="button" onClick={onClose} disabled={disabled}>{closePending ? "กำลังปิด Visit…" : "ปิด Visit"}</ActionButton></div>
-          </> : <p className="checkout-readonly-copy">{isDoctor ? "หลักฐานการเงินพร้อมแล้ว แต่สิทธิ์ปิด Visit ไม่พร้อม" : "รับชำระแล้ว รอแพทย์ปิด Visit"}</p>
+          </> : <p className="checkout-readonly-copy">{waitingForDoctor ? "รับชำระแล้ว รอแพทย์ปิด Visit" : "หลักฐานการเงินพร้อมแล้ว แต่สิทธิ์ปิด Visit ไม่พร้อม"}</p>
         ) : null}
         {data.visit.status === "CLOSED" ? <div className="checkout-action-row"><p className="checkout-readonly-copy">ปิด Visit แล้ว</p>{canReadOpd ? <Link className="care-button care-button-secondary" to={`/visits/${data.visit.id}/opd-card`}>เปิดบัตร OPD</Link> : null}</div> : null}
         {!(["AWAITING_CHARGE", "AWAITING_PAYMENT", "READY_TO_CLOSE", "CLOSED"] as string[]).includes(data.visit.status) ? <p className="field-hint">ยังไม่ถึงขั้นตอนชำระเงิน</p> : null}
@@ -307,6 +315,7 @@ export function CheckoutScreen(): ReactElement {
   const { visitId = "" } = useParams();
   const auth = useAuth();
   const checkout = useCheckout(visitId);
+  const journey = useVisitJourney(visitId);
   const finalize = useFinalizeCharge();
   const approveWaiver = useApproveWaiver();
   const recordCash = useRecordCash();
@@ -354,8 +363,8 @@ export function CheckoutScreen(): ReactElement {
   };
 
   const reload = async () => {
-    const result = await checkout.refetch();
-    if (!result.isSuccess) return;
+    const [checkoutResult, journeyResult] = await Promise.all([checkout.refetch(), journey.refetch()]);
+    if (!checkoutResult.isSuccess || !journeyResult.isSuccess) return;
     resetAttempts();
     setBlocked(false);
     setCommandError(null);
@@ -363,8 +372,9 @@ export function CheckoutScreen(): ReactElement {
   };
 
   const commandPending = finalize.isPending || approveWaiver.isPending || recordCash.isPending || confirmPromptPay.isPending || closeVisit.isPending;
+  const authorityUnavailable = journeyAuthorityUnavailable(journey);
   const stale = Boolean(checkout.error && checkout.data);
-  const disabled = commandPending || stale || blocked;
+  const disabled = commandPending || stale || blocked || authorityUnavailable;
   const commandFailed = (error: unknown) => {
     setCommandError(error);
     if (isApiError(error) && error.status === 409) setBlocked(true);
@@ -385,14 +395,18 @@ export function CheckoutScreen(): ReactElement {
   }
 
   const data = checkout.data;
-  const waiverAuthorized = waiverMode ? canUseWaiverMode(data, waiverMode) : false;
+  const canAction = (action: CheckoutDto["allowedActions"][number]) => {
+    const journeyAction = journeyActionForCheckout(action);
+    return !authorityUnavailable && Boolean(journeyAction && journey.data?.allowedActions.includes(journeyAction));
+  };
+  const waiverAuthorized = waiverMode ? canAction(waiverMode === "finalize" ? "FINALIZE_CHARGE" : "APPROVE_FULL_WAIVER") : false;
   const fieldErrors = {
     waiver: fieldError(commandError, waiverMode === "finalize" ? "payload.waiverReason" : "payload.reason"),
     promptPay: fieldError(commandError, "payload.manualReference"),
   };
 
   const submitFinalize = () => {
-    if (disabled || !can(data, "FINALIZE_CHARGE")) return;
+    if (disabled || !canAction("FINALIZE_CHARGE")) return;
     setCommandError(null);
     setLocalError("");
     finalizeAttempt.current ??= createFinalizeChargeAttempt(data);
@@ -406,7 +420,7 @@ export function CheckoutScreen(): ReactElement {
   };
 
   const openWaiver = (mode: WaiverMode) => {
-    if (disabled || !canUseWaiverMode(data, mode)) return;
+    if (disabled || !canAction(mode === "finalize" ? "FINALIZE_CHARGE" : "APPROVE_FULL_WAIVER")) return;
     waiverOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setLocalError("");
     setCommandError(null);
@@ -425,7 +439,7 @@ export function CheckoutScreen(): ReactElement {
     setCommandError(null);
     setLocalError("");
     if (waiverMode === "finalize") {
-      if (!can(data, "FINALIZE_CHARGE")) return;
+      if (!canAction("FINALIZE_CHARGE")) return;
       const fingerprint = reason;
       if (!finalizeWaiverAttempt.current || finalizeWaiverAttempt.current.fingerprint !== fingerprint) {
         finalizeWaiverAttempt.current = { fingerprint, attempt: createFinalizeFullWaiverAttempt(data, waiverReason) };
@@ -439,7 +453,7 @@ export function CheckoutScreen(): ReactElement {
       );
       return;
     }
-    if (!can(data, "APPROVE_FULL_WAIVER")) return;
+    if (!canAction("APPROVE_FULL_WAIVER")) return;
     const fingerprint = reason;
     if (!approveWaiverAttempt.current || approveWaiverAttempt.current.fingerprint !== fingerprint) {
       approveWaiverAttempt.current = { fingerprint, attempt: createApproveFullWaiverAttempt(data, waiverReason) };
@@ -454,7 +468,7 @@ export function CheckoutScreen(): ReactElement {
   };
 
   const submitCash = () => {
-    if (disabled || !can(data, "RECORD_CASH")) return;
+    if (disabled || !canAction("RECORD_CASH")) return;
     setCommandError(null);
     setLocalError("");
     cashAttempt.current ??= createRecordCashAttempt(data);
@@ -465,7 +479,7 @@ export function CheckoutScreen(): ReactElement {
   };
 
   const submitPromptPay = () => {
-    if (disabled || !can(data, "CONFIRM_PROMPTPAY")) return;
+    if (disabled || !canAction("CONFIRM_PROMPTPAY")) return;
     const reference = manualReference.trim();
     if (!reference) { setLocalError("กรุณาระบุเลขอ้างอิง PromptPay"); return; }
     setCommandError(null);
@@ -480,7 +494,7 @@ export function CheckoutScreen(): ReactElement {
   };
 
   const submitClose = () => {
-    if (disabled || auth.session?.user.role !== "doctor" || !can(data, "CLOSE_VISIT")) return;
+    if (disabled || !canAction("CLOSE_VISIT")) return;
     setCommandError(null);
     setLocalError("");
     closeAttempt.current ??= createCloseVisitAttempt(data);
@@ -493,13 +507,16 @@ export function CheckoutScreen(): ReactElement {
   return (
     <div className="flow-page checkout-page">
       <PageHeader eyebrow="FINANCE · CHECKOUT" title="ชำระเงิน" description="ตรวจสอบหลักฐานยอดชำระและดำเนินการตามสิทธิ์ที่ระบบอนุญาต" />
+      {journey.data ? <><VisitJourneyRibbon steps={journey.data.steps} /><JourneyNextTaskCard summary={journey.data} visitId={data.visit.id} currentRole={auth.session?.user.role ?? "assistant"} authorityReady={!authorityUnavailable} /></> : null}
+      {authorityUnavailable ? <JourneyAuthorityBanner error={journey.error} fetching={journey.isFetching} onReload={() => void journey.refetch()} /> : null}
       {stale ? <div className="checkout-stale" role="alert"><strong>ข้อมูลการชำระเงินอาจไม่เป็นปัจจุบัน</strong><span>{commandMessage(checkout.error)}</span><ActionButton type="button" variant="secondary" onClick={() => void reload()} disabled={checkout.isFetching}>โหลดข้อมูลล่าสุด</ActionButton></div> : null}
       {(commandError || localError) && !waiverMode ? <div className="checkout-command-error" role="alert"><strong>{localError || commandMessage(commandError)}</strong>{blocked ? <span>คำสั่งถูกระงับจนกว่าจะโหลดข้อมูลล่าสุด</span> : null}{blocked ? <ActionButton type="button" variant="secondary" onClick={() => void reload()} disabled={checkout.isFetching}>โหลดข้อมูลล่าสุด</ActionButton> : null}</div> : null}
       <CheckoutEvidence data={data} jobPanel={<CheckoutJobPanel
         data={data}
         panelRef={jobPanelRef}
-        isDoctor={auth.session?.user.role === "doctor"}
+        waitingForRole={journey.data?.nextTask?.primaryRole}
         disabled={disabled}
+        canAction={canAction}
         finalizePending={finalize.isPending}
         cashPending={recordCash.isPending}
         promptPayPending={confirmPromptPay.isPending}

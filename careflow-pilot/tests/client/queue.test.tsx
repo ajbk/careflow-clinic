@@ -18,6 +18,54 @@ const patient = {
   createdAt: "2026-08-03T00:00:00.000Z",
 };
 
+const waitingJourneySummary = {
+  steps: [
+    { code: "INTAKE" as const, labelTh: "รับผู้ป่วย", state: "COMPLETE" as const },
+    { code: "SCREENING" as const, labelTh: "คัดกรอง", state: "COMPLETE" as const },
+    { code: "CONSULTATION" as const, labelTh: "ตรวจรักษา", state: "CURRENT" as const },
+    { code: "MEDICATION_DECISION" as const, labelTh: "ตัดสินใจเรื่องยา", state: "UPCOMING" as const },
+    { code: "PREPARATION" as const, labelTh: "เตรียมยา", state: "UPCOMING" as const },
+    { code: "HANDOFF" as const, labelTh: "ส่งมอบยา", state: "UPCOMING" as const },
+    { code: "PAYMENT" as const, labelTh: "ชำระเงิน", state: "UPCOMING" as const },
+    { code: "CLOSURE" as const, labelTh: "ปิด Visit", state: "UPCOMING" as const },
+  ],
+  nextTask: {
+    action: "START_CONSULTATION" as const,
+    labelTh: "เริ่มการตรวจ",
+    primaryRole: "doctor" as const,
+    permittedRoles: ["doctor" as const],
+    availability: "AVAILABLE" as const,
+  },
+  blockers: [],
+  allowedActions: ["START_CONSULTATION" as const, "REVIEW_ALLERGY" as const],
+};
+
+const consultingJourneySummary = {
+  ...waitingJourneySummary,
+  nextTask: {
+    action: "OPEN_CONSULTATION" as const,
+    labelTh: "เปิดห้องตรวจ",
+    primaryRole: "doctor" as const,
+    permittedRoles: ["doctor" as const],
+    availability: "AVAILABLE" as const,
+  },
+  allowedActions: ["OPEN_CONSULTATION" as const, "SAVE_CONSULTATION_DRAFT" as const, "FINALIZE_CONSULTATION" as const],
+};
+
+function summaryFor(action: string, labelTh: string) {
+  return {
+    ...consultingJourneySummary,
+    nextTask: {
+      action,
+      labelTh,
+      primaryRole: "doctor" as const,
+      permittedRoles: ["doctor" as const],
+      availability: "AVAILABLE" as const,
+    },
+    allowedActions: [action],
+  };
+}
+
 const waitingItem = {
   visit: {
     id: "visit-42",
@@ -46,6 +94,7 @@ const waitingItem = {
     spo2Percent: 98,
   },
   allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"] as const,
+  journeySummary: waitingJourneySummary,
 };
 
 const consultingItem = {
@@ -57,6 +106,7 @@ const consultingItem = {
     startedAt: "2026-08-03T01:15:00.000Z",
   },
   allowedActions: ["OPEN_CONSULTATION"] as const,
+  journeySummary: consultingJourneySummary,
 };
 
 const pendingItems = [
@@ -66,41 +116,49 @@ const pendingItems = [
     ...consultingItem,
     visit: { ...consultingItem.visit, id: "visit-order", status: "AWAITING_ORDER_REVISION" as const, revision: 9 },
     allowedActions: ["OPEN_CONSULTATION"] as const,
+    journeySummary: summaryFor("OPEN_CONSULTATION", "เปิดห้องตรวจ"),
   },
   {
     ...consultingItem,
     visit: { ...consultingItem.visit, id: "visit-preparation", status: "AWAITING_PREPARATION" as const, revision: 10 },
     allowedActions: ["OPEN_CONSULTATION"] as const,
+    journeySummary: summaryFor("START_PREPARATION", "เริ่มการจัดยา"),
   },
   {
     ...consultingItem,
     visit: { ...consultingItem.visit, id: "visit-preparing", status: "PREPARING" as const, revision: 11 },
     allowedActions: ["OPEN_CONSULTATION"] as const,
+    journeySummary: summaryFor("CONFIRM_ALLOCATION", "ยืนยันการจัดยา"),
   },
   {
     ...consultingItem,
     visit: { ...consultingItem.visit, id: "visit-release", status: "AWAITING_RELEASE" as const, revision: 12 },
     allowedActions: ["OPEN_CONSULTATION"] as const,
+    journeySummary: summaryFor("RELEASE_MEDICATION", "ปล่อยยา"),
   },
   {
     ...consultingItem,
     visit: { ...consultingItem.visit, id: "visit-handoff", status: "AWAITING_HANDOFF" as const, revision: 13 },
     allowedActions: ["OPEN_CONSULTATION"] as const,
+    journeySummary: summaryFor("HANDOFF_MEDICATION", "ส่งมอบยา"),
   },
   {
     ...consultingItem,
     visit: { ...consultingItem.visit, id: "visit-charge", status: "AWAITING_CHARGE" as const, revision: 14 },
     allowedActions: ["OPEN_CONSULTATION"] as const,
+    journeySummary: summaryFor("FINALIZE_CHARGE", "เริ่มคิดเงิน"),
   },
   {
     ...consultingItem,
     visit: { ...consultingItem.visit, id: "visit-payment", status: "AWAITING_PAYMENT" as const, revision: 15 },
     allowedActions: [] as const,
+    journeySummary: summaryFor("RECORD_CASH", "ไปหน้าชำระเงิน"),
   },
   {
     ...consultingItem,
     visit: { ...consultingItem.visit, id: "visit-ready", status: "READY_TO_CLOSE" as const, revision: 16 },
     allowedActions: [] as const,
+    journeySummary: summaryFor("CLOSE_VISIT", "ไปหน้าชำระเงิน"),
   },
   {
     ...consultingItem,
@@ -183,6 +241,13 @@ beforeEach(() => {
     http.get("/api/queue", () => HttpResponse.json({ data: [waitingItem] })),
     http.get("/api/dashboard/today", () => HttpResponse.json({ data: { waiting: 1, consulting: 0, awaitingOrderRevision: 0, awaitingPreparation: 0, preparing: 0, awaitingRelease: 0, awaitingHandoff: 0, awaitingCharge: 0, awaitingPayment: 0, readyToClose: 0, updatedAt: "2026-08-03T01:00:00.000Z" } })),
     http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: workspace })),
+    http.get("/api/visits/:visitId/journey", ({ params }) => HttpResponse.json({
+      data: {
+        visit: { id: String(params.visitId), status: "CONSULTING", revision: 8 },
+        refreshedAt: "2026-08-03T01:20:00.000Z",
+        ...consultingJourneySummary,
+      },
+    })),
   );
 });
 afterEach(() => {
@@ -194,12 +259,78 @@ afterEach(() => {
 afterAll(() => server.close());
 
 describe("connected shared queue workflow", () => {
+  it("renders the embedded Journey and never promotes a legacy Queue action omitted by Journey authority", async () => {
+    // Break caught: Queue's stale legacy allowedActions can otherwise show a clinical mutation that Journey has withdrawn.
+    let journeyRequests = 0;
+    const staleAuthorityItem = {
+      ...waitingItem,
+      allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"] as const,
+      journeySummary: {
+        ...waitingJourneySummary,
+        nextTask: {
+          ...waitingJourneySummary.nextTask,
+          labelTh: "รอแพทย์ตรวจและสั่งการรักษา",
+          availability: "WAITING_FOR_ROLE" as const,
+        },
+        allowedActions: [] as const,
+      },
+    };
+    server.use(
+      http.get("/api/queue", () => HttpResponse.json({ data: [staleAuthorityItem] })),
+      http.get("/api/visits/:visitId/journey", () => {
+        journeyRequests += 1;
+        return HttpResponse.json({ error: { code: "INTERNAL_ERROR", messageTh: "Queue must use its embedded summary", requestId: "queue-journey" } }, { status: 500 });
+      }),
+    );
+    renderRoute("/queue");
+
+    expect(await screen.findByRole("navigation", { name: "เส้นทางผู้ป่วย" })).toBeInTheDocument();
+    expect(screen.getAllByRole("status").some((status) => status.textContent?.includes("รอแพทย์ตรวจและสั่งการรักษา"))).toBe(true);
+    expect(screen.queryByRole("button", { name: "เริ่มการตรวจ" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" })).not.toBeInTheDocument();
+    expect(journeyRequests).toBe(0);
+  });
+
   it("lets Assistant review WAITING Allergy without a clinical link", async () => {
     server.use(http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))));
     renderRoute("/queue");
     const row = within(await screen.findByRole("article", { name: /DEMO-000042/ }));
     expect(row.getByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" })).toBeInTheDocument();
     expect(row.queryByRole("link", { name: "เปิดห้องตรวจ" })).not.toBeInTheDocument();
+  });
+
+  it("keeps both Doctor Start Consultation and Allergy recovery reachable for WAITING UNKNOWN", async () => {
+    // Break caught: a blocker can describe the Allergy recovery, but it must not
+    // suppress the separately authorized Doctor start command.
+    const unknownWaiting = {
+      ...waitingItem,
+      journeySummary: {
+        ...waitingJourneySummary,
+        blockers: [{
+          code: "ALLERGY_UNKNOWN" as const,
+          titleTh: "ยังไม่ได้ถามประวัติแพ้ยา",
+          detailTh: "ต้องทบทวนก่อนลงนามการตรวจ",
+          primaryRole: "assistant" as const,
+          recoveryAction: "REVIEW_ALLERGY" as const,
+          medication: null,
+        }],
+        nextTask: {
+          ...waitingJourneySummary.nextTask,
+          availability: "AVAILABLE" as const,
+        },
+        allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"] as const,
+      },
+    };
+    server.use(http.get("/api/queue", () => HttpResponse.json({ data: [unknownWaiting] })));
+    renderRoute("/queue");
+    const row = within(await screen.findByRole("article", { name: /DEMO-000042/ }));
+    expect(row.getByRole("button", { name: "เริ่มการตรวจ" })).toBeEnabled();
+    const allergyRecoveries = [
+      ...row.queryAllByRole("button", { name: "ยังไม่ได้ถามประวัติแพ้ยา" }),
+      ...row.queryAllByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" }),
+    ];
+    expect(allergyRecoveries).toHaveLength(1);
+    expect(allergyRecoveries[0]).toBeEnabled();
   });
 
   it("preserves and submits every item in a PRESENT Allergy assessment", async () => {
@@ -226,6 +357,9 @@ describe("connected shared queue workflow", () => {
     renderRoute("/queue");
     await user.click(await screen.findByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" }));
 
+    expect(screen.getByRole("button", { name: "ยังไม่ทราบ" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ยืนยันว่าไม่แพ้" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "มีประวัติแพ้ยา" })).toBeInTheDocument();
     expect(screen.getAllByLabelText("สารที่แพ้")).toHaveLength(2);
     expect(screen.getAllByLabelText("อาการแพ้")).toHaveLength(2);
     expect(screen.getAllByLabelText("ความรุนแรง")).toHaveLength(2);
@@ -251,7 +385,7 @@ describe("connected shared queue workflow", () => {
     server.use(http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))));
     renderRoute("/queue");
     await user.click(await screen.findByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" }));
-    await user.click(screen.getByRole("button", { name: "PRESENT" }));
+    await user.click(screen.getByRole("button", { name: "มีประวัติแพ้ยา" }));
     await user.type(screen.getByLabelText("สารที่แพ้"), "ยา A");
     await user.type(screen.getByLabelText("อาการแพ้"), "ผื่น");
     await user.click(screen.getByRole("button", { name: "เพิ่มรายการแพ้" }));
@@ -272,7 +406,14 @@ describe("connected shared queue workflow", () => {
   it("keeps Assistant Queue clinical-link free while preserving finance links from active server states", async () => {
     server.use(
       http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))),
-      http.get("/api/queue", () => HttpResponse.json({ data: pendingItems.map((item) => ({ ...item, allowedActions: item.visit.status === "WAITING" ? ["REVIEW_ALLERGY"] : [] })) })),
+      http.get("/api/queue", () => HttpResponse.json({ data: pendingItems.map((item) => ({
+        ...item,
+        allowedActions: item.visit.status === "WAITING" ? ["REVIEW_ALLERGY"] : [],
+        journeySummary: {
+          ...item.journeySummary,
+          allowedActions: item.visit.status === "WAITING" ? ["REVIEW_ALLERGY"] : [],
+        },
+      })) })),
     );
     renderRoute("/queue");
 
@@ -287,8 +428,8 @@ describe("connected shared queue workflow", () => {
     for (const item of pendingItems.filter((item) => item.visit.status !== "CLOSED")) {
       expect(within(screen.getByRole("article", { name: new RegExp(item.visit.id) })).queryByRole("link", { name: "เปิดห้องตรวจ" })).not.toBeInTheDocument();
     }
-    expect(within(screen.getByRole("article", { name: /visit-payment/ })).getByRole("link", { name: "ไปหน้าชำระเงิน" })).toHaveAttribute("href", "/checkout/visit-payment");
-    expect(within(screen.getByRole("article", { name: /visit-ready/ })).getByRole("link", { name: "ไปหน้าชำระเงิน" })).toHaveAttribute("href", "/checkout/visit-ready");
+    expect(within(screen.getByRole("article", { name: /visit-payment/ })).queryByRole("link", { name: "ไปหน้าชำระเงิน" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("article", { name: /visit-ready/ })).queryByRole("link", { name: "ไปหน้าชำระเงิน" })).not.toBeInTheDocument();
     expect(screen.queryByRole("article", { name: /visit-closed/ })).not.toBeInTheDocument();
   });
 
@@ -366,8 +507,8 @@ describe("connected shared queue workflow", () => {
       const row = within(await screen.findByRole("article", { name: new RegExp(item.visit.id) }));
       if (["AWAITING_PREPARATION", "PREPARING", "AWAITING_RELEASE", "AWAITING_HANDOFF"].includes(item.visit.status)) {
         expect(row.getByRole("link", { name: /การจัดยา|ปล่อยยา|ส่งมอบยา/ })).toHaveAttribute("href", `/dispensing/${item.visit.id}`);
-      } else if (["AWAITING_PAYMENT", "READY_TO_CLOSE"].includes(item.visit.status)) {
-        expect(row.getByRole("link", { name: "ไปหน้าชำระเงิน" })).toHaveAttribute("href", `/checkout/${item.visit.id}`);
+      } else if (["AWAITING_CHARGE", "AWAITING_PAYMENT", "READY_TO_CLOSE"].includes(item.visit.status)) {
+        expect(row.getByRole("link", { name: /คิดเงิน|ชำระเงิน/ })).toHaveAttribute("href", `/checkout/${item.visit.id}`);
         expect(row.queryByRole("link", { name: "เปิดห้องตรวจ" })).not.toBeInTheDocument();
       } else {
         expect(row.getByRole("link", { name: "เปิดห้องตรวจ" })).toHaveAttribute("href", `/consultations/${item.visit.id}`);
@@ -376,7 +517,7 @@ describe("connected shared queue workflow", () => {
     expect(screen.queryByRole("article", { name: /visit-closed/ })).not.toBeInTheDocument();
   });
 
-  it("disables Assistant Allergy review while cached Queue data is stale", async () => {
+  it("suppresses Assistant Allergy review while cached Queue data is stale", async () => {
     let queueRequests = 0;
     server.use(
       http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))),
@@ -389,11 +530,18 @@ describe("connected shared queue workflow", () => {
     await screen.findByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" });
     window.dispatchEvent(new Event("focus"));
     expect(await screen.findByText("กำลังแสดงข้อมูลคิวล่าสุดที่บันทึกไว้", {}, { timeout: 3_000 })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" })).not.toBeInTheDocument();
   });
 
   it("renders the same server row for Assistant and Doctor, but only Doctor gets Start Consultation", async () => {
-    server.use(http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))));
+    const assistantWaitingItem = {
+      ...waitingItem,
+      journeySummary: { ...waitingJourneySummary, allowedActions: ["REVIEW_ALLERGY"] as const },
+    };
+    server.use(
+      http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))),
+      http.get("/api/queue", () => HttpResponse.json({ data: [assistantWaitingItem] })),
+    );
     renderRoute("/queue");
     const assistantRow = await screen.findByRole("article", { name: /DEMO-000042/ });
     expect(assistantRow).toHaveTextContent("visit-42");
@@ -401,7 +549,10 @@ describe("connected shared queue workflow", () => {
     expect(assistantRow).toHaveTextContent("รอตรวจ");
     expect(within(assistantRow).queryByRole("button", { name: /เริ่มการตรวจ/ })).not.toBeInTheDocument();
     cleanup();
-    server.use(http.get("/api/auth/session", () => HttpResponse.json(session("doctor"))));
+    server.use(
+      http.get("/api/auth/session", () => HttpResponse.json(session("doctor"))),
+      http.get("/api/queue", () => HttpResponse.json({ data: [waitingItem] })),
+    );
     renderRoute("/queue");
     const doctorRow = await screen.findByRole("article", { name: /DEMO-000042/ });
     expect(doctorRow).toHaveTextContent("visit-42");
@@ -412,7 +563,7 @@ describe("connected shared queue workflow", () => {
   it("never exposes a consulting-room link to Assistant", async () => {
     server.use(
       http.get("/api/auth/session", () => HttpResponse.json(session("assistant"))),
-      http.get("/api/queue", () => HttpResponse.json({ data: [consultingItem] })),
+      http.get("/api/queue", () => HttpResponse.json({ data: [{ ...consultingItem, journeySummary: { ...consultingJourneySummary, allowedActions: [] } }] })),
     );
     renderRoute("/queue");
     const row = await screen.findByRole("article", { name: /DEMO-000042/ });
@@ -446,8 +597,7 @@ describe("connected shared queue workflow", () => {
 
     expect(await screen.findByText("กำลังแสดงข้อมูลคิวล่าสุดที่บันทึกไว้", {}, { timeout: 3_000 })).toBeInTheDocument();
     const row = screen.getByRole("article", { name: /DEMO-000042/ });
-    expect(row).toHaveTextContent("โหลดข้อมูลล่าสุดเพื่อติดตามการส่งต่อ");
-    expect(row).not.toHaveTextContent("โหลดข้อมูลล่าสุดก่อนเริ่มการตรวจ");
+    expect(row).toHaveTextContent("กำลังตรวจสอบสิทธิ์ล่าสุดก่อนดำเนินการ");
   });
 
   it("refetches once after five seconds while visible, pauses hidden polling, and refetches on focus", async () => {
@@ -473,7 +623,7 @@ describe("connected shared queue workflow", () => {
     await vi.waitFor(() => expect(queueRequests).toBe(3));
   });
 
-  it("sends the current Queue revision and navigates only after a committed CONSULTING response", async () => {
+  it("sends the current Queue revision and navigates only after a client-decodable Journey-decorated CONSULTING response", async () => {
     const user = userEvent.setup();
     let requestBody: unknown;
     let requestKey = "";

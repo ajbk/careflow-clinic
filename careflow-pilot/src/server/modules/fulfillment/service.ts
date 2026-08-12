@@ -24,6 +24,18 @@ type Reader = AppDatabase | AppTransaction;
 
 export interface FulfillmentService {
   getPickList(visitId: string): FulfillmentPickListDto;
+  /** Non-clinical preparation progress for the Journey read model. */
+  getJourneyEvidence(visitId: string): {
+    allowedActions: FulfillmentPickListDto["allowedActions"];
+    hasLabel: boolean;
+    hasReservation: boolean;
+    preparationStatus: "ACTIVE" | "COMPLETED" | null;
+    allocationCount: number;
+    confirmationCount: number;
+    hasPrint: boolean;
+    hasRelease: boolean;
+    hasDispense: boolean;
+  };
   getCurrentLabel(visitId: string): FulfillmentCurrentLabelDto;
   createLabelForSignedOrder(tx: AuditedTransaction, actor: Actor, visitId: string, decisionId: string): FulfillmentCurrentLabelDto;
   startPreparation(tx: AuditedTransaction, actor: Actor, visitId: string, visitRevision: number, decisionVersion: number, labelVersionId: string): FulfillmentPickListDto;
@@ -268,7 +280,28 @@ export function createFulfillmentService(input: FulfillmentServiceOptions): Fulf
     }
   };
   return {
-    getPickList: (visitId) => read(input.database.db, visitId), getCurrentLabel: (visitId) => labelFor(input.database.db, visitId), readHandoffChain: (visitId) => read(input.database.db, visitId),
+    getPickList: (visitId) => read(input.database.db, visitId),
+    getJourneyEvidence: (visitId) => {
+      const pickList = read(input.database.db, visitId);
+      const preparation = pickList.preparation;
+      const latestPrintSequence = preparation?.latestPrintSequence;
+      const minimumPrintSequence = preparation?.minimumPrintSequence;
+      const hasPrint = typeof latestPrintSequence === "number" && typeof minimumPrintSequence === "number"
+        && latestPrintSequence >= minimumPrintSequence;
+      return {
+        allowedActions: pickList.allowedActions,
+        hasLabel: pickList.label !== null,
+        hasReservation: pickList.reservation !== null,
+        preparationStatus: preparation?.status ?? null,
+        allocationCount: pickList.reservation?.allocations.length ?? 0,
+        confirmationCount: preparation?.confirmations.length ?? 0,
+        hasPrint,
+        hasRelease: pickList.release !== null,
+        hasDispense: pickList.dispense !== null,
+      };
+    },
+    getCurrentLabel: (visitId) => labelFor(input.database.db, visitId),
+    readHandoffChain: (visitId) => read(input.database.db, visitId),
     createLabelForSignedOrder: ensureLabel,
     startPreparation(tx, actor, visitId, visitRevision, decisionVersion, labelVersionId) {
       const currentLabel = labelFor(tx, visitId);

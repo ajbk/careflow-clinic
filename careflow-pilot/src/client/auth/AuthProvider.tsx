@@ -1,10 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactElement, ReactNode } from "react";
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { SessionDto } from "../../shared/contracts";
 import { sessionResponseSchema } from "../../shared/contracts";
-import { queryKeys } from "../app/query-client";
+import { authRequiredEventName, queryKeys, type AuthRequiredReason } from "../app/query-client";
 import { apiClient as defaultApiClient, ApiClient } from "../lib/api-client";
 import { ApiError, isApiError, serverUnavailableError } from "../lib/api-error";
 
@@ -31,8 +31,12 @@ export function createBrowserActivityAdapter(target: Document = document): Activ
 const defaultActivityAdapter: ActivityAdapter | null =
   typeof document === "undefined" ? null : createBrowserActivityAdapter(document);
 
-function dispatchAuthRequired(): void {
-  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("careflow-auth-required"));
+export type SessionReturnState = { authNotice?: "SESSION_EXPIRED" };
+
+function dispatchAuthRequired(reason: AuthRequiredReason): void {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent<{ reason: AuthRequiredReason }>(authRequiredEventName, { detail: { reason } }));
+  }
 }
 
 export function sanitizeReturnTo(value: string | null | undefined): string {
@@ -47,6 +51,7 @@ interface AuthContextValue {
   session: SessionDto | null;
   isLoading: boolean;
   error: ApiError | null;
+  unauthorizedReason: AuthRequiredReason | null;
   apiClient: ApiClient;
   login(input: { username: string; password: string }): Promise<SessionDto>;
   acknowledgePilot(): Promise<void>;
@@ -77,16 +82,25 @@ export function AuthProvider({
   const navigate = useNavigate();
   const lastActivityAt = useRef<number>(Number.NEGATIVE_INFINITY);
   const expiryTimer = useRef<number | undefined>(undefined);
+  const establishedSession = useRef(false);
+  const [unauthorizedReason, setUnauthorizedReason] = useState<AuthRequiredReason | null>(null);
 
   const sessionQuery = useQuery({
     queryKey: queryKeys.session,
     enabled: location.pathname !== "/login",
     queryFn: async ({ signal }): Promise<SessionDto | null> => {
       try {
-        return (await apiClient.get("/api/auth/session", sessionResponseSchema, signal)).data;
+        const current = (await apiClient.get("/api/auth/session", sessionResponseSchema, signal)).data;
+        establishedSession.current = true;
+        setUnauthorizedReason(null);
+        return current;
       } catch (error) {
         if (isApiError(error) && error.status === 401) {
-          dispatchAuthRequired();
+          const reason = error.code === "SESSION_EXPIRED" || establishedSession.current
+            ? "SESSION_EXPIRED"
+            : "AUTH_REQUIRED";
+          setUnauthorizedReason(reason);
+          dispatchAuthRequired(reason);
           return null;
         }
         throw error;
@@ -102,20 +116,31 @@ export function AuthProvider({
     queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== queryKeys.session[0] });
   }, [queryClient]);
 
-  const goToLogin = useCallback(() => {
+  const goToLogin = useCallback((reason: AuthRequiredReason = "AUTH_REQUIRED") => {
+    const sessionExpired = reason === "SESSION_EXPIRED" || establishedSession.current;
+    setUnauthorizedReason(sessionExpired ? "SESSION_EXPIRED" : reason);
     clearProtectedQueries();
     queryClient.setQueryData<SessionDto | null>(queryKeys.session, null);
     if (location.pathname !== "/login") {
       const returnTo = sanitizeReturnTo(`${location.pathname}${location.search}`);
-      navigate(`/login?returnTo=${encodeURIComponent(returnTo)}`, { replace: true });
+      const search = sessionExpired
+        ? `?returnTo=${encodeURIComponent(returnTo)}&reason=session-expired`
+        : `?returnTo=${encodeURIComponent(returnTo)}`;
+      navigate(`/login${search}`, { replace: true });
     }
   }, [clearProtectedQueries, location.pathname, location.search, navigate, queryClient]);
 
   useEffect(() => {
-    const listener = () => goToLogin();
-    window.addEventListener("careflow-auth-required", listener);
-    return () => window.removeEventListener("careflow-auth-required", listener);
-  }, [goToLogin]);
+    const listener = (event: Event) => {
+      const reason = event instanceof CustomEvent && event.detail?.reason === "SESSION_EXPIRED"
+        ? "SESSION_EXPIRED"
+        : "AUTH_REQUIRED";
+      if (reason === "AUTH_REQUIRED" && sessionQuery.isPending && !establishedSession.current) return;
+      goToLogin(reason);
+    };
+    window.addEventListener(authRequiredEventName, listener);
+    return () => window.removeEventListener(authRequiredEventName, listener);
+  }, [goToLogin, sessionQuery.isPending]);
 
   useEffect(() => {
     if (expiryTimer.current !== undefined) window.clearTimeout(expiryTimer.current);
@@ -123,8 +148,8 @@ export function AuthProvider({
     if (!session) return undefined;
     const expiresIn = Date.parse(session.idleExpiresAt) - Date.now();
     if (!Number.isFinite(expiresIn) || expiresIn <= 0) {
-      goToLogin();
-      return undefined;
+      const immediateExpiryTimer = window.setTimeout(() => goToLogin("SESSION_EXPIRED"), 0);
+      return () => window.clearTimeout(immediateExpiryTimer);
     }
     expiryTimer.current = window.setTimeout(goToLogin, expiresIn);
     return () => {
@@ -142,7 +167,7 @@ export function AuthProvider({
       .void("POST", "/api/auth/activity")
       .then(() => queryClient.invalidateQueries({ queryKey: queryKeys.session }))
       .catch((error: unknown) => {
-        if (isApiError(error) && error.status === 401) goToLogin();
+        if (isApiError(error) && error.status === 401) goToLogin("SESSION_EXPIRED");
       });
   }, [apiClient, goToLogin, queryClient, session]);
 
@@ -154,6 +179,8 @@ export function AuthProvider({
   const login = useCallback(
     async (input: { username: string; password: string }): Promise<SessionDto> => {
       const result = await apiClient.json("POST", "/api/auth/login", input, sessionResponseSchema);
+      establishedSession.current = true;
+      setUnauthorizedReason(null);
       clearProtectedQueries();
       queryClient.setQueryData(queryKeys.session, result.data);
       return result.data;
@@ -180,6 +207,8 @@ export function AuthProvider({
     } catch {
       // A failed logout cannot keep protected data visible in this browser.
     } finally {
+      establishedSession.current = false;
+      setUnauthorizedReason(null);
       clearProtectedQueries();
       queryClient.setQueryData<SessionDto | null>(queryKeys.session, null);
       navigate("/login", { replace: true });
@@ -196,6 +225,7 @@ export function AuthProvider({
       session,
       isLoading: sessionQuery.isPending && location.pathname !== "/login",
       error,
+      unauthorizedReason: session ? null : unauthorizedReason,
       apiClient,
       login,
       acknowledgePilot,
@@ -203,7 +233,7 @@ export function AuthProvider({
       logout,
       recordActivity,
     }),
-    [acknowledgePilot, apiClient, changePassword, error, location.pathname, login, logout, recordActivity, session, sessionQuery.isPending],
+    [acknowledgePilot, apiClient, changePassword, error, location.pathname, login, logout, recordActivity, session, sessionQuery.isPending, unauthorizedReason],
   );
 
   return <AuthContext.Provider value={contextValue}>{children}</AuthContext.Provider>;

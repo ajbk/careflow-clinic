@@ -13,7 +13,7 @@ import {
   type PasswordVerifier,
 } from "./auth/routes.js";
 import { createSessionService } from "./modules/platform/index.js";
-import { createPatientService, registerPatientRoutes } from "./modules/patient/index.js";
+import { createPatientService, registerPatientRoutes, type IntakeWriteStage } from "./modules/patient/index.js";
 import { createVisitService, registerVisitRoutes } from "./modules/visit/index.js";
 import { createMedicationService, registerMedicationRoutes } from "./modules/medication/index.js";
 import { createInventoryService, registerInventoryRoutes } from "./modules/inventory/index.js";
@@ -28,6 +28,8 @@ import { createClinicalWorkflow } from "./workflows/clinical.js";
 import { registerClinicalRoutes } from "./workflows/clinical-routes.js";
 import { createVisitCompletionWorkflow, type VisitCloseWriteStage } from "./workflows/visit-completion.js";
 import { registerVisitCompletionRoutes } from "./workflows/visit-completion-routes.js";
+import { createJourneyService } from "./workflows/journey.js";
+import { registerJourneyRoutes } from "./workflows/journey-routes.js";
 import { isApiPath, registerClientAssets } from "./static.js";
 
 export interface BuildAppOptions {
@@ -46,6 +48,8 @@ export interface BuildAppOptions {
   beforeVisitCloseTransition?: () => void;
   /** Test-only failure injection at each close transaction write boundary. */
   visitCloseFailureInjector?: (stage: VisitCloseWriteStage) => void;
+  /** Test-only failure injection at each atomic Intake write boundary. */
+  intakeFailureInjector?: (stage: IntakeWriteStage) => void;
 }
 
 function zodFieldErrors(error: ZodError): Record<string, string> {
@@ -112,31 +116,26 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     passwordHasher: options.passwordHasher,
   });
   const patientService = createPatientService({ database: options.db, clock: options.clock });
-  registerPatientRoutes({ app, database: options.db, patients: patientService });
   const visitService = createVisitService({
     database: options.db,
     patients: patientService,
     clock: options.clock,
+    intakeFailureInjector: options.intakeFailureInjector,
   });
-  registerVisitRoutes({ app, database: options.db, visits: visitService });
   const medicationService = createMedicationService({ database: options.db, clock: options.clock });
-  registerMedicationRoutes({ app, medications: medicationService });
   const inventoryService = createInventoryService({
     database: options.db,
     medicationService,
     clock: options.clock,
     idFactory: options.idFactory,
   });
-  registerInventoryRoutes({ app, database: options.db, inventory: inventoryService });
   const fulfillmentService = createFulfillmentService({ database: options.db, inventory: inventoryService, clock: options.clock, idFactory: options.idFactory });
-  registerFulfillmentRoutes({ app, database: options.db, fulfillment: fulfillmentService, clock: options.clock });
   const financeService = createFinanceService({
     database: options.db,
     pricing: { deriveChargeQuote },
     clock: options.clock,
     idFactory: options.idFactory,
   });
-  registerFinanceRoutes({ app, database: options.db, finance: financeService });
   const noteService = createNoteService({ database: options.db, clock: options.clock });
   const clinicalWorkflow = createClinicalWorkflow({
     patients: patientService,
@@ -147,7 +146,6 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     fulfillment: fulfillmentService,
     clock: options.clock,
   });
-  registerClinicalRoutes({ app, database: options.db, clinical: clinicalWorkflow });
   const visitCompletion = createVisitCompletionWorkflow({
     database: options.db,
     visits: visitService,
@@ -160,12 +158,35 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     beforeVisitCloseTransition: options.beforeVisitCloseTransition,
     failureInjector: options.visitCloseFailureInjector,
   });
+
+  const journeyService = createJourneyService({
+    visits: visitService,
+    patients: patientService,
+    clinical: clinicalWorkflow,
+    medications: medicationService,
+    fulfillment: fulfillmentService,
+    inventory: inventoryService,
+    finance: financeService,
+    completion: visitCompletion,
+    clock: options.clock,
+  });
+
+  // Build every service first so read-only Journey composition receives only public module interfaces;
+  // then register the independently-authenticated route boundaries.
+  registerPatientRoutes({ app, database: options.db, patients: patientService });
+  registerVisitRoutes({ app, database: options.db, visits: visitService, journey: journeyService });
+  registerMedicationRoutes({ app, medications: medicationService });
+  registerInventoryRoutes({ app, database: options.db, inventory: inventoryService });
+  registerFulfillmentRoutes({ app, database: options.db, fulfillment: fulfillmentService, clock: options.clock });
+  registerFinanceRoutes({ app, database: options.db, finance: financeService });
+  registerClinicalRoutes({ app, database: options.db, clinical: clinicalWorkflow });
   registerVisitCompletionRoutes({
     app,
     database: options.db,
     completion: visitCompletion,
     failureInjector: options.visitCloseFailureInjector,
   });
+  registerJourneyRoutes({ app, journey: journeyService });
 
   const requestStartedAt = new WeakMap<object, number>();
   app.addHook("onRequest", async (request) => {

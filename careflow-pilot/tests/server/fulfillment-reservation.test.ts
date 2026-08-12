@@ -183,6 +183,18 @@ describe("fulfillment reservation persistence and FEFO service", () => {
     receiveLot(database, { id: "lot-expired", lotNumber: "LOT-EXPIRED", expiryDate: "2026-08-03", quantity: 99 });
     receiveLot(database, { id: "lot-quarantine", lotNumber: "LOT-QUARANTINE", expiryDate: "2026-08-04", quantity: 99, status: "QUARANTINED" });
 
+    expect(inventory.getReservationReadiness("visit-fefo")).toEqual({
+      ready: true,
+      lines: [{
+        medicationId: "DEMO-MED-001",
+        displayNameSnapshot: "[DEMO] ยาทดสอบชนิด A",
+        required: 15,
+        available: 18,
+        shortfall: 0,
+        unitSnapshot: "เม็ด",
+      }],
+    });
+
     const pickList = database.db.transaction((tx) => inventory.reserveForVisit(
       tx, doctor, "visit-fefo", 3, 1,
     ));

@@ -12,6 +12,7 @@ import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { roleWorkspaceFor, type WorkspaceNavIcon } from "../../app/role-workspace";
 import { useAuth } from "../../auth/AuthProvider";
+import { SessionReturnNotice } from "./SessionReturnNotice";
 
 const icons: Record<WorkspaceNavIcon, typeof LayoutDashboard> = {
   dashboard: LayoutDashboard,
@@ -23,7 +24,8 @@ const icons: Record<WorkspaceNavIcon, typeof LayoutDashboard> = {
 export function AppShell({ children }: { children: ReactNode }) {
   const auth = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { pathname } = useLocation();
+  const { pathname, search, hash } = useLocation();
+  const sessionReturnLocationKey = `${pathname}${search}${hash}`;
   const workspace = roleWorkspaceFor(auth.session?.user.role ?? "assistant");
   const workspaceIdentity = `${workspace.labelEn} / ${workspace.label}`;
   const roleLabel = auth.session?.user.role === "doctor" ? "แพทย์" : "ผู้ช่วย";
@@ -73,6 +75,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           className={mode === "focused" ? "focused-workspace-main" : "clinical-workspace-main"}
         >
           <p className="pilot-banner" role="status">PILOT — ข้อมูลสังเคราะห์เท่านั้น ห้ามกรอกข้อมูลผู้ป่วยจริง</p>
+          <SessionReturnNotice key={sessionReturnLocationKey} />
           {children}
         </main>
       </div>
@@ -115,6 +118,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </header>
         <main id="main-content" className="app-main">
           <p className="pilot-banner" role="status">PILOT — ข้อมูลสังเคราะห์เท่านั้น ห้ามกรอกข้อมูลผู้ป่วยจริง</p>
+          <SessionReturnNotice key={sessionReturnLocationKey} />
           {children}
         </main>
       </div>

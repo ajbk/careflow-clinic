@@ -11,6 +11,7 @@ import {
 declare module "fastify" {
   interface FastifyRequest {
     authenticatedSession?: AuthenticatedSession;
+    sessionExpired?: boolean;
     actor?: Actor;
   }
 }
@@ -25,13 +26,16 @@ const gateBypassPaths = new Set([
   "/api/auth/logout",
 ]);
 
-function authRequired(): ApiError {
-  return new ApiError({ code: "AUTH_REQUIRED", messageTh: "กรุณาเข้าสู่ระบบ" });
+function authRequired(request: FastifyRequest): ApiError {
+  return new ApiError({
+    code: request.sessionExpired ? "SESSION_EXPIRED" : "AUTH_REQUIRED",
+    messageTh: "กรุณาเข้าสู่ระบบ",
+  });
 }
 
 export function authenticateRequest(request: FastifyRequest): Actor {
   const session = request.authenticatedSession;
-  if (!session) throw authRequired();
+  if (!session) throw authRequired(request);
   request.actor = session.actor;
   return session.actor;
 }
@@ -51,8 +55,13 @@ export function registerAuthHooks(input: {
   clock: () => Date;
 }): void {
   input.app.addHook("onRequest", async (request) => {
+    const pathname = request.url.split("?", 1)[0];
+    if (!pathname?.startsWith("/api/")) return;
+
     const token = request.cookies[SESSION_COOKIE_NAME];
-    request.authenticatedSession = input.sessions.authenticate(token, input.clock());
+    const now = input.clock();
+    request.sessionExpired = input.sessions.isExpired(token, now);
+    request.authenticatedSession = input.sessions.authenticate(token, now);
     request.actor = request.authenticatedSession?.actor;
   });
 

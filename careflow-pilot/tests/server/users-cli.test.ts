@@ -1,9 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { buildApp } from "../../src/server/app.js";
 import { openDatabase } from "../../src/server/db/client.js";
 import { runUsersCli } from "../../src/server/modules/platform/users-cli.js";
+import { cookieFrom, login } from "./helpers/auth.js";
 import { createTestDatabase } from "./helpers/database.js";
 
 const cleanups: Array<() => void> = [];
@@ -33,6 +36,73 @@ async function run(input: {
 }
 
 describe("offline users CLI", () => {
+  it("provisions the documented two UAT roles on a clean migrated database and establishes role-correct sessions", async () => {
+    // Break caught: the fresh-database UAT instructions are only executable if
+    // the safe interactive CLI creates the two named roles with first-login
+    // safeguards, without embedding credentials in migrations or runtime code.
+    const database = createTestDatabase();
+    cleanups.push(database.cleanup);
+    database.close();
+    const assistantPassword = `test-${randomUUID()}`;
+    const doctorPassword = `test-${randomUUID()}`;
+    const accounts = [
+      { username: "uat-assistant", displayName: "Assistant", role: "assistant" as const, password: assistantPassword },
+      { username: "uat-doctor", displayName: "Doctor", role: "doctor" as const, password: doctorPassword },
+    ];
+    for (const account of accounts) {
+      const result = await run({
+        argv: ["create", "--username", account.username, "--display-name", account.displayName, "--role", account.role],
+        databasePath: database.databasePath,
+        secrets: [account.password, account.password],
+        texts: ["SYNTHETIC-ONLY"],
+      });
+      expect(result.code).toBe(0);
+      expect(`${result.stdout.join("\n")}\n${result.stderr.join("\n")}`).not.toContain(account.password);
+    }
+
+    const check = openDatabase(database.databasePath);
+    expect(check.sqlite.prepare(`
+      SELECT username, role, must_change_password AS mustChangePassword, pilot_acknowledged_at AS pilotAcknowledgedAt
+      FROM staff_accounts ORDER BY username
+    `).all()).toEqual([
+      { username: "uat-assistant", role: "assistant", mustChangePassword: 1, pilotAcknowledgedAt: null },
+      { username: "uat-doctor", role: "doctor", mustChangePassword: 1, pilotAcknowledgedAt: null },
+    ]);
+    check.close();
+
+    const appDatabase = openDatabase(database.databasePath);
+    const app = await buildApp({
+      db: appDatabase,
+      config: {
+        host: "127.0.0.1", port: 0, databasePath: database.databasePath, cookieSecure: false,
+        sessionIdleMinutes: 15, sessionAbsoluteHours: 8, clientDistPath: "./dist/client",
+      },
+      clock: () => new Date("2026-08-12T00:00:00.000Z"),
+      idFactory: () => "uat-bootstrap-test",
+    });
+    await app.ready();
+    try {
+      for (const account of accounts) {
+        const response = await login(app, account.username, account.password);
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toMatchObject({ data: {
+          user: { username: account.username, role: account.role },
+          mustChangePassword: true,
+          pilotAcknowledgedAt: null,
+        } });
+        expect(cookieFrom(response)).toMatch(/^careflow_session=/);
+      }
+      expect(appDatabase.sqlite.prepare(`
+        SELECT staff_id AS staffId, count(*) AS count FROM sessions
+        WHERE staff_id = (SELECT id FROM staff_accounts WHERE username = 'uat-doctor')
+        GROUP BY staff_id
+      `).all()).toEqual([{ staffId: expect.any(String), count: 1 }]);
+    } finally {
+      await app.close();
+      appDatabase.close();
+    }
+  });
+
   it("refuses a live host lock without changing any rows", async () => {
     const database = createTestDatabase();
     cleanups.push(database.cleanup);

@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
-import type { AllergyAssessmentDto, Actor, PatientDto, ReviewAllergyPayload } from "../../../shared/contracts.js";
+import type {
+  AllergyAssessmentDto,
+  Actor,
+  IntakeAllergyAnswer,
+  PatientAllergyContextDto,
+  PatientDto,
+  ReviewAllergyPayload,
+} from "../../../shared/contracts.js";
 import type { DatabaseHandle } from "../../db/client.js";
 import { ApiError } from "../../errors.js";
 import {
@@ -18,6 +25,14 @@ const SYNTHETIC_COUNTER_KEY = "synthetic_patient";
 const SYNTHETIC_COUNTER_LIMIT = 999_999;
 const SEARCH_RESULT_LIMIT = 20;
 
+export type IntakeWriteStage =
+  | "AFTER_VISIT_INSERT"
+  | "AFTER_OBSERVATION_INSERT"
+  | "AFTER_ALLERGY_INSERT"
+  | "AFTER_PATIENT_REVISION"
+  | "AFTER_ALLERGY_AUDIT"
+  | "AFTER_INTAKE_AUDIT";
+
 export interface PatientService {
   createSyntheticPatient(tx: AppTransaction, actor: Actor): PatientDto;
   searchPatients(query: string): PatientDto[];
@@ -26,6 +41,20 @@ export interface PatientService {
   assertPatientRevision(tx: AppTransaction, id: string, expected: number): PatientDto;
   getAllergyAssessment(patientId: string): AllergyAssessmentDto;
   getAllergyAssessments(patientIds: readonly string[]): Map<string, AllergyAssessmentDto>;
+  getAllergyContext(patientId: string): PatientAllergyContextDto;
+  recordIntakeAllergy(
+    tx: AuditedTransaction,
+    actor: Actor,
+    input: {
+      patientId: string;
+      visitId: string;
+      expectedPatientRevision: number;
+      answer: IntakeAllergyAnswer;
+      occurredAt: string;
+      afterWrite?: (stage: IntakeWriteStage) => void;
+    },
+  ): PatientAllergyContextDto;
+  assertResolvedAllergy(tx: AppTransaction, patientId: string): AllergyAssessmentDto;
   reviewAllergy(
     tx: AuditedTransaction,
     actor: Actor,
@@ -92,7 +121,7 @@ function initialAllergyAssessment(): AllergyAssessmentDto {
 }
 
 function readAllergyAssessment(
-  database: DatabaseHandle["db"],
+  database: DatabaseHandle["db"] | AppTransaction,
   patientId: string,
 ): AllergyAssessmentDto {
   const revision = database
@@ -195,6 +224,117 @@ function allocateSyntheticCounter(tx: AppTransaction): number {
 export function createPatientService(input: PatientServiceOptions): PatientService {
   const clock = input.clock ?? (() => new Date());
   const idFactory = () => randomUUID();
+
+  const appendAllergyRevision = (value: {
+    tx: AuditedTransaction;
+    actor: Actor;
+    patientId: string;
+    expectedPatientRevision: number;
+    previous?: AllergyAssessmentDto;
+    state: AllergyAssessmentDto["state"];
+    items: ReviewAllergyPayload["items"];
+    sourceText: string;
+    reason: string;
+    visitId: string;
+    occurredAt: string;
+    afterWrite?: (stage: IntakeWriteStage) => void;
+  }): PatientAllergyContextDto => {
+    const previous = value.previous ?? readAllergyAssessment(value.tx, value.patientId);
+    const currentPatient = value.tx
+      .select()
+      .from(patients)
+      .where(and(eq(patients.id, value.patientId), eq(patients.clinicId, "clinic")))
+      .get();
+    if (!currentPatient) {
+      throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบผู้ป่วยสังเคราะห์" });
+    }
+    assertExpectedRevision(currentPatient.revision, value.expectedPatientRevision, "patient");
+
+    const allergyRevision = previous.revision + 1;
+    const allergyRevisionId = idFactory();
+    value.tx.insert(patientAllergyRevisions)
+      .values({
+        id: allergyRevisionId,
+        patientId: value.patientId,
+        revision: allergyRevision,
+        state: value.state,
+        sourceText: value.sourceText,
+        reason: value.reason,
+        reviewedBy: value.actor.id,
+        reviewedAt: value.occurredAt,
+      })
+      .run();
+    if (value.items.length > 0) {
+      value.tx.insert(patientAllergyItems)
+        .values(value.items.map((item, position) => ({
+          id: idFactory(),
+          allergyRevisionId,
+          position,
+          substance: item.substance,
+          reaction: item.reaction,
+          severity: item.severity,
+          note: item.note,
+        })))
+        .run();
+    }
+    value.afterWrite?.("AFTER_ALLERGY_INSERT");
+
+    const nextPatientRevision = value.expectedPatientRevision + 1;
+    const updated = value.tx.update(patients)
+      .set({ revision: nextPatientRevision, updatedAt: value.occurredAt })
+      .where(and(
+        eq(patients.id, value.patientId),
+        eq(patients.clinicId, "clinic"),
+        eq(patients.revision, value.expectedPatientRevision),
+      ))
+      .run();
+    if (updated.changes !== 1) {
+      const latest = value.tx
+        .select()
+        .from(patients)
+        .where(and(eq(patients.id, value.patientId), eq(patients.clinicId, "clinic")))
+        .get();
+      if (!latest) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบผู้ป่วยสังเคราะห์" });
+      assertExpectedRevision(latest.revision, value.expectedPatientRevision, "patient");
+      throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "อัปเดตข้อมูลแพ้ไม่สำเร็จ" });
+    }
+    value.afterWrite?.("AFTER_PATIENT_REVISION");
+
+    const patient = value.tx
+      .select()
+      .from(patients)
+      .where(and(eq(patients.id, value.patientId), eq(patients.clinicId, "clinic")))
+      .get();
+    const created = value.tx
+      .select()
+      .from(patientAllergyRevisions)
+      .where(eq(patientAllergyRevisions.id, allergyRevisionId))
+      .get();
+    if (!patient || !created) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "บันทึกข้อมูลแพ้ไม่สำเร็จ" });
+
+    appendAuditEvent({
+      tx: value.tx,
+      actor: value.actor,
+      id: idFactory(),
+      action: "allergy.updated",
+      entityType: "patient",
+      entityId: value.patientId,
+      entityRevision: nextPatientRevision,
+      reason: value.reason,
+      occurredAt: value.occurredAt,
+      metadata: {
+        visitId: value.visitId,
+        previousState: previous.state,
+        state: value.state,
+        allergyRevisionId,
+        allergyRevision,
+        itemCount: value.items.length,
+      },
+    });
+    value.afterWrite?.("AFTER_ALLERGY_AUDIT");
+
+    return { patient: toDto(patient), allergy: toAllergyAssessment(value.tx, created) };
+  };
 
   const service: PatientService = {
     createSyntheticPatient(tx, actor) {
@@ -306,93 +446,74 @@ export function createPatientService(input: PatientServiceOptions): PatientServi
       return new Map(patientIds.map((patientId) => [patientId, readAllergyAssessment(input.database.db, patientId)]));
     },
 
-    reviewAllergy(tx, actor, patientId, expectedPatientRevision, payload) {
-      this.assertPatientRevision(tx, patientId, expectedPatientRevision);
-      const nextAllergyRevision = (tx
-        .select({ maximum: sql<number>`coalesce(max(${patientAllergyRevisions.revision}), 0)` })
-        .from(patientAllergyRevisions)
-        .where(eq(patientAllergyRevisions.patientId, patientId))
-        .get()?.maximum ?? 0) + 1;
-      const now = clock().toISOString();
-      const allergyRevisionId = idFactory();
+    getAllergyContext(patientId) {
+      const patient = service.getPatientById(patientId);
+      if (!patient) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบผู้ป่วยสังเคราะห์" });
+      return { patient, allergy: service.getAllergyAssessment(patientId) };
+    },
 
-      tx.insert(patientAllergyRevisions)
-        .values({
-          id: allergyRevisionId,
-          patientId,
-          revision: nextAllergyRevision,
-          state: payload.state,
-          sourceText: payload.sourceText,
-          reason: payload.reason,
-          reviewedBy: actor.id,
-          reviewedAt: now,
-        })
-        .run();
-      if (payload.items.length > 0) {
-        tx.insert(patientAllergyItems)
-          .values(payload.items.map((item, position) => ({
-            id: idFactory(),
-            allergyRevisionId,
-            position,
-            substance: item.substance,
-            reaction: item.reaction,
-            severity: item.severity,
-            note: item.note,
-          })))
-          .run();
+    recordIntakeAllergy(tx, actor, record) {
+      service.assertPatientRevision(tx, record.patientId, record.expectedPatientRevision);
+      const previous = readAllergyAssessment(tx, record.patientId);
+      const state = record.answer.answer === "YES" ? "PRESENT" : "NONE_KNOWN";
+      const suppliedReason = record.answer.changeReason?.trim() ?? "";
+      const changedResolvedState = previous.state !== "UNKNOWN" && previous.state !== state;
+      if (changedResolvedState && suppliedReason.length === 0) {
+        throw new ApiError({
+          code: "VALIDATION_FAILED",
+          messageTh: "กรุณาระบุเหตุผลที่ข้อมูลแพ้ยาเปลี่ยน",
+          fieldErrors: {
+            "payload.allergy.changeReason": "กรุณาระบุเหตุผลที่ข้อมูลแพ้ยาเปลี่ยน",
+          },
+        });
       }
+      const reason = suppliedReason || "ทบทวนก่อนส่งเข้าคิว";
+      return appendAllergyRevision({
+        tx,
+        actor,
+        patientId: record.patientId,
+        expectedPatientRevision: record.expectedPatientRevision,
+        previous,
+        state,
+        items: record.answer.items,
+        sourceText: "ผู้ป่วยตอบระหว่าง Intake",
+        reason,
+        visitId: record.visitId,
+        occurredAt: record.occurredAt,
+        afterWrite: record.afterWrite,
+      });
+    },
 
-      const nextPatientRevision = expectedPatientRevision + 1;
-      const updated = tx.update(patients)
-        .set({ revision: nextPatientRevision, updatedAt: now })
-        .where(and(
-          eq(patients.id, patientId),
-          eq(patients.clinicId, "clinic"),
-          eq(patients.revision, expectedPatientRevision),
-        ))
-        .run();
-      if (updated.changes !== 1) {
-        const latest = tx
-          .select()
-          .from(patients)
-          .where(and(eq(patients.id, patientId), eq(patients.clinicId, "clinic")))
-          .get();
-        if (!latest) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบผู้ป่วยสังเคราะห์" });
-        assertExpectedRevision(latest.revision, expectedPatientRevision, "patient");
-        throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "อัปเดตข้อมูลแพ้ไม่สำเร็จ" });
-      }
+    assertResolvedAllergy(tx, patientId) {
       const patient = tx
-        .select()
+        .select({ id: patients.id })
         .from(patients)
         .where(and(eq(patients.id, patientId), eq(patients.clinicId, "clinic")))
         .get();
-      const created = tx
-        .select()
-        .from(patientAllergyRevisions)
-        .where(eq(patientAllergyRevisions.id, allergyRevisionId))
-        .get();
-      if (!patient || !created) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "บันทึกข้อมูลแพ้ไม่สำเร็จ" });
+      if (!patient) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบผู้ป่วยสังเคราะห์" });
+      const allergy = readAllergyAssessment(tx, patientId);
+      if (allergy.state === "UNKNOWN") {
+        throw new ApiError({
+          code: "INVALID_STATE",
+          messageTh: "ยังลงนามไม่ได้ กรุณาทบทวนประวัติแพ้ยาก่อน",
+        });
+      }
+      return allergy;
+    },
 
-      appendAuditEvent({
+    reviewAllergy(tx, actor, patientId, expectedPatientRevision, payload) {
+      return appendAllergyRevision({
         tx,
         actor,
-        id: idFactory(),
-        action: "allergy.updated",
-        entityType: "patient",
-        entityId: patientId,
-        entityRevision: nextPatientRevision,
+        patientId,
+        expectedPatientRevision,
+        state: payload.state,
+        items: payload.items,
+        sourceText: payload.sourceText,
         reason: payload.reason,
-        occurredAt: now,
-        metadata: {
-          visitId: payload.visitId,
-          allergyRevisionId,
-          allergyRevision: nextAllergyRevision,
-          state: payload.state,
-          itemCount: payload.items.length,
-        },
+        visitId: payload.visitId,
+        occurredAt: clock().toISOString(),
       });
-
-      return { patient: toDto(patient), allergy: toAllergyAssessment(tx, created) };
     },
   };
 

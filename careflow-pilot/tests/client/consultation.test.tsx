@@ -10,6 +10,18 @@ import { appRoutes } from "../../src/client/app/router";
 
 const patient = { id: "patient-42", hn: "DEMO-000042", displayName: "ผู้ป่วยสังเคราะห์ 000042", phone: "0000000042", birthDate: "1990-01-01", sex: "unknown" as const, revision: 3, createdAt: "2026-08-03T00:00:00.000Z" };
 const visit = { id: "visit-42", status: "CONSULTING" as const, revision: 8, arrivedAt: "2026-08-03T01:00:00.000Z", startedAt: "2026-08-03T01:15:00.000Z" };
+const consultationJourney = {
+  visit: { id: visit.id, status: visit.status, revision: visit.revision }, refreshedAt: "2026-08-03T01:20:00.000Z",
+  steps: [
+    { code: "INTAKE", labelTh: "รับผู้ป่วย", state: "COMPLETE" }, { code: "SCREENING", labelTh: "คัดกรอง", state: "COMPLETE" },
+    { code: "CONSULTATION", labelTh: "ตรวจรักษา", state: "CURRENT" }, { code: "MEDICATION_DECISION", labelTh: "ตัดสินใจเรื่องยา", state: "UPCOMING" },
+    { code: "PREPARATION", labelTh: "เตรียมยา", state: "UPCOMING" }, { code: "HANDOFF", labelTh: "ส่งมอบยา", state: "UPCOMING" },
+    { code: "PAYMENT", labelTh: "ชำระเงิน", state: "UPCOMING" }, { code: "CLOSURE", labelTh: "ปิด Visit", state: "UPCOMING" },
+  ],
+  nextTask: { action: "OPEN_CONSULTATION", labelTh: "เปิดห้องตรวจ", primaryRole: "doctor", permittedRoles: ["doctor"], availability: "AVAILABLE" },
+  blockers: [], allowedActions: ["OPEN_CONSULTATION", "REVIEW_ALLERGY"],
+};
+const consultationJourneyActions = ["OPEN_CONSULTATION", "SAVE_CONSULTATION_DRAFT", "FINALIZE_CONSULTATION", "AMEND_CLINICAL_NOTE", "REVISE_MEDICATION_DECISION", "REVIEW_ALLERGY", "START_PREPARATION", "CONFIRM_ALLOCATION", "RELEASE_MEDICATION", "HANDOFF_MEDICATION", "FINALIZE_CHARGE"];
 const workspace = {
   visit, patient,
   intake: { id: "intake-42", chiefComplaint: "มีไข้และไอ", vitals: { weightKg: 64.5, heightCm: 168, temperatureC: 38.2, systolicMmhg: 120, diastolicMmhg: 80, heartRateBpm: 90, spo2Percent: 98 }, recordedAt: "2026-08-03T01:02:00.000Z", recordedBy: { id: "assistant-1", displayName: "ผู้ช่วยทดสอบ" } },
@@ -20,7 +32,11 @@ const workspace = {
 const doctorSession = { data: { user: { id: "doctor-1", username: "doctor", displayName: "พญ. ทดสอบ", role: "doctor" }, clinic: { id: "clinic", name: "คลินิกทดสอบ" }, permissions: ["patient:read", "visit:read-queue", "visit:start-consultation", "clinical:read", "clinical:save-draft", "clinical:sign", "clinical:amend", "patient:update-allergy", "medication:read-catalog", "medication:sign-decision"], pilotAcknowledgedAt: "2026-08-03T00:00:00.000Z", mustChangePassword: false, idleExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() } };
 const server = setupServer();
 function QueryClientCapture({ capture }: { capture: (client: QueryClient) => void }) { capture(useQueryClient()); return null; }
-function renderRoute(path = "/consultations/visit-42", capture?: (client: QueryClient) => void) { const router = createMemoryRouter(appRoutes, { initialEntries: [path] }); render(<AppProviders>{capture ? <QueryClientCapture capture={capture} /> : null}<RouterProvider router={router} /></AppProviders>); return router; }
+function renderRoute(
+  path = "/consultations/visit-42",
+  capture?: (client: QueryClient) => void,
+  journeyResponse: (visitId: string) => unknown = (visitId) => ({ ...consultationJourney, visit: { ...consultationJourney.visit, id: visitId }, allowedActions: consultationJourneyActions }),
+) { server.use(http.get("/api/visits/:visitId/journey", ({ params }) => HttpResponse.json({ data: journeyResponse(String(params.visitId)) }))); const router = createMemoryRouter(appRoutes, { initialEntries: [path] }); render(<AppProviders>{capture ? <QueryClientCapture capture={capture} /> : null}<RouterProvider router={router} /></AppProviders>); return router; }
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 beforeEach(() => server.resetHandlers(
@@ -33,6 +49,168 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); server.resetHandlers(); });
 afterAll(() => server.close());
 
 describe("Doctor consultation authoring", () => {
+  it("reads Journey authority alongside the consultation workspace", async () => {
+    renderRoute();
+    expect(await screen.findByRole("navigation", { name: "เส้นทางผู้ป่วย" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "เปิดห้องตรวจ" })).toBeInTheDocument();
+  });
+
+  it("does not promote a legacy draft action after Journey omits the consultation authority", async () => {
+    // Break caught: a cached workspace can say SAVE_DRAFT even though the current Journey projection has withdrawn the semantic consultation authority.
+    renderRoute(
+      "/consultations/visit-42",
+      undefined,
+      (visitId) => ({
+        ...consultationJourney,
+        visit: { ...consultationJourney.visit, id: visitId },
+        nextTask: { action: "REVIEW_ALLERGY", labelTh: "ทบทวนข้อมูลแพ้ยา", primaryRole: "doctor", permittedRoles: ["doctor"], availability: "AVAILABLE" },
+        allowedActions: ["REVIEW_ALLERGY"],
+      }),
+    );
+
+    await screen.findByLabelText("Subjective (ข้อมูลจากผู้ป่วย)");
+    expect(screen.queryByRole("button", { name: "บันทึกร่าง" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Subjective (ข้อมูลจากผู้ป่วย)")).toBeDisabled();
+  });
+
+  it("uses Journey consultation authority when a legacy workspace action list is stale", async () => {
+    // Break caught: a client-side legacy action gate can turn a server-authorized consultation into a disabled fake mutation.
+    server.use(http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: { ...workspace, allowedActions: [] } })));
+    renderRoute();
+
+    expect(await screen.findByLabelText("Subjective (ข้อมูลจากผู้ป่วย)")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "บันทึกร่าง" })).toBeInTheDocument();
+  });
+
+  it("lets a Doctor edit and save under UNKNOWN Allergy but hides finalization until the review resolves", async () => {
+    // Break caught: UNKNOWN blocks signing only. Hiding draft work discards the
+    // permitted clinical recovery path, while a disabled-looking sign CTA still
+    // implies an unavailable command exists.
+    renderRoute(
+      "/consultations/visit-42",
+      undefined,
+      (visitId) => ({
+        ...consultationJourney,
+        visit: { ...consultationJourney.visit, id: visitId },
+        allowedActions: ["OPEN_CONSULTATION", "SAVE_CONSULTATION_DRAFT", "REVIEW_ALLERGY"],
+      }),
+    );
+
+    expect(await screen.findByLabelText("Subjective (ข้อมูลจากผู้ป่วย)")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "บันทึกร่าง" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "ลงนามและส่งต่อ" })).not.toBeInTheDocument();
+  });
+
+  it("starts a WAITING UNKNOWN Visit exactly once after Overview opens the Doctor route", async () => {
+    // Break caught: the Overview link can open a real WAITING consultation
+    // route, where a generic local Journey callback used to render a Start
+    // button that ignored START_CONSULTATION.
+    const user = userEvent.setup();
+    const waitingVisit = { ...visit, status: "WAITING" as const, revision: 7, startedAt: null };
+    const consultingVisit = { ...visit, status: "CONSULTING" as const, revision: 8, startedAt: "2026-08-03T01:15:00.000Z" };
+    const waitingJourney = {
+      ...consultationJourney,
+      visit: { id: visit.id, status: waitingVisit.status, revision: waitingVisit.revision },
+      nextTask: { action: "START_CONSULTATION", labelTh: "เริ่มตรวจ", primaryRole: "doctor", permittedRoles: ["doctor"], availability: "AVAILABLE" },
+      blockers: [{ code: "ALLERGY_UNKNOWN", titleTh: "ยังไม่ได้ถามประวัติแพ้ยา", detailTh: "ต้องทบทวนก่อนลงนามการตรวจ", primaryRole: "assistant", recoveryAction: "REVIEW_ALLERGY", medication: null }],
+      allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"],
+    };
+    const consultingJourney = {
+      ...waitingJourney,
+      visit: { id: visit.id, status: consultingVisit.status, revision: consultingVisit.revision },
+      nextTask: { action: "OPEN_CONSULTATION", labelTh: "เปิดห้องตรวจ", primaryRole: "doctor", permittedRoles: ["doctor"], availability: "AVAILABLE" },
+      allowedActions: ["OPEN_CONSULTATION", "SAVE_CONSULTATION_DRAFT", "REVIEW_ALLERGY"],
+    };
+    const waitingQueueSummary = {
+      steps: waitingJourney.steps,
+      nextTask: waitingJourney.nextTask,
+      blockers: waitingJourney.blockers,
+      allowedActions: waitingJourney.allowedActions,
+    };
+    const consultingQueueSummary = {
+      steps: consultingJourney.steps,
+      nextTask: consultingJourney.nextTask,
+      blockers: consultingJourney.blockers,
+      allowedActions: consultingJourney.allowedActions,
+    };
+    const waitingWorkspace = { ...workspace, visit: waitingVisit, allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"] as const };
+    const consultingWorkspace = { ...workspace, visit: consultingVisit };
+    const waitingQueueItem = {
+      visit: waitingVisit,
+      patient: { id: patient.id, hn: patient.hn, displayName: patient.displayName, birthDate: patient.birthDate, sex: patient.sex, revision: patient.revision },
+      allergy: workspace.patientSnapshot.allergy,
+      chiefComplaint: workspace.intake.chiefComplaint,
+      vitals: workspace.intake.vitals,
+      allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"],
+      journeySummary: waitingQueueSummary,
+    };
+    const consultingQueueItem = {
+      ...waitingQueueItem,
+      visit: consultingVisit,
+      allowedActions: ["OPEN_CONSULTATION"],
+      journeySummary: consultingQueueSummary,
+    };
+    let started = false;
+    let startRequests = 0;
+    let startBody: unknown;
+    let resolveStart!: (response: Response) => void;
+    server.use(
+      http.get("/api/queue", () => HttpResponse.json({ data: [waitingQueueItem] })),
+      http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: started ? consultingWorkspace : waitingWorkspace })),
+      http.post("/api/visits/visit-42/start-consultation", async ({ request }) => {
+        startRequests += 1;
+        startBody = await request.json();
+        return new Promise((resolve) => { resolveStart = resolve; });
+      }),
+    );
+
+    const router = renderRoute("/overview", undefined, () => (started ? consultingJourney : waitingJourney));
+    await user.click(await screen.findByRole("link", { name: /ผู้ป่วยสังเคราะห์ 000042 รอพบแพทย์/ }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/consultations/visit-42"));
+    const start = await screen.findByRole("button", { name: "เริ่มตรวจ" });
+    expect(screen.getByRole("button", { name: "ยังไม่ได้ถามประวัติแพ้ยา" })).toBeEnabled();
+
+    await user.dblClick(start);
+    await waitFor(() => expect(startRequests).toBe(1));
+    expect(startBody).toEqual({ expectedRevisions: { visit: 7 }, payload: {} });
+    expect(screen.queryByRole("button", { name: "เริ่มตรวจ" })).not.toBeInTheDocument();
+
+    started = true;
+    resolveStart(HttpResponse.json({ data: consultingQueueItem, replayed: false }));
+    await waitFor(() => expect(screen.getAllByText("กำลังตรวจ").length).toBeGreaterThan(0));
+    expect(startRequests).toBe(1);
+    expect(screen.getByRole("button", { name: "ยังไม่ได้ถามประวัติแพ้ยา" })).toBeEnabled();
+  });
+
+  it("fails closed after a direct-route Start revision conflict while keeping Allergy recovery", async () => {
+    // Break caught: a stale direct-route Start must not remain a second POST
+    // affordance after the server rejects its revision.
+    const user = userEvent.setup();
+    const waitingVisit = { ...visit, status: "WAITING" as const, revision: 7, startedAt: null };
+    const waitingJourney = {
+      ...consultationJourney,
+      visit: { id: visit.id, status: waitingVisit.status, revision: waitingVisit.revision },
+      nextTask: { action: "START_CONSULTATION", labelTh: "เริ่มตรวจ", primaryRole: "doctor", permittedRoles: ["doctor"], availability: "AVAILABLE" },
+      blockers: [{ code: "ALLERGY_UNKNOWN", titleTh: "ยังไม่ได้ถามประวัติแพ้ยา", detailTh: "ต้องทบทวนก่อนลงนามการตรวจ", primaryRole: "assistant", recoveryAction: "REVIEW_ALLERGY", medication: null }],
+      allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"],
+    };
+    let startRequests = 0;
+    server.use(
+      http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: { ...workspace, visit: waitingVisit, allowedActions: ["START_CONSULTATION", "REVIEW_ALLERGY"] } })),
+      http.post("/api/visits/visit-42/start-consultation", () => {
+        startRequests += 1;
+        return HttpResponse.json({ error: { code: "REVISION_CONFLICT", messageTh: "ข้อมูลคิวเปลี่ยนแปลงแล้ว", requestId: "start-conflict" } }, { status: 409 });
+      }),
+    );
+
+    renderRoute("/consultations/visit-42", undefined, () => waitingJourney);
+    await user.click(await screen.findByRole("button", { name: "เริ่มตรวจ" }));
+    expect(await screen.findByText("ข้อมูลคิวเปลี่ยนแปลงแล้ว")).toBeInTheDocument();
+    expect(startRequests).toBe(1);
+    expect(screen.queryByRole("button", { name: "เริ่มตรวจ" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ยังไม่ได้ถามประวัติแพ้ยา" })).toBeEnabled();
+  });
+
   it("renders UNKNOWN Allergy and four labeled SOAP fields", async () => {
     renderRoute();
     expect((await screen.findAllByText("UNKNOWN")).length).toBeGreaterThan(0);
@@ -286,8 +464,9 @@ describe("Doctor consultation authoring", () => {
 
     const snapshot = await screen.findByRole("region", { name: "Patient Snapshot" });
     expect(snapshot).toHaveTextContent("ประวัติแพ้ยา");
+    expect(snapshot).toHaveTextContent("มีประวัติแพ้ยา");
     expect(snapshot).toHaveTextContent("เพนิซิลลิน");
-    expect(snapshot).toHaveTextContent("ความรุนแรง MILD");
+    expect(snapshot).toHaveTextContent("ความรุนแรง เล็กน้อย");
     expect(snapshot).toHaveTextContent("หมายเหตุ พกบัตรแพ้ยา");
     expect(snapshot).toHaveTextContent("ผู้ให้ข้อมูล ผู้ป่วยแจ้งประวัติ");
     expect(snapshot).toHaveTextContent("เหตุผล ทบทวนก่อนตรวจ");
@@ -404,7 +583,15 @@ describe("Doctor consultation authoring", () => {
       http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: signedWorkspace })),
       http.get("/api/medications", () => HttpResponse.json({ data: [catalogMedication] })),
     );
-    renderRoute();
+    renderRoute(
+      "/consultations/visit-42",
+      undefined,
+      (visitId) => ({
+        ...consultationJourney,
+        visit: { ...consultationJourney.visit, id: visitId, status: "AWAITING_ORDER_REVISION" },
+        allowedActions: ["AMEND_CLINICAL_NOTE", "REVISE_MEDICATION_DECISION"],
+      }),
+    );
     const noteEvidence = await screen.findByLabelText("หลักฐาน Clinical Note ที่ลงนาม");
     const decisionEvidence = screen.getByLabelText("หลักฐานการตัดสินใจยา ที่ลงนาม");
     expect(noteEvidence).toHaveTextContent("พญ. ทดสอบ");

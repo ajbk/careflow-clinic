@@ -11,6 +11,7 @@ import {
   type InventoryLotBalanceDto,
 } from "../../shared/contracts";
 import { queryKeys } from "../app/query-client";
+import { invalidateJourney } from "./journey";
 import { ApiClient, apiClient as defaultApiClient } from "../lib/api-client";
 import { createCommandAttempt, type CommandAttempt } from "../lib/idempotency";
 
@@ -83,11 +84,14 @@ export function useInventoryAdjustment(medicationId: string, client: ApiClient =
   });
 }
 
-export function useReceiveInventory(client: ApiClient = defaultApiClient) {
+export function useReceiveInventory(visitId?: string, client: ApiClient = defaultApiClient) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (attempt: ReceiveInventoryAttempt) => client.command("/api/inventory/receipts", attempt, receiveInventoryResponseSchema),
     retry: false,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.inventory }),
+    onSuccess: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.inventory }),
+      invalidateJourney(queryClient, visitId ?? ""),
+    ]).then(() => undefined),
   });
 }

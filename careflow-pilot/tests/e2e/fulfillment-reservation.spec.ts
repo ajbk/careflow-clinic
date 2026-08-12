@@ -7,6 +7,7 @@ async function createQueuedPatient(page: Page, complaint: string): Promise<{ hn:
   await expect(header).toBeVisible();
   const hn = (await header.innerText()).match(/HN DEMO-\d{6}/)?.[0];
   expect(hn).toMatch(/^HN DEMO-\d{6}$/);
+  await page.getByRole("radio", { name: "ไม่แพ้" }).check();
   await page.getByLabel("อาการสำคัญ *").fill(complaint);
   await page.getByRole("button", { name: "ส่งพบแพทย์" }).click();
   await expect(page).toHaveURL(/\/queue$/);
@@ -21,7 +22,7 @@ async function reviewAllergy(page: Page): Promise<void> {
   await page.getByRole("button", { name: "ทบทวนข้อมูลแพ้ยา" }).click();
   const dialog = page.getByRole("dialog", { name: "ทบทวนประวัติแพ้ยา" });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: "NONE_KNOWN" }).click();
+  await dialog.getByRole("button", { name: "ยืนยันว่าไม่แพ้" }).click();
   await dialog.getByRole("button", { name: "บันทึกการทบทวน" }).click();
   await expect(dialog).toHaveCount(0);
 }
@@ -78,7 +79,7 @@ test("reserves a signed Order across future lots in FEFO order and shares the Pi
     await loginAndAcknowledge(doctorPage, server.baseURL, "doctor");
     const doctorCard = doctorPage.locator(".queue-card").filter({ hasText: patient.hn });
     await expect(doctorCard).toHaveCount(1);
-    await doctorCard.getByRole("button", { name: "เริ่มการตรวจ" }).click();
+    await doctorCard.getByRole("button", { name: "เริ่มตรวจ" }).click();
     await expect(doctorPage).toHaveURL(/\/consultations\/[^/]+$/);
     await signOrder(doctorPage);
 
@@ -100,20 +101,24 @@ test("reserves a signed Order across future lots in FEFO order and shares the Pi
     await expect(doctorPage.getByRole("button", { name: "เริ่มเตรียมยา" })).toHaveCount(0);
 
     // A second signed Order asks for eight units while only seven remain available.
-    // The all-or-nothing command must leave that Visit and every allocation untouched.
+    // Journey must prevent the reservation attempt and keep every allocation untouched.
     await assistantPage.goto(`${server.baseURL}/intake`);
     const secondPatient = await createQueuedPatient(assistantPage, "อาการสังเคราะห์สต็อกไม่พอ");
     await reviewAllergy(assistantPage);
     await doctorPage.goto(`${server.baseURL}/queue`);
     const secondDoctorCard = doctorPage.locator(".queue-card").filter({ hasText: secondPatient.hn });
     await expect(secondDoctorCard).toHaveCount(1);
-    await secondDoctorCard.getByRole("button", { name: "เริ่มการตรวจ" }).click();
+    await secondDoctorCard.getByRole("button", { name: "เริ่มตรวจ" }).click();
     await expect(doctorPage).toHaveURL(/\/consultations\/[^/]+$/);
     await signOrder(doctorPage);
 
     await assistantPage.goto(`${server.baseURL}/dispensing/${secondPatient.visitId}`);
-    await assistantPage.getByRole("button", { name: "เริ่มเตรียมยา" }).click();
-    await expect(assistantPage.getByRole("alert")).toContainText("ไม่เพียงพอ");
+    const shortageBlocker = assistantPage.locator(".journey-blocker-card");
+    await expect(shortageBlocker).toContainText("ต้องการ 8 เม็ด");
+    await expect(shortageBlocker).toContainText("พร้อมใช้ 7 เม็ด");
+    await expect(shortageBlocker).toContainText("ขาด 1 เม็ด");
+    await expect(shortageBlocker.getByRole("link", { name: "รับยาเข้าคลัง" })).toBeVisible();
+    await expect(assistantPage.getByRole("button", { name: "เริ่มเตรียมยา" })).toHaveCount(0);
     await expect(assistantPage.getByText("AWAITING_PREPARATION", { exact: true })).toBeVisible();
     const insufficientPickList = await assistantPage.request.get(`${server.baseURL}/api/dispensing/${secondPatient.visitId}`);
     expect(insufficientPickList.status()).toBe(200);

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { opdCardSchema, type OpdCardDto } from "../../src/shared/contracts.js";
+import { opdCardSchema, visitJourneySchema, type OpdCardDto, type VisitJourneyDto } from "../../src/shared/contracts.js";
 import { loginAndAcknowledge, startPilotServer } from "./fixtures.js";
 
 const NOW = "2026-08-10T00:00:00.000Z";
@@ -132,14 +132,77 @@ function maximumOpdCard(): OpdCardDto {
   return opdCardSchema.parse(card);
 }
 
-async function openMaximumOpdCard(page: Page, baseURL: string): Promise<void> {
+function closedJourney(): VisitJourneyDto {
+  return {
+    visit: { id: "layout-max", status: "CLOSED", revision: 10 },
+    refreshedAt: NOW,
+    steps: [
+      { code: "INTAKE", labelTh: "รับผู้ป่วย", state: "COMPLETE" },
+      { code: "SCREENING", labelTh: "คัดกรอง", state: "COMPLETE" },
+      { code: "CONSULTATION", labelTh: "ตรวจรักษา", state: "COMPLETE" },
+      { code: "MEDICATION_DECISION", labelTh: "ตัดสินใจเรื่องยา", state: "COMPLETE" },
+      { code: "PREPARATION", labelTh: "เตรียมยา", state: "COMPLETE" },
+      { code: "HANDOFF", labelTh: "ส่งมอบยา", state: "COMPLETE" },
+      { code: "PAYMENT", labelTh: "ชำระเงิน", state: "COMPLETE" },
+      { code: "CLOSURE", labelTh: "ปิด Visit", state: "COMPLETE" },
+    ],
+    nextTask: { action: "OPEN_OPD_CARD", labelTh: "เปิดบัตร OPD", primaryRole: "doctor", permittedRoles: ["doctor"], availability: "AVAILABLE" },
+    blockers: [],
+    allowedActions: ["OPEN_OPD_CARD"],
+  };
+}
+
+function stockShortageJourney(): VisitJourneyDto {
+  return visitJourneySchema.parse({
+    visit: { id: "layout-max", status: "AWAITING_PREPARATION", revision: 10 },
+    refreshedAt: NOW,
+    steps: [
+      { code: "INTAKE", labelTh: "รับผู้ป่วย", state: "COMPLETE" },
+      { code: "SCREENING", labelTh: "คัดกรอง", state: "COMPLETE" },
+      { code: "CONSULTATION", labelTh: "ตรวจรักษา", state: "COMPLETE" },
+      { code: "MEDICATION_DECISION", labelTh: "ตัดสินใจเรื่องยา", state: "COMPLETE" },
+      { code: "PREPARATION", labelTh: "เตรียมยา", state: "BLOCKED" },
+      { code: "HANDOFF", labelTh: "ส่งมอบยา", state: "UPCOMING" },
+      { code: "PAYMENT", labelTh: "ชำระเงิน", state: "UPCOMING" },
+      { code: "CLOSURE", labelTh: "ปิด Visit", state: "UPCOMING" },
+    ],
+    nextTask: { action: "RECEIVE_STOCK", labelTh: "รับยาเข้าคลัง", primaryRole: "assistant", permittedRoles: ["assistant", "doctor"], availability: "AVAILABLE" },
+    blockers: [{
+      code: "STOCK_SHORTAGE",
+      titleTh: "จัดยายังไม่ได้",
+      detailTh: "ยาทดสอบ ต้องการ 3 เม็ด · พร้อมใช้ 0 เม็ด · ขาด 3 เม็ด",
+      primaryRole: "assistant",
+      recoveryAction: "RECEIVE_STOCK",
+      medication: { medicationId: "DEMO-MED-001", displayNameSnapshot: "ยาทดสอบ", required: 3, available: 0, shortfall: 3, unitSnapshot: "เม็ด" },
+    }],
+    allowedActions: ["RECEIVE_STOCK"],
+  });
+}
+
+async function openMaximumOpdCard(page: Page, baseURL: string, journey: VisitJourneyDto = closedJourney()): Promise<void> {
   const card = maximumOpdCard();
   await loginAndAcknowledge(page, baseURL, "doctor");
   await page.route("**/api/visits/layout-max/opd-card", async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: card }) });
   });
+  await page.route("**/api/visits/layout-max/journey", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: journey }) });
+  });
   await page.goto(`${baseURL}/visits/layout-max/opd-card`);
   await expect(page.getByLabel("บัตร OPD สำหรับพิมพ์")).toBeVisible();
+}
+
+async function expectClosedJourneyRibbon(page: Page, mobile: boolean): Promise<void> {
+  const ribbon = page.getByRole("navigation", { name: "เส้นทางผู้ป่วย" });
+  const current = ribbon.locator("li[aria-current='step']");
+  await expect(ribbon.locator("li")).toHaveCount(8);
+  await expect(current).toHaveCount(1);
+  await expect(current).toHaveText(/ปิด Visit/);
+  await expect(current).toHaveClass(/is-complete/);
+  if (mobile) {
+    await expect(current).toBeVisible();
+    expect(await current.evaluate((element) => getComputedStyle(element).position)).not.toBe("absolute");
+  }
 }
 
 async function expectRequiredEvidenceVisible(page: Page): Promise<void> {
@@ -176,6 +239,7 @@ for (const viewport of [
     const page = await context.newPage();
     try {
       await openMaximumOpdCard(page, server.baseURL);
+      await expectClosedJourneyRibbon(page, viewport.width === 375);
       await expectRequiredEvidenceVisible(page);
       expect(await opdHorizontalOverflows(page)).toEqual([]);
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
@@ -185,6 +249,34 @@ for (const viewport of [
     }
   });
 }
+
+test("blocked stock-shortage Journey preserves its semantic and visible mobile context", async ({ browser }) => {
+  const server = await startPilotServer();
+  const context = await browser.newContext({ viewport: { width: 375, height: 812 } });
+  const page = await context.newPage();
+  try {
+    await openMaximumOpdCard(page, server.baseURL, stockShortageJourney());
+    const ribbon = page.getByRole("navigation", { name: "เส้นทางผู้ป่วย" });
+    const items = ribbon.locator("li");
+    const current = ribbon.locator("li[aria-current='step']");
+    await expect(items).toHaveCount(8);
+    expect(await items.allTextContents()).toEqual(expect.arrayContaining([
+      expect.stringContaining("รับผู้ป่วย"), expect.stringContaining("คัดกรอง"), expect.stringContaining("ตรวจรักษา"),
+      expect.stringContaining("ตัดสินใจเรื่องยา"), expect.stringContaining("เตรียมยา"), expect.stringContaining("ส่งมอบยา"),
+      expect.stringContaining("ชำระเงิน"), expect.stringContaining("ปิด Visit"),
+    ]));
+    await expect(current).toHaveCount(1);
+    await expect(current).toContainText("เตรียมยา");
+    await expect(current).toContainText("ติดขัด");
+    await expect(current).toHaveClass(/is-blocked/);
+    await expect(current).toBeVisible();
+    expect(await current.evaluate((element) => getComputedStyle(element).position)).not.toBe("absolute");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
+  } finally {
+    await context.close();
+    await server.close();
+  }
+});
 
 test("maximum SOAP and addenda paginate without print overflow", async ({ browser }) => {
   const server = await startPilotServer();

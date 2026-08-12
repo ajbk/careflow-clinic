@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Actor, InventorySummaryDto, ReceiveInventoryPayload } from "../../src/shared/contracts.js";
 import { createInventoryService } from "../../src/server/modules/inventory/index.js";
+import { medicationDecisions, medicationOrderItems } from "../../src/server/modules/medication/index.js";
+import { patients } from "../../src/server/modules/patient/index.js";
+import { visits } from "../../src/server/modules/visit/index.js";
 import { cookieFrom, login, seedAccount } from "./helpers/auth.js";
 import { createTestApp, createTestDatabase, type TestDatabase } from "./helpers/database.js";
 
@@ -93,6 +96,94 @@ describe("inventory foundation service", () => {
     expect(database.sqlite.prepare(
       "SELECT quantity_delta FROM inventory_stock_movements WHERE lot_id = ?",
     ).all(receipt.lot.id)).toEqual([{ quantity_delta: 12 }]);
+  });
+
+  it("projects received ledger stock for a signed ORDER without creating reservation evidence", async () => {
+    const { database, inventory } = fixture();
+    const actor = await receivingActor(database);
+    receive(database, inventory, actor, payload({ quantity: 7, lotNumber: "READINESS-LOT" }));
+    database.db.insert(patients).values({
+      id: "readiness-patient",
+      clinicId: "clinic",
+      hn: "DEMO-000009",
+      displayName: "ผู้ป่วยทดสอบ 000009",
+      phone: "0000000009",
+      birthDate: "1990-01-01",
+      sex: "unknown",
+      revision: 1,
+      createdAt: "2026-08-03T00:00:00.000Z",
+      updatedAt: "2026-08-03T00:00:00.000Z",
+    }).run();
+    database.db.insert(visits).values({
+      id: "readiness-visit",
+      clinicId: "clinic",
+      patientId: "readiness-patient",
+      status: "AWAITING_PREPARATION",
+      chiefComplaint: "อาการสังเคราะห์",
+      revision: 3,
+      arrivedAt: "2026-08-03T00:00:00.000Z",
+      startedAt: "2026-08-03T00:00:00.000Z",
+      closedAt: null,
+      createdBy: actor.id,
+    }).run();
+    database.db.insert(medicationDecisions).values({
+      id: "readiness-decision",
+      visitId: "readiness-visit",
+      version: 1,
+      kind: "ORDER",
+      noMedicationReason: null,
+      revisionReason: null,
+      supersedesId: null,
+      signedBy: actor.id,
+      signedByDisplayName: actor.displayName,
+      signedAt: "2026-08-03T00:00:00.000Z",
+      contentHash: "a".repeat(64),
+    }).run();
+    database.db.insert(medicationOrderItems).values({
+      id: "readiness-order-item",
+      medicationDecisionId: "readiness-decision",
+      position: 0,
+      medicationId: "DEMO-MED-001",
+      medicationRevision: 1,
+      displayNameSnapshot: "[DEMO] ยาทดสอบชนิด A",
+      strengthSnapshot: "500 หน่วยทดสอบ",
+      dosageFormSnapshot: "เม็ดทดสอบ",
+      unitSnapshot: "เม็ด",
+      quantity: 7,
+      directionsTh: "รับประทานตามคำสั่งสังเคราะห์",
+    }).run();
+    const before = database.sqlite.prepare(`
+      SELECT
+        (SELECT count(*) FROM inventory_reservations) AS reservations,
+        (SELECT count(*) FROM inventory_reservation_allocations) AS allocations,
+        (SELECT count(*) FROM inventory_stock_movements) AS movements,
+        (SELECT revision FROM inventory_lots WHERE lot_number = 'READINESS-LOT') AS lot_revision,
+        (SELECT revision FROM visits WHERE id = 'readiness-visit') AS visit_revision,
+        (SELECT count(*) FROM audit_events) AS audits,
+        (SELECT count(*) FROM idempotency_records) AS idempotency
+    `).get();
+
+    expect(inventory.getReservationReadiness("readiness-visit")).toEqual({
+      ready: true,
+      lines: [{
+        medicationId: "DEMO-MED-001",
+        displayNameSnapshot: "[DEMO] ยาทดสอบชนิด A",
+        required: 7,
+        available: 7,
+        shortfall: 0,
+        unitSnapshot: "เม็ด",
+      }],
+    });
+    expect(database.sqlite.prepare(`
+      SELECT
+        (SELECT count(*) FROM inventory_reservations) AS reservations,
+        (SELECT count(*) FROM inventory_reservation_allocations) AS allocations,
+        (SELECT count(*) FROM inventory_stock_movements) AS movements,
+        (SELECT revision FROM inventory_lots WHERE lot_number = 'READINESS-LOT') AS lot_revision,
+        (SELECT revision FROM visits WHERE id = 'readiness-visit') AS visit_revision,
+        (SELECT count(*) FROM audit_events) AS audits,
+        (SELECT count(*) FROM idempotency_records) AS idempotency
+    `).get()).toEqual(before);
   });
 
   it("classifies zero, low, okay, and all-expired stock from the ledger and clinic date", async () => {

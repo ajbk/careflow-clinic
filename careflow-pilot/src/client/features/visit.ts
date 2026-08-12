@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { QueueItemDto, VisitWorkspaceDto } from "../../shared/contracts";
 import { queueItemSchema, visitWorkspaceSchema } from "../../shared/contracts";
 import { queryKeys } from "../app/query-client";
+import { invalidateJourney } from "./journey";
 import { ApiClient, apiClient as defaultApiClient } from "../lib/api-client";
 import { createCommandAttempt, type CommandAttempt } from "../lib/idempotency";
 import { isApiError } from "../lib/api-error";
@@ -19,8 +20,8 @@ const startConsultationResponseSchema = z.strictObject({
   replayed: z.boolean(),
 });
 
-export function createStartConsultationAttempt(item: QueueItemDto): StartConsultationAttempt {
-  return createCommandAttempt({ visit: item.visit.revision }, {});
+export function createStartConsultationAttempt(visit: Pick<QueueItemDto["visit"], "revision">): StartConsultationAttempt {
+  return createCommandAttempt({ visit: visit.revision }, {});
 }
 
 export function getVisitWorkspace(
@@ -91,6 +92,7 @@ export function useStartConsultation(client: ApiClient = defaultApiClient) {
         queryClient.invalidateQueries({ queryKey: queryKeys.dashboard }),
         queryClient.invalidateQueries({ queryKey: queryKeys.queue }),
         queryClient.invalidateQueries({ queryKey: queryKeys.visit(variables.visitId) }),
+        invalidateJourney(queryClient, variables.visitId),
       ]);
     },
   });

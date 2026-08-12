@@ -8,6 +8,8 @@ Signing an `ORDER` moves the Visit to `รอจัดยา`; signing `NO_MEDIC
 
 ## Quick start (Node 22)
 
+### macOS/Linux
+
 ```bash
 cd careflow-pilot
 nvm use 22                         # or install Node >=22.13
@@ -16,12 +18,10 @@ cp .env.example .env
 install -d -m 700 data
 export CAREFLOW_DB_PATH="$PWD/data/careflow.sqlite"
 npm run db:migrate -- "$PWD/data/careflow.sqlite"
-npm run users -- create --username assistant --display-name "ผู้ช่วยคลินิก" --role assistant
-npm run users -- create --username doctor --display-name "แพทย์คลินิก" --role doctor
 npm run dev
 ```
 
-The `users` command is interactive. Confirm `SYNTHETIC-ONLY`, then enter a 12–128 character password twice. Open `http://127.0.0.1:5173` during development. The production host serves both the API and built SPA from one origin:
+Open `http://127.0.0.1:5173` during development. The local UAT owner provisions synthetic-only role access outside this document; do not put sign-in material in repository files, documentation, tickets, or logs. The built local host serves both the API and SPA from one origin:
 
 ```bash
 npm run build
@@ -31,18 +31,38 @@ npm start
 
 `CAREFLOW_DB_PATH` must name this pilot's absolute SQLite file in operations. Migration runs before the host listens. On restart, stop the process, start it again, and verify the same queue Visit and Consultation status are present; sessions and audit evidence persist in SQLite.
 
+### Windows 11 PowerShell
+
+Run PowerShell as the dedicated local UAT account from either the repository root or its `careflow-pilot` directory:
+
+```powershell
+$startingDirectory = [System.IO.Path]::GetFullPath((Get-Location).Path)
+$pilotRoot = if ([System.IO.Path]::GetFileName($startingDirectory) -eq 'careflow-pilot') {
+  $startingDirectory
+} else {
+  [System.IO.Path]::GetFullPath((Join-Path $startingDirectory 'careflow-pilot'))
+}
+$pilotManifest = [System.IO.Path]::GetFullPath((Join-Path $pilotRoot 'package.json'))
+if (-not (Test-Path -LiteralPath $pilotManifest -PathType Leaf -ErrorAction Stop)) {
+  throw 'CareFlow pilot root not found; UAT is BLOCKED'
+}
+$pilotPackage = Get-Content -LiteralPath $pilotManifest -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+if ($pilotPackage.name -ne 'careflow-pilot') {
+  throw 'CareFlow pilot root is invalid; UAT is BLOCKED'
+}
+Set-Location -LiteralPath $pilotRoot -ErrorAction Stop
+npm ci --ignore-scripts
+npm run verify:native-runtime
+npm run build
+```
+
+Before creating the UAT directory or database, complete the administrator runbook using its [Windows 11 PowerShell instructions](../docs/uat/careflow-pre-pilot/admin-runbook.md#windows-11-powershell). It establishes and verifies the exact restricted ACL, migrates the database, provisions exactly two interactive UAT accounts, and only then starts the loopback host. Browse only to `http://127.0.0.1:3001`, and use that runbook for every restart/session-expiry check before starting the Thai Journey checklist.
+
+Deployment, Windows service installation, backup/restore, network exposure, and real-data use remain explicitly disabled.
+
 ## Two-browser rehearsal
 
-1. In Browser A, sign in as `assistant`, acknowledge the pilot rules, generate a synthetic Patient, complete the chief complaint, send the Visit to Queue, and review Allergy as `NONE_KNOWN` or `UNKNOWN` with the visible form.
-2. In Browser B (a separate private window/context), sign in as `doctor`, acknowledge the rules, reload Queue, start the Consultation, complete all SOAP fields and a diagnosis, then choose one path:
-   - `ORDER`: select `[DEMO] ยาทดสอบชนิด A`, set a synthetic quantity and directions, save the draft, then sign.
-   - `NO_MEDICATION`: enter a synthetic reason, save the draft, then sign.
-3. Reload Browser B and confirm the signed hash and decision version remain. Reload Browser A and confirm the same HN/Visit is `รอจัดยา` for `ORDER`, or `รอคิดเงิน` for `NO_MEDICATION`. Assistant must not open the Doctor Consultation URL; the server returns `403` before clinical data is read.
-4. In Browser A, open `คลังยา`, choose `รับยาเข้าคลัง`, search `DEMO`, select a seeded medication, enter a positive quantity, a unique lot number, a future expiry date, and a synthetic supplier, then confirm the dashboard shows the new quantity and status.
-5. In Browser A, open the Visit’s `จัดยา` link, start FEFO preparation, open the current 80 × 100 mm label and record a print request, then confirm every allocated item by barcode (or provide a reason for manual confirmation). Complete preparation.
-6. In Browser B, open the same `จัดยา` link and either release it or reject it with a reason. After release, Browser A confirms handoff; the Visit becomes `รอคิดเงิน` and inventory stock movements record the exact allocated lots. A rejected preparation returns to `รอจัดยา`; start it again and record a new label print request before release.
-7. In Browser B, open `ชำระเงิน` for the Visit and confirm the immutable integer-Baht Charge. Browser A may record only the displayed Cash amount. Browser B may confirm PromptPay with a synthetic reference or approve a reasoned full waiver; exactly one collection resolution is allowed.
-8. In Browser B, close the resolved Visit and open its OPD Card. The A4 card is Doctor-only and prints without application chrome. The closed Visit disappears from the active Queue; Browser A cannot open the OPD URL or its API data.
+Run the executable [Thai Journey guide](../docs/uat/careflow-pre-pilot/guide-th.md) with its [result checklist](../docs/uat/careflow-pre-pilot/checklist.md) and [local administrator runbook](../docs/uat/careflow-pre-pilot/admin-runbook.md). It uses separate Assistant and Doctor browser contexts and the current visible labels: select `ไม่แพ้` or `แพ้` at Intake, use `เปิดฉลากยา`, press Enter after every barcode, verify role ownership while the action exists, and stop the entire UAT for the stated safety events.
 
 The browser is not an authority for Patient or Visit state; the server database is. Never enter real clinical prose, real medication directions, or real Patient identity in this rehearsal.
 
@@ -76,7 +96,13 @@ npx playwright install chromium       # once per machine/CI image
 npm run test:e2e
 ```
 
-The E2E fixture creates a temporary synthetic-only SQLite file and two isolated browser contexts; it never reads credentials from `.env`.
+The E2E fixture creates a temporary synthetic-only SQLite file and two isolated browser contexts; it never reads local sign-in material from `.env`.
+
+## Pre-pilot UAT
+
+- [Thai tester guide](../docs/uat/careflow-pre-pilot/guide-th.md)
+- [Result checklist](../docs/uat/careflow-pre-pilot/checklist.md)
+- [Administrator runbook](../docs/uat/careflow-pre-pilot/admin-runbook.md)
 
 ## Milestone 4 and explicit limits
 

@@ -40,6 +40,13 @@ export interface FinancePricing {
 
 export interface FinanceService {
   getCheckout(actor: Actor, visitId: string): CheckoutDto;
+  /** Minimal financial progress for the Journey read model; intentionally omits amounts, identities, and hashes. */
+  getJourneyEvidence(actor: Actor, visitId: string): {
+    collectionState: CheckoutDto["collectionState"];
+    allowedActions: CheckoutDto["allowedActions"];
+    hasCharge: boolean;
+    resolutionKind: "PAYMENT" | "COLLECTION_NOT_REQUIRED" | "PENDING_COLLECTION" | null;
+  };
   finalizeCharge(
     tx: AppTransaction,
     actor: Actor,
@@ -360,6 +367,31 @@ function readCheckoutContext(tx: FinanceReadTransaction, visitId: string): Check
       closedAt: row.closedAt,
     },
   };
+}
+
+/**
+ * Journey must be readable throughout the Visit lifecycle.  Keep this
+ * deliberately narrower than Checkout context: it does not join Patient and
+ * it does not apply the Checkout-only readiness gate.
+ */
+function readJourneyVisit(
+  tx: FinanceReadTransaction,
+  visitId: string,
+): CheckoutDto["visit"] {
+  const row = tx
+    .select({
+      id: visits.id,
+      status: visits.status,
+      revision: visits.revision,
+      arrivedAt: visits.arrivedAt,
+      startedAt: visits.startedAt,
+      closedAt: visits.closedAt,
+    })
+    .from(visits)
+    .where(eq(visits.id, visitId))
+    .get();
+  if (!row) throw new ApiError({ code: "NOT_FOUND", messageTh: "ไม่พบ Visit ที่ร้องขอ" });
+  return row as CheckoutDto["visit"];
 }
 
 function readPricingRevision(tx: FinanceReadTransaction, clinicId: string): number {
@@ -985,6 +1017,32 @@ export function createFinanceService(input: FinanceServiceOptions): FinanceServi
     getCheckout(actor, visitId) {
       requirePermission(actor, "finance:read");
       return getCheckoutFromTransaction(actor, input.database.db, visitId);
+    },
+
+    getJourneyEvidence(actor, visitId) {
+      const visit = readJourneyVisit(input.database.db, visitId);
+      // Journey is a read-only projection, but it must not turn malformed immutable evidence
+      // into an apparently terminal action. Reuse the same hash/line/resolution validation as
+      // Checkout and let its safe, opaque error be mapped to a Journey blocker by the caller.
+      const evidence = readChargeEvidence(input.database.db, { visitId });
+      if (!evidence) {
+        return {
+          collectionState: "PENDING_CHARGE",
+          allowedActions: allowedActions(actor, visit, undefined),
+          hasCharge: false,
+          resolutionKind: null,
+        };
+      }
+      return {
+        collectionState: collectionState(visit, evidence),
+        allowedActions: allowedActions(actor, visit, evidence),
+        hasCharge: true,
+        resolutionKind: evidence.adjustment
+          ? "COLLECTION_NOT_REQUIRED"
+          : evidence.payment
+            ? "PAYMENT"
+            : "PENDING_COLLECTION",
+      };
     },
 
     finalizeCharge(tx, actor, visitId, command) {

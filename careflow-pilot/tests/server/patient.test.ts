@@ -170,6 +170,44 @@ describe("synthetic patient registry", () => {
     expect((await createSynthetic(doctor.app, doctor.cookie, "patient-doctor-001")).statusCode).toBe(201);
   });
 
+  it("returns a strict Patient Allergy context only after the patient:read permission check", async () => {
+    const fixture = await authenticatedPatientApp();
+    const created = await createSynthetic(fixture.app, fixture.cookie, "patient-allergy-context-001");
+    const patientId = created.json().data.id as string;
+
+    const anonymous = await fixture.app.inject({
+      method: "GET",
+      url: `/api/patients/${patientId}/allergy-assessment`,
+    });
+    const authorized = await fixture.app.inject({
+      method: "GET",
+      url: `/api/patients/${patientId}/allergy-assessment`,
+      headers: { cookie: fixture.cookie },
+    });
+    const missing = await fixture.app.inject({
+      method: "GET",
+      url: "/api/patients/not-a-patient/allergy-assessment",
+      headers: { cookie: fixture.cookie },
+    });
+
+    expect(anonymous.statusCode).toBe(401);
+    expect(authorized.statusCode).toBe(200);
+    expect(authorized.json().data).toMatchObject({
+      patient: { id: patientId, revision: 1 },
+      allergy: {
+        id: null,
+        revision: 0,
+        state: "UNKNOWN",
+        items: [],
+        sourceText: null,
+        reason: null,
+        reviewedBy: null,
+        reviewedAt: null,
+      },
+    });
+    expect(missing.statusCode).toBe(404);
+  });
+
   it("searches HN, Thai name, and phone without treating wildcards as SQL wildcards", async () => {
     const fixture = await authenticatedPatientApp();
     const created = await createSynthetic(fixture.app, fixture.cookie);

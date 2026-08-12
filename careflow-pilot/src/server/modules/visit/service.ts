@@ -4,7 +4,7 @@ import { visitStatusSchema } from "../../../shared/contracts.js";
 import type {
   Actor,
   IntakePayload,
-  QueueItemDto,
+  QueueBaseItemDto,
   ReviewAllergyBody,
   StartConsultationBody,
   SubmitIntakeBody,
@@ -16,6 +16,7 @@ import type {
 import type { PatientDto } from "../../../shared/contracts.js";
 import type { DatabaseHandle } from "../../db/client.js";
 import { ApiError } from "../../errors.js";
+import type { IntakeWriteStage } from "../patient/index.js";
 import {
   appendAuditEvent,
   assertExpectedRevision,
@@ -33,6 +34,19 @@ export interface VisitPatientReader {
   getPatientsByIds(ids: readonly string[]): Map<string, PatientDto>;
   getAllergyAssessment(id: string): AllergyAssessmentDto;
   getAllergyAssessments(ids: readonly string[]): Map<string, AllergyAssessmentDto>;
+  recordIntakeAllergy(
+    tx: AuditedTransaction,
+    actor: Actor,
+    input: {
+      patientId: string;
+      visitId: string;
+      expectedPatientRevision: number;
+      answer: SubmitIntakeBody["payload"]["allergy"];
+      occurredAt: string;
+      afterWrite?: (stage: IntakeWriteStage) => void;
+    },
+  ): { patient: PatientDto; allergy: AllergyAssessmentDto };
+  assertResolvedAllergy(tx: AppTransaction, patientId: string): AllergyAssessmentDto;
 }
 
 export interface VisitServiceOptions {
@@ -41,23 +55,26 @@ export interface VisitServiceOptions {
   clock?: () => Date;
   idFactory?: () => string;
   appendAudit?: (input: AuditEventInput) => void;
+  intakeFailureInjector?: (stage: IntakeWriteStage) => void;
 }
 
 export interface VisitService {
-  submitIntake(tx: AuditedTransaction, actor: Actor, body: SubmitIntakeBody): QueueItemDto;
-  listQueue(actor: Actor): QueueItemDto[];
+  submitIntake(tx: AuditedTransaction, actor: Actor, body: SubmitIntakeBody): QueueBaseItemDto;
+  listQueue(actor: Actor): QueueBaseItemDto[];
   getDashboardToday(): {
     waiting: number; consulting: number; awaitingOrderRevision: number;
     awaitingPreparation: number; preparing: number; awaitingRelease: number; awaitingHandoff: number; awaitingCharge: number; awaitingPayment: number; readyToClose: number; updatedAt: string;
   };
   getVisitSummary(visitId: string): VisitSummaryDto | null;
+  /** Minimal non-clinical Visit identity for the Journey read model. */
+  getJourneyVisit(visitId: string): { visit: VisitSummaryDto; patientId: string } | null;
   getWorkspaceBase(visitId: string): VisitWorkspaceBaseDto;
   startConsultation(
     tx: AuditedTransaction,
     actor: Actor,
     visitId: string,
     body: StartConsultationBody,
-  ): QueueItemDto;
+  ): QueueBaseItemDto;
   assertAllergyReviewVisit(
     tx: AuditedTransaction,
     actor: Actor,
@@ -135,7 +152,7 @@ function toVitals(row: IntakeRow): IntakePayload["vitals"] {
   };
 }
 
-function toQueuePatient(patient: PatientDto): QueueItemDto["patient"] {
+function toQueuePatient(patient: PatientDto): QueueBaseItemDto["patient"] {
   return {
     id: patient.id,
     hn: patient.hn,
@@ -146,7 +163,7 @@ function toQueuePatient(patient: PatientDto): QueueItemDto["patient"] {
   };
 }
 
-function allowedActions(actor: Actor, status: string): QueueItemDto["allowedActions"] {
+function allowedActions(actor: Actor, status: string): QueueBaseItemDto["allowedActions"] {
   if (status === "WAITING") return actor.role === "doctor"
     ? ["START_CONSULTATION", "REVIEW_ALLERGY"] : ["REVIEW_ALLERGY"];
   return actor.role === "doctor" && isClinicalWorkspaceStatus(status) ? ["OPEN_CONSULTATION"] : [];
@@ -158,7 +175,7 @@ function toQueueItem(
   patient: PatientDto,
   allergy: AllergyAssessmentDto,
   actor: Actor,
-): QueueItemDto {
+): QueueBaseItemDto {
   if (!isActiveQueueStatus(visit.status)) throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่รองรับคิวนี้" });
   return {
     visit: {
@@ -222,14 +239,10 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
   const clock = input.clock ?? (() => new Date());
   const idFactory = input.idFactory ?? randomUUID;
   const writeAudit = input.appendAudit ?? appendAuditEvent;
+  const afterIntakeWrite = input.intakeFailureInjector;
 
   const service: VisitService = {
     submitIntake(tx, actor, body) {
-      const patient = input.patients.assertPatientRevision(
-        tx,
-        body.payload.patientId,
-        body.expectedRevisions.patient,
-      );
       const existing = tx
         .select({ id: visits.id })
         .from(visits)
@@ -262,6 +275,7 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
             createdBy: actor.id,
           })
           .run();
+        afterIntakeWrite?.("AFTER_VISIT_INSERT");
       } catch (error) {
         if (isActiveVisitUniqueViolation(error)) throw activeVisitExists();
         throw error;
@@ -282,6 +296,19 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
           recordedAt: now,
         })
         .run();
+      afterIntakeWrite?.("AFTER_OBSERVATION_INSERT");
+
+      const allergyContext = input.patients.recordIntakeAllergy(tx, actor, {
+        patientId: payload.patientId,
+        visitId,
+        expectedPatientRevision: body.expectedRevisions.patient,
+        answer: payload.allergy,
+        occurredAt: now,
+        afterWrite: afterIntakeWrite,
+      });
+      if (!allergyContext.allergy.id) {
+        throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "บันทึกข้อมูลแพ้ไม่สำเร็จ" });
+      }
 
       writeAudit({
         tx,
@@ -293,8 +320,14 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
         entityRevision: 1,
         reason: null,
         occurredAt: now,
-        metadata: { patientId: payload.patientId, observationId },
+        metadata: {
+          patientId: payload.patientId,
+          observationId,
+          allergyRevisionId: allergyContext.allergy.id,
+          allergyState: allergyContext.allergy.state,
+        },
       });
+      afterIntakeWrite?.("AFTER_INTAKE_AUDIT");
 
       const visit = tx.select().from(visits).where(eq(visits.id, visitId)).get();
       if (!visit) throw new ApiError({ code: "INTERNAL_ERROR", messageTh: "สร้าง Visit ไม่สำเร็จ" });
@@ -311,7 +344,7 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
         recordedBy: actor.id,
         recordedAt: now,
       };
-      return toQueueItem(visit, observation, patient, input.patients.getAllergyAssessment(patient.id), actor);
+      return toQueueItem(visit, observation, allergyContext.patient, allergyContext.allergy, actor);
     },
 
     listQueue(actor) {
@@ -371,6 +404,23 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
         revision: visit.revision,
         arrivedAt: visit.arrivedAt,
         startedAt: visit.startedAt,
+      };
+    },
+
+    getJourneyVisit(visitId) {
+      const visit = input.database.db.select().from(visits)
+        .where(and(eq(visits.id, visitId), eq(visits.clinicId, "clinic")))
+        .get();
+      if (!visit) return null;
+      return {
+        visit: {
+          id: visit.id,
+          status: visitStatusSchema.parse(visit.status),
+          revision: visit.revision,
+          arrivedAt: visit.arrivedAt,
+          startedAt: visit.startedAt,
+        },
+        patientId: visit.patientId,
       };
     },
 
@@ -478,7 +528,7 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
       const allowed = visit.status === "WAITING" || (
         actor.role === "doctor" && (
           visit.status === "CONSULTING" || visit.status === "AWAITING_PREPARATION" || visit.status === "PREPARING" ||
-          visit.status === "AWAITING_RELEASE" || visit.status === "AWAITING_HANDOFF"
+          visit.status === "AWAITING_RELEASE" || visit.status === "AWAITING_HANDOFF" || visit.status === "AWAITING_ORDER_REVISION"
         )
       );
       if (!allowed) {
@@ -527,6 +577,7 @@ export function createVisitService(input: VisitServiceOptions): VisitService {
         throw new ApiError({ code: "INVALID_STATE", messageTh: "สถานะ Visit ไม่อนุญาตให้ลงนามการตรวจ" });
       }
       input.patients.assertPatientRevision(tx, visit.patientId, expectedPatientRevision);
+      input.patients.assertResolvedAllergy(tx, visit.patientId);
       return {
         id: visit.id,
         status: visitStatusSchema.parse(visit.status),

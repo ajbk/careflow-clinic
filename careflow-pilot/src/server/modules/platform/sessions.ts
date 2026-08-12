@@ -8,6 +8,22 @@ import { clinicConfig, sessions } from "./schema.js";
 export const SESSION_COOKIE_NAME = "careflow_session";
 export const SESSION_MAX_AGE_SECONDS = 28_800;
 
+// Retain only the hashed identity long enough for concurrent browser requests
+// to receive the same expiry truth after the database row is consumed.
+const EXPIRED_SESSION_MARKER_RETENTION_MS = 60_000;
+export const MAX_EXPIRED_SESSION_MARKERS = 256;
+
+export function sweepExpiredSessionMarkers(markers: Map<string, number>, nowMilliseconds: number): void {
+  for (const [tokenHash, retainedUntil] of markers) {
+    if (retainedUntil <= nowMilliseconds) markers.delete(tokenHash);
+  }
+  while (markers.size > MAX_EXPIRED_SESSION_MARKERS) {
+    const oldestTokenHash = markers.keys().next().value;
+    if (oldestTokenHash === undefined) return;
+    markers.delete(oldestTokenHash);
+  }
+}
+
 export interface AuthenticatedSession {
   actor: Actor;
   account: {
@@ -28,6 +44,7 @@ export interface SessionService {
     staffId: string,
     now: Date,
   ): { token: string; tokenHash: string };
+  isExpired(token: string | undefined, now: Date): boolean;
   authenticate(token: string | undefined, now: Date): AuthenticatedSession | undefined;
   revoke(token: string | undefined): void;
   revokeAll(staffId: string): void;
@@ -49,6 +66,20 @@ export function createSessionService(input: {
   if (!clinic) throw new Error("Clinic configuration unavailable");
 
   const hashToken = (token: string): string => createHash("sha256").update(token).digest("hex");
+  const expiredTokenMarkers = new Map<string, number>();
+  const sweepExpiredTokenMarkers = (now: Date): void => {
+    sweepExpiredSessionMarkers(expiredTokenMarkers, now.getTime());
+  };
+  const isMarkedExpired = (tokenHash: string, now: Date): boolean => {
+    sweepExpiredTokenMarkers(now);
+    return expiredTokenMarkers.has(tokenHash);
+  };
+  const markExpired = (tokenHash: string, now: Date): void => {
+    sweepExpiredTokenMarkers(now);
+    expiredTokenMarkers.delete(tokenHash);
+    expiredTokenMarkers.set(tokenHash, now.getTime() + EXPIRED_SESSION_MARKER_RETENTION_MS);
+    sweepExpiredTokenMarkers(now);
+  };
   const values = (staffId: string, now: Date) => {
     const token = tokenFactory();
     if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error("Invalid session token factory output");
@@ -67,18 +98,42 @@ export function createSessionService(input: {
 
   const service: SessionService = {
     issue(staffId, now) {
+      sweepExpiredTokenMarkers(now);
       const generated = values(staffId, now);
       input.database.db.insert(sessions).values(generated.row).run();
       return { token: generated.token, tokenHash: generated.row.tokenHash };
     },
     issueInTransaction(tx, staffId, now) {
+      sweepExpiredTokenMarkers(now);
       const generated = values(staffId, now);
       tx.insert(sessions).values(generated.row).run();
       return { token: generated.token, tokenHash: generated.row.tokenHash };
     },
+    isExpired(token, now) {
+      if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) return false;
+      const tokenHash = hashToken(token);
+      if (isMarkedExpired(tokenHash, now)) return true;
+      const row = input.database.sqlite
+        .prepare(
+          `SELECT s.created_at, s.last_seen_at, s.expires_at, a.active
+             FROM sessions s JOIN staff_accounts a ON a.id = s.staff_id
+            WHERE s.token_hash = ?`,
+        )
+        .get(tokenHash) as
+        | { created_at: string; last_seen_at: string; expires_at: string; active: number }
+        | undefined;
+      if (!row || row.active !== 1) return false;
+      const idleBoundary = Date.parse(row.last_seen_at) + idleMilliseconds;
+      const absoluteBoundary = Math.min(
+        Date.parse(row.expires_at),
+        Date.parse(row.created_at) + absoluteMilliseconds,
+      );
+      return now.getTime() >= idleBoundary || now.getTime() >= absoluteBoundary;
+    },
     authenticate(token, now) {
       if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) return undefined;
       const tokenHash = hashToken(token);
+      if (isMarkedExpired(tokenHash, now)) return undefined;
       const row = input.database.sqlite
         .prepare(
           `SELECT s.token_hash, s.created_at, s.last_seen_at, s.expires_at,
@@ -114,6 +169,7 @@ export function createSessionService(input: {
       );
       if (now.getTime() >= idleBoundary || now.getTime() >= absoluteBoundary) {
         input.database.db.delete(sessions).where(eq(sessions.tokenHash, tokenHash)).run();
+        markExpired(tokenHash, now);
         return undefined;
       }
       return {
@@ -131,12 +187,15 @@ export function createSessionService(input: {
     },
     revoke(token) {
       if (!token) return;
-      input.database.db.delete(sessions).where(eq(sessions.tokenHash, hashToken(token))).run();
+      const tokenHash = hashToken(token);
+      expiredTokenMarkers.delete(tokenHash);
+      input.database.db.delete(sessions).where(eq(sessions.tokenHash, tokenHash)).run();
     },
     revokeAll(staffId) {
       input.database.db.delete(sessions).where(eq(sessions.staffId, staffId)).run();
     },
     touch(session, now, force = false) {
+      sweepExpiredTokenMarkers(now);
       if (!force && now.getTime() - Date.parse(session.lastSeenAt) < 60_000) return;
       input.database.db
         .update(sessions)

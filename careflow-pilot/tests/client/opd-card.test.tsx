@@ -52,6 +52,17 @@ const card = {
   },
 };
 
+const opdJourney = {
+  visit: { id: "visit-42", status: "CLOSED", revision: 10 }, refreshedAt: NOW,
+  steps: [
+    { code: "INTAKE", labelTh: "รับผู้ป่วย", state: "COMPLETE" }, { code: "SCREENING", labelTh: "คัดกรอง", state: "COMPLETE" },
+    { code: "CONSULTATION", labelTh: "ตรวจรักษา", state: "COMPLETE" }, { code: "MEDICATION_DECISION", labelTh: "ตัดสินใจเรื่องยา", state: "COMPLETE" },
+    { code: "PREPARATION", labelTh: "เตรียมยา", state: "COMPLETE" }, { code: "HANDOFF", labelTh: "ส่งมอบยา", state: "COMPLETE" },
+    { code: "PAYMENT", labelTh: "ชำระเงิน", state: "COMPLETE" }, { code: "CLOSURE", labelTh: "ปิด Visit", state: "COMPLETE" },
+  ],
+  nextTask: { action: "OPEN_OPD_CARD", labelTh: "เปิดบัตร OPD", primaryRole: "doctor", permittedRoles: ["doctor"], availability: "AVAILABLE" }, blockers: [], allowedActions: ["OPEN_OPD_CARD"],
+};
+
 function session(role: "assistant" | "doctor", permissions: string[]) {
   return {
     data: {
@@ -66,7 +77,7 @@ function session(role: "assistant" | "doctor", permissions: string[]) {
 }
 
 function renderOpd(role: "assistant" | "doctor", permissions: string[]) {
-  server.use(http.get("/api/auth/session", () => HttpResponse.json(session(role, permissions))));
+  server.use(http.get("/api/auth/session", () => HttpResponse.json(session(role, permissions))), http.get("/api/visits/:visitId/journey", ({ params }) => HttpResponse.json({ data: { ...opdJourney, visit: { ...opdJourney.visit, id: String(params.visitId) } } })));
   const router = createMemoryRouter(appRoutes, { initialEntries: ["/visits/visit-42/opd-card"] });
   render(<AppProviders><RouterProvider router={router} /></AppProviders>);
   return router;
@@ -84,6 +95,30 @@ afterEach(() => {
 afterAll(() => server.close());
 
 describe("Doctor-only A4 OPD Card", () => {
+  it("reads Journey authority alongside signed OPD evidence", async () => {
+    renderOpd("doctor", ["opd:read", "finance:read", "visit:close"]);
+    expect(await screen.findByRole("navigation", { name: "เส้นทางผู้ป่วย" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "เปิดบัตร OPD" })).toBeInTheDocument();
+  });
+
+  it("keeps all completed closed-Journey steps accessible at the mobile viewport and marks Closure current", async () => {
+    // Break caught: the real closed Journey projection has no visual CURRENT state, so the ribbon needs one semantic current step without changing completion styling.
+    const initialWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
+    try {
+      renderOpd("doctor", ["opd:read", "finance:read", "visit:close"]);
+      const navigation = await screen.findByRole("navigation", { name: "เส้นทางผู้ป่วย" });
+      const items = navigation.querySelectorAll("li");
+      const closure = navigation.querySelector(".visit-journey-ribbon-step:last-child");
+      expect(items).toHaveLength(8);
+      expect(navigation.querySelectorAll("li[aria-current='step']")).toHaveLength(1);
+      expect(closure).toHaveAttribute("aria-current", "step");
+      expect(closure).toHaveClass("is-complete");
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: initialWidth });
+    }
+  });
+
   it("renders a structured Thai synthetic OPD Card and only prints the document area", async () => {
     const user = userEvent.setup();
     const print = vi.spyOn(window, "print").mockImplementation(() => undefined);

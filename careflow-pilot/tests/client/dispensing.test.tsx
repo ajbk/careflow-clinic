@@ -10,6 +10,24 @@ import { appRoutes } from "../../src/client/app/router";
 
 const patient = { id: "patient-42", hn: "DEMO-000042", displayName: "ผู้ป่วยสังเคราะห์ 000042", phone: "0000000042", birthDate: "1990-01-01", sex: "unknown" as const, revision: 3, createdAt: "2026-08-03T00:00:00.000Z" };
 const visit = { id: "visit-42", status: "AWAITING_PREPARATION" as const, revision: 9, arrivedAt: "2026-08-03T01:00:00.000Z", startedAt: "2026-08-03T01:15:00.000Z" };
+const dispensingJourney = {
+  visit: { id: visit.id, status: visit.status, revision: visit.revision }, refreshedAt: "2026-08-03T01:20:00.000Z",
+  steps: [
+    { code: "INTAKE", labelTh: "รับผู้ป่วย", state: "COMPLETE" }, { code: "SCREENING", labelTh: "คัดกรอง", state: "COMPLETE" },
+    { code: "CONSULTATION", labelTh: "ตรวจรักษา", state: "COMPLETE" }, { code: "MEDICATION_DECISION", labelTh: "ตัดสินใจเรื่องยา", state: "COMPLETE" },
+    { code: "PREPARATION", labelTh: "เตรียมยา", state: "CURRENT" }, { code: "HANDOFF", labelTh: "ส่งมอบยา", state: "UPCOMING" },
+    { code: "PAYMENT", labelTh: "ชำระเงิน", state: "UPCOMING" }, { code: "CLOSURE", labelTh: "ปิด Visit", state: "UPCOMING" },
+  ],
+  nextTask: { action: "START_PREPARATION", labelTh: "เริ่มเตรียมยา", primaryRole: "assistant", permittedRoles: ["assistant"], availability: "AVAILABLE" }, blockers: [], allowedActions: ["START_PREPARATION"],
+};
+function journeyActionsForPermissions(permissions: readonly string[]) {
+  const actions: string[] = [];
+  if (permissions.includes("fulfillment:prepare")) actions.push("START_PREPARATION", "CONFIRM_ALLOCATION", "COMPLETE_PREPARATION");
+  if (permissions.includes("label:print")) actions.push("PRINT_LABEL");
+  if (permissions.includes("fulfillment:release")) actions.push("RELEASE_MEDICATION");
+  if (permissions.includes("fulfillment:handoff")) actions.push("HANDOFF_MEDICATION");
+  return actions;
+}
 const label = {
   id: "label-1", medicationDecisionId: "decision-1", medicationDecisionVersion: 1, version: 1,
   clinicNameSnapshot: "คลินิกฉลากสแนปช็อต", patientHnSnapshot: "HN-LABEL-000042", patientDisplayNameSnapshot: "ผู้ป่วยบนฉลาก 000042",
@@ -29,8 +47,13 @@ function session(role: "assistant" | "doctor" = "assistant", permissions = ["ful
 }
 
 const server = setupServer();
-function renderDispensing(path = "/dispensing/visit-42", role: "assistant" | "doctor" = "assistant", permissions = ["fulfillment:read", "fulfillment:prepare", "label:print"]) {
-  server.use(http.get("/api/auth/session", () => HttpResponse.json(session(role, permissions))));
+function renderDispensing(
+  path = "/dispensing/visit-42",
+  role: "assistant" | "doctor" = "assistant",
+  permissions = ["fulfillment:read", "fulfillment:prepare", "label:print"],
+  journeyResponse: (visitId: string) => unknown = (visitId) => ({ ...dispensingJourney, visit: { ...dispensingJourney.visit, id: visitId }, allowedActions: journeyActionsForPermissions(permissions) }),
+) {
+  server.use(http.get("/api/auth/session", () => HttpResponse.json(session(role, permissions))), http.get("/api/visits/:visitId/journey", ({ params }) => HttpResponse.json({ data: journeyResponse(String(params.visitId)) })));
   const router = createMemoryRouter(appRoutes, { initialEntries: [path] });
   render(<AppProviders><RouterProvider router={router} /></AppProviders>);
   return router;
@@ -42,11 +65,70 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); server.resetHandlers(); });
 afterAll(() => server.close());
 
 describe("Preparation and label workflow", () => {
+  it("reads Journey authority alongside the Pick List", async () => {
+    renderDispensing();
+    expect(await screen.findByRole("navigation", { name: "เส้นทางผู้ป่วย" })).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { name: "เริ่มเตรียมยา" }).length).toBeGreaterThan(0);
+  });
+
   it("shows the signed current label and only offers Start Preparation when allowed", async () => {
     renderDispensing();
     expect(await screen.findByText("Label v1")).toBeInTheDocument();
     expect(screen.getByText("PARA-500")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "เริ่มเตรียมยา" })).toBeInTheDocument();
+  });
+
+  it("uses Journey preparation authority when a legacy Pick List action list is stale", async () => {
+    // Break caught: legacy Pick List actions must not suppress a semantic action that the current Journey authorizes.
+    currentPickList = { ...basePickList, allowedActions: [] };
+    renderDispensing();
+
+    expect(await screen.findByRole("button", { name: "เริ่มเตรียมยา" })).toBeEnabled();
+  });
+
+  it("uses Journey print authority when a legacy Pick List action list is stale", async () => {
+    // Break caught: the immutable label may stay printable when the legacy screen projection is stale.
+    currentPickList = { ...basePickList, allowedActions: [] };
+    renderDispensing("/dispensing/visit-42/labels");
+
+    expect(await screen.findByRole("button", { name: "บันทึกคำขอพิมพ์และเปิดหน้าต่างพิมพ์" })).toBeEnabled();
+  });
+
+  it("keeps a reservation-not-sellable failure visible, refreshes Journey once, and never retries the reservation", async () => {
+    // Break caught: automatically replaying a stale reservation can reserve a different stock state after another operator has changed availability.
+    const user = userEvent.setup();
+    let reservationRequests = 0;
+    let journeyReads = 0;
+    renderDispensing(
+      "/dispensing/visit-42",
+      "assistant",
+      ["fulfillment:read", "fulfillment:prepare"],
+      () => {
+        journeyReads += 1;
+        return journeyReads === 1
+          ? { ...dispensingJourney, allowedActions: ["START_PREPARATION"] }
+          : {
+              ...dispensingJourney,
+              nextTask: { action: "RECEIVE_STOCK", labelTh: "รับยาเข้าคลัง", primaryRole: "assistant", permittedRoles: ["assistant"], availability: "BLOCKED" },
+              blockers: [{
+                code: "STOCK_SHORTAGE", titleTh: "จัดยายังไม่ได้", detailTh: "จำนวนยาพร้อมใช้ไม่เพียงพอ", primaryRole: "assistant", recoveryAction: "RECEIVE_STOCK",
+                medication: { medicationId: "DEMO-MED-001", displayNameSnapshot: "พาราเซตามอล", required: 10, available: 0, shortfall: 10, unitSnapshot: "เม็ด" },
+              }],
+              allowedActions: ["RECEIVE_STOCK"],
+            };
+      },
+    );
+    server.use(http.post("/api/dispensing/visit-42/reservations", () => {
+      reservationRequests += 1;
+      return HttpResponse.json({ error: { code: "RESERVATION_NOT_SELLABLE", messageTh: "ยาในคลังไม่พร้อมสำหรับกันสต็อก", requestId: "reserve-race" } }, { status: 409 });
+    }));
+
+    await user.click(await screen.findByRole("button", { name: "เริ่มเตรียมยา" }));
+    expect((await screen.findAllByRole("alert")).some((alert) => alert.textContent?.includes("ยาในคลังไม่พร้อมสำหรับกันสต็อก"))).toBe(true);
+    await waitFor(() => expect(journeyReads).toBe(2));
+    expect(await screen.findByRole("link", { name: "รับยาเข้าคลัง" })).toHaveAttribute("href", "/inventory/receive?medicationId=DEMO-MED-001&returnTo=%2Fdispensing%2Fvisit-42");
+    await new Promise((resolve) => window.setTimeout(resolve, 40));
+    expect(reservationRequests).toBe(1);
   });
 
   it("renders immutable snapshot fields from the current-label endpoint and one medicine per print page", async () => {
@@ -200,22 +282,45 @@ describe("Preparation and label workflow", () => {
     expect(await screen.findByRole("button", { name: "ปล่อยยา" })).toBeEnabled();
   });
 
-  it("pins every reviewed artifact and preserves a Doctor rejection reason in the client command", async () => {
+  it("does not expose an unsupported rejection control from a legacy Pick List", async () => {
+    // Break caught: RELEASE_MEDICATION authority must not be repurposed to authorize the distinct rejection mutation.
+    server.resetHandlers(
+      http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: releasePickList })),
+    );
+    renderDispensing(
+      "/dispensing/visit-42",
+      "doctor",
+      ["fulfillment:read", "fulfillment:release"],
+      (visitId) => ({ ...dispensingJourney, visit: { ...dispensingJourney.visit, id: visitId, status: "AWAITING_RELEASE" }, allowedActions: ["RELEASE_MEDICATION"] }),
+    );
+    expect(await screen.findByRole("button", { name: "ปล่อยยา" })).toBeEnabled();
+    expect(screen.queryByLabelText("เหตุผลการปฏิเสธ")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "ปฏิเสธการจัดยา" })).not.toBeInTheDocument();
+  });
+
+  it("restores the exact Doctor rejection recovery command rather than inferring it from release", async () => {
     const user = userEvent.setup();
-    let body: { payload?: Record<string, unknown> } | undefined;
+    let body: unknown;
     server.resetHandlers(
       http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: releasePickList })),
       http.post("/api/dispensing/visit-42/reject", async ({ request }) => {
-        body = await request.json() as { payload?: Record<string, unknown> };
+        body = await request.json();
         return HttpResponse.json({ data: { ...basePickList, visit: { ...visit, status: "AWAITING_PREPARATION" as const, revision: 12 }, allowedActions: ["START_PREPARATION"] }, replayed: false }, { status: 201 });
       }),
     );
-    renderDispensing("/dispensing/visit-42", "doctor", ["fulfillment:read", "fulfillment:release"]);
-    await user.type(await screen.findByLabelText("เหตุผลการปฏิเสธ"), "  ฉลากไม่ตรง  ");
+    renderDispensing(
+      "/dispensing/visit-42",
+      "doctor",
+      ["fulfillment:read", "fulfillment:release"],
+      (visitId) => ({ ...dispensingJourney, visit: { ...dispensingJourney.visit, id: visitId, status: "AWAITING_RELEASE" }, allowedActions: ["RELEASE_MEDICATION", "REJECT_PREPARATION"] }),
+    );
+    const reason = await screen.findByLabelText("เหตุผลการปฏิเสธ");
+    await user.type(reason, "พบความคลาดเคลื่อนในการตรวจปล่อย");
     await user.click(screen.getByRole("button", { name: "ปฏิเสธการจัดยา" }));
-    await waitFor(() => expect(body).toEqual(expect.objectContaining({ payload: {
-      decisionId: "decision-1", decisionVersion: 1, labelVersionId: "label-1", labelPrintEventId: "print-1", preparationId: "preparation-1", reservationId: "reservation-1", reason: "ฉลากไม่ตรง",
-    } })));
+    await waitFor(() => expect(body).toMatchObject({
+      expectedRevisions: { visit: 11, preparation: 2 },
+      payload: { preparationId: "preparation-1", reservationId: "reservation-1", reason: "พบความคลาดเคลื่อนในการตรวจปล่อย" },
+    }));
   });
 
   it("allows Assistant and Doctor handoff but sends one exact command while the first submit is pending", async () => {
@@ -243,7 +348,7 @@ describe("Preparation and label workflow", () => {
     } }));
     resolveRequest(new Response(JSON.stringify({ data: { ...handoffPickList, visit: { ...handoffPickList.visit, status: "AWAITING_CHARGE" as const, revision: 13 }, release: handoffPickList.release, dispense: { id: "dispense-1", reservationId: "reservation-1", lines: [{ allocationId: "allocation-1", orderItemId: "item-1", lotId: "lot-early", quantity: 10 }] }, allowedActions: [] }, replayed: false }), { status: 201, headers: { "Content-Type": "application/json" } }));
     await waitFor(() => expect(screen.getByText("จัดยาและส่งมอบแล้ว")).toBeInTheDocument());
-    expect(screen.getByRole("link", { name: "ไปหน้าชำระเงิน" })).toHaveAttribute("href", "/checkout/visit-42");
+    expect(screen.queryByRole("link", { name: "ไปหน้าชำระเงิน" })).not.toBeInTheDocument();
   });
 
   it("hides preparation commands when the Assistant has only read permission", async () => {
@@ -365,15 +470,43 @@ describe("Preparation and label workflow", () => {
     expect(reason).toHaveValue("ฉลากชำรุด");
   });
 
-  it("does not complete an incomplete preparation and abandons only with a reason", async () => {
-    const user = userEvent.setup(); let abandoned = false;
-    server.resetHandlers(http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: preparingPickList })), http.post("/api/dispensing/visit-42/reservation-release", () => { abandoned = true; return HttpResponse.json({ data: basePickList, replayed: false }, { status: 201 }); }));
-    renderDispensing();
-    await user.click(await screen.findByRole("button", { name: "เสร็จสิ้นการเตรียมยา" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("ยืนยันรายการจัดยาไม่ครบ");
-    await user.type(screen.getByLabelText("เหตุผลการยกเลิกการเตรียมยา"), "พบยาไม่ครบ");
+  it("does not expose an unsupported abandonment control from a legacy Pick List", async () => {
+    // Break caught: CONFIRM_ALLOCATION or COMPLETE_PREPARATION authority must not be repurposed to authorize reservation abandonment.
+    server.resetHandlers(http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: preparingPickList })));
+    renderDispensing(
+      "/dispensing/visit-42",
+      "assistant",
+      ["fulfillment:read", "fulfillment:prepare", "label:print"],
+      (visitId) => ({ ...dispensingJourney, visit: { ...dispensingJourney.visit, id: visitId, status: "PREPARING" }, allowedActions: ["CONFIRM_ALLOCATION", "COMPLETE_PREPARATION"] }),
+    );
+    expect(await screen.findByLabelText("สแกนบาร์โค้ดยา")).toBeInTheDocument();
+    expect(screen.queryByLabelText("เหตุผลการยกเลิกการเตรียมยา")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "ยกเลิกการเตรียมยา" })).not.toBeInTheDocument();
+  });
+
+  it("restores the exact supervised preparation-abandon recovery command through visible UI", async () => {
+    const user = userEvent.setup();
+    let body: unknown;
+    server.resetHandlers(
+      http.get("/api/dispensing/visit-42", () => HttpResponse.json({ data: preparingPickList })),
+      http.post("/api/dispensing/visit-42/reservation-release", async ({ request }) => {
+        body = await request.json();
+        return HttpResponse.json({ data: { ...basePickList, visit: { ...visit, status: "AWAITING_PREPARATION" as const, revision: 11 }, allowedActions: ["START_PREPARATION"] }, replayed: false }, { status: 201 });
+      }),
+    );
+    renderDispensing(
+      "/dispensing/visit-42",
+      "doctor",
+      ["fulfillment:read", "fulfillment:prepare", "label:print"],
+      (visitId) => ({ ...dispensingJourney, visit: { ...dispensingJourney.visit, id: visitId, status: "PREPARING" }, allowedActions: ["PRINT_LABEL", "ABANDON_PREPARATION"] }),
+    );
+    const reason = await screen.findByLabelText("เหตุผลการยกเลิกการเตรียมยา");
+    await user.type(reason, "ต้องจัดเตรียมใหม่");
     await user.click(screen.getByRole("button", { name: "ยกเลิกการเตรียมยา" }));
-    await waitFor(() => expect(abandoned).toBe(true));
+    await waitFor(() => expect(body).toMatchObject({
+      expectedRevisions: { visit: 10, preparation: 1 },
+      payload: { preparationId: "preparation-1", reservationId: "reservation-1", reason: "ต้องจัดเตรียมใหม่" },
+    }));
   });
 
   it("records a print request before opening print and calls it a request, not a physical success", async () => {

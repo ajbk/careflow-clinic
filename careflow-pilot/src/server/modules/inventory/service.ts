@@ -13,6 +13,7 @@ import type {
   MedicationDto,
   PatientDto,
   ReceiveInventoryPayload,
+  ReservationReadinessDto,
   SignedMedicationDecisionDto,
   VisitSummaryDto,
 } from "../../../shared/contracts.js";
@@ -41,6 +42,7 @@ export const SYNTHETIC_PILOT_LOW_STOCK_THRESHOLD = 10;
 export interface InventoryService {
   currentTimestamp(): string;
   getInventory(): InventorySummaryDto[];
+  getReservationReadiness(visitId: string): ReservationReadinessDto;
   searchMedicationCatalog(query: string): MedicationDto[];
   receiveStock(
     tx: AppTransaction,
@@ -157,6 +159,18 @@ interface LotBalance {
   available: number;
 }
 
+type MedicationOrderItemRow = typeof medicationOrderItems.$inferSelect;
+type InventoryLotRow = typeof inventoryLots.$inferSelect;
+
+type ReservationPlan = {
+  readiness: ReservationReadinessDto;
+  allocations: Array<{
+    orderItem: MedicationOrderItemRow;
+    lot: InventoryLotRow;
+    quantity: number;
+  }>;
+};
+
 function readLotBalances(tx: InventoryTransaction): LotBalance[] {
   const lots = tx.select().from(inventoryLots).where(eq(inventoryLots.clinicId, "clinic")).all();
   const movementRows = tx.select({ lotId: inventoryStockMovements.lotId, quantity: inventoryStockMovements.quantityDelta })
@@ -185,6 +199,76 @@ function readLotBalances(tx: InventoryTransaction): LotBalance[] {
     const reserved = reservedByLot.get(lot.id) ?? 0;
     return { lot, onHand, reserved, available: Math.max(0, onHand - reserved) };
   });
+}
+
+function planReservation(
+  orderItems: MedicationOrderItemRow[],
+  balances: LotBalance[],
+  currentClinicDate: string,
+): ReservationPlan {
+  const candidatesByMedication = new Map<string, LotBalance[]>();
+  const availableByMedication = new Map<string, number>();
+  for (const balance of balances) {
+    if (balance.lot.status !== "AVAILABLE" || balance.lot.expiryDate <= currentClinicDate || balance.available <= 0) continue;
+    availableByMedication.set(
+      balance.lot.medicationId,
+      (availableByMedication.get(balance.lot.medicationId) ?? 0) + balance.available,
+    );
+    const candidates = candidatesByMedication.get(balance.lot.medicationId) ?? [];
+    candidates.push({ ...balance });
+    candidatesByMedication.set(balance.lot.medicationId, candidates);
+  }
+  for (const candidates of candidatesByMedication.values()) {
+    candidates.sort((left, right) => (
+      left.lot.expiryDate.localeCompare(right.lot.expiryDate) || left.lot.id.localeCompare(right.lot.id)
+    ));
+  }
+
+  const demandByMedication = new Map<string, {
+    medicationId: string;
+    displayNameSnapshot: string;
+    required: number;
+    unitSnapshot: string;
+  }>();
+  for (const orderItem of orderItems) {
+    const demand = demandByMedication.get(orderItem.medicationId);
+    if (demand) {
+      demand.required += orderItem.quantity;
+      continue;
+    }
+    demandByMedication.set(orderItem.medicationId, {
+      medicationId: orderItem.medicationId,
+      displayNameSnapshot: orderItem.displayNameSnapshot,
+      required: orderItem.quantity,
+      unitSnapshot: orderItem.unitSnapshot,
+    });
+  }
+  const lines = Array.from(demandByMedication.values(), (demand) => {
+    const available = availableByMedication.get(demand.medicationId) ?? 0;
+    return {
+      ...demand,
+      available,
+      shortfall: Math.max(0, demand.required - available),
+    };
+  });
+  const readiness = { ready: lines.every((line) => line.shortfall === 0), lines };
+  if (!readiness.ready) return { readiness, allocations: [] };
+
+  const allocations: ReservationPlan["allocations"] = [];
+  for (const orderItem of orderItems) {
+    let remaining = orderItem.quantity;
+    const candidates = candidatesByMedication.get(orderItem.medicationId) ?? [];
+    for (const candidate of candidates) {
+      if (remaining <= 0) break;
+      const quantity = Math.min(remaining, candidate.available);
+      if (quantity <= 0) continue;
+      allocations.push({ orderItem, lot: candidate.lot, quantity });
+      candidate.available -= quantity;
+      remaining -= quantity;
+    }
+    if (remaining > 0) throw new Error("Ready reservation plan did not allocate every Order item");
+  }
+  return { readiness, allocations };
 }
 
 function readInventory(tx: InventoryTransaction, currentClinicDate: string): InventorySummaryDto[] {
@@ -540,6 +624,14 @@ export function createInventoryService(input: InventoryServiceOptions): Inventor
       return readInventory(input.database.db, clinicDate(clock()));
     },
 
+    getReservationReadiness(visitId) {
+      const signed = readSignedDecision(input.database.db, visitId);
+      if (signed.row.kind !== "ORDER" || signed.items.length === 0) {
+        throw reservationError("คำสั่งยานี้ไม่ใช่ ORDER ที่สามารถจองยาได้");
+      }
+      return planReservation(signed.items, readLotBalances(input.database.db), clinicDate(clock())).readiness;
+    },
+
     getMedicationLots(medicationId) {
       return readLotBalances(input.database.db)
         .filter((balance) => balance.lot.medicationId === medicationId)
@@ -746,41 +838,13 @@ export function createInventoryService(input: InventoryServiceOptions): Inventor
         throw reservationError("สถานะ Visit ไม่อนุญาตให้เริ่มจองยา");
       }
 
-      const balances = readLotBalances(tx);
       const currentClinicDate = clinicDate(clock());
-      const candidatesByMedication = new Map<string, LotBalance[]>();
-      for (const balance of balances) {
-        if (balance.lot.status !== "AVAILABLE" || balance.lot.expiryDate <= currentClinicDate || balance.available <= 0) continue;
-        const candidates = candidatesByMedication.get(balance.lot.medicationId) ?? [];
-        candidates.push({ ...balance });
-        candidatesByMedication.set(balance.lot.medicationId, candidates);
+      const plan = planReservation(signed.items, readLotBalances(tx), currentClinicDate);
+      if (!plan.readiness.ready) {
+        const shortage = plan.readiness.lines.find((line) => line.shortfall > 0);
+        throw reservationError(`สต็อกยา ${shortage?.displayNameSnapshot ?? ""} ไม่เพียงพอสำหรับการจอง`);
       }
-      for (const candidates of candidatesByMedication.values()) {
-        candidates.sort((left, right) => (
-          left.lot.expiryDate.localeCompare(right.lot.expiryDate) || left.lot.id.localeCompare(right.lot.id)
-        ));
-      }
-
-      const allocations: Array<{
-        orderItem: typeof medicationOrderItems.$inferSelect;
-        lot: typeof inventoryLots.$inferSelect;
-        quantity: number;
-      }> = [];
-      for (const orderItem of signed.items) {
-        let remaining = orderItem.quantity;
-        const candidates = candidatesByMedication.get(orderItem.medicationId) ?? [];
-        for (const candidate of candidates) {
-          if (remaining <= 0) break;
-          const quantity = Math.min(remaining, candidate.available);
-          if (quantity <= 0) continue;
-          allocations.push({ orderItem, lot: candidate.lot, quantity });
-          candidate.available -= quantity;
-          remaining -= quantity;
-        }
-        if (remaining > 0) {
-          throw reservationError(`สต็อกยา ${orderItem.displayNameSnapshot} ไม่เพียงพอสำหรับการจอง`);
-        }
-      }
+      const { allocations } = plan;
 
       const now = clock().toISOString();
       const reservationCandidate = idFactory();

@@ -37,6 +37,7 @@ test.describe("shared Visit journey", () => {
       const hnMatch = (await patientHeader.innerText()).match(/HN DEMO-\d{6}/)?.[0];
       expect(hnMatch).toMatch(/^HN DEMO-\d{6}$/);
       const hn = hnMatch as string;
+      await assistantPage.getByRole("radio", { name: "ไม่แพ้" }).check();
       await assistantPage.getByLabel("อาการสำคัญ *").fill("ไอและมีไข้");
       await assistantPage.getByRole("button", { name: "ส่งพบแพทย์" }).click();
       await expect(assistantPage).toHaveURL(/\/queue$/);
@@ -47,7 +48,7 @@ test.describe("shared Visit journey", () => {
       await loginAndAcknowledge(doctorPage, server.baseURL, "doctor");
       await expect(doctorPage).toHaveURL(/\/queue$/);
       await expect(doctorPage.locator(".queue-card")).toContainText(hn);
-      await doctorPage.getByRole("button", { name: "เริ่มการตรวจ" }).click();
+      await doctorPage.getByRole("button", { name: "เริ่มตรวจ" }).click();
       await expect(doctorPage).toHaveURL(/\/consultations\/[^/]+$/);
       await expect(doctorPage.getByRole("heading", { name: "ห้องตรวจผู้ป่วย" })).toBeVisible();
       await expect(doctorPage.locator(".status-active").first()).toContainText("กำลังตรวจ");

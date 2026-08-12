@@ -477,6 +477,24 @@
 .allergy-item-editor { display: grid; gap: 10px; padding: 14px; border: 1px solid rgba(112,121,116,.18); border-radius: 12px; background: var(--surface-container-low); }
 .allergy-item-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .allergy-item-heading strong { color: var(--primary); font-size: 13px; }
+.session-return-notice { margin: -8px 0 18px; padding: 11px 14px; border: 1px solid rgba(31, 96, 70, .28); border-radius: 12px; background: var(--secondary-container); color: var(--on-secondary-container); font-size: 13px; font-weight: 700; }
+.intake-allergy-panel { display: grid; gap: 12px; }
+.intake-allergy-card { display: grid; gap: 14px; }
+.intake-allergy-prior { display: grid; gap: 4px; padding: 13px 14px; border-radius: 12px; background: var(--surface-container-low); color: var(--on-surface-variant); font-size: 12px; }
+.intake-allergy-prior strong { color: var(--primary); font-size: 13px; }
+.intake-allergy-fieldset { display: grid; gap: 12px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.intake-allergy-fieldset > legend { padding: 0; color: var(--primary); font-size: 16px; font-weight: 800; }
+.intake-allergy-answers { display: flex; flex-wrap: wrap; gap: 10px; }
+.intake-allergy-answer { display: inline-flex; align-items: center; gap: 8px; min-height: 42px; padding: 8px 13px; border: 1px solid var(--outline); border-radius: 10px; background: var(--surface-container-lowest); color: var(--on-surface); cursor: pointer; font-weight: 700; }
+.intake-allergy-answer-selected { border-color: var(--primary); background: var(--primary-container); color: var(--on-primary-container); }
+.intake-allergy-answer:has(input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 2px; }
+.intake-allergy-items { display: grid; gap: 12px; }
+.intake-allergy-item { display: grid; gap: 10px; padding: 14px; border: 1px solid rgba(112,121,116,.18); border-radius: 12px; background: var(--surface-container-low); }
+.intake-allergy-item-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.intake-allergy-item-heading strong { color: var(--primary); font-size: 13px; }
+.intake-allergy-change-warning { display: grid; gap: 10px; padding: 13px; border: 1px solid rgba(150, 85, 0, .28); border-radius: 12px; background: var(--tertiary-container); color: var(--on-tertiary-container); }
+.intake-allergy-context-error { margin: 0; }
+.queue-allergy-state { margin: 0; color: var(--on-surface-variant); font-size: 11px; }
 .signed-evidence { display: grid; gap: 12px; padding: 24px; border-radius: 16px; background: var(--surface-container-low); }
 .signed-evidence p { margin: 0; }
 .signed-evidence code { overflow-wrap: anywhere; color: var(--on-surface-variant); font-size: 11px; }
@@ -538,3 +556,35 @@
   .medication-item > strong { grid-column: auto; }
   .consultation-actions .care-button { flex: 1 1 160px; }
 }
+
+/* Shared, server-derived Visit Journey. These classes are deliberately scoped so the Stitch layouts remain intact. */
+.visit-journey-ribbon { margin: 0 0 22px; overflow: hidden; border: 1px solid rgba(112, 121, 116, .18); border-radius: 16px; background: var(--surface-container-lowest); box-shadow: 0 5px 16px rgba(30, 42, 35, .06); }
+.visit-journey-ribbon-list { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 0; margin: 0; padding: 0; list-style: none; }
+.visit-journey-ribbon-step { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 76px; align-items: center; gap: 8px; padding: 12px 10px; border-right: 1px solid rgba(112, 121, 116, .14); color: var(--on-surface-variant); }
+.visit-journey-ribbon-step:last-child { border-right: 0; }
+.visit-journey-ribbon-icon { display: grid; width: 26px; height: 26px; place-items: center; border-radius: 50%; background: var(--surface-container); color: var(--on-surface-variant); }
+.visit-journey-ribbon-copy { display: grid; min-width: 0; gap: 3px; }
+.visit-journey-ribbon-label { overflow: hidden; color: var(--primary); font-size: 11px; font-weight: 700; line-height: 1.25; text-overflow: ellipsis; }
+.visit-journey-ribbon-state { color: var(--on-surface-variant); font-size: 10px; line-height: 1.25; }
+.visit-journey-ribbon-step.is-complete .visit-journey-ribbon-icon { background: #d9f1e6; color: #126844; }
+.visit-journey-ribbon-step.is-current { background: #eef8f3; box-shadow: inset 0 -3px 0 var(--primary); }
+.visit-journey-ribbon-step.is-current .visit-journey-ribbon-icon { background: var(--primary); color: white; }
+.visit-journey-ribbon-step.is-blocked .visit-journey-ribbon-icon { background: var(--error-container); color: var(--error); }
+.visit-journey-ribbon-step.is-skipped .visit-journey-ribbon-icon { background: var(--surface-container-high); color: var(--on-surface-variant); }
+.journey-next-task { display: grid; gap: 14px; margin: 0 0 22px; }
+.journey-next-task-card, .journey-blocker-card { display: grid; gap: 10px; padding: 18px; }
+.journey-next-task-card h2, .journey-blocker-card h2 { margin: 0; color: var(--primary); font-size: 18px; }
+.journey-next-task-card > p:not(.page-eyebrow), .journey-blocker-card > p { margin: 0; color: var(--on-surface-variant); font-size: 13px; line-height: 1.5; }
+.journey-action-control { width: fit-content; margin-top: 2px; }
+.journey-waiting-copy { margin: 0; color: var(--on-surface-variant); font-size: 12px; line-height: 1.45; }
+.journey-blocker-card { border: 1px solid rgba(183, 77, 65, .28); background: linear-gradient(145deg, var(--surface-container-lowest), #fff4f1); }
+.journey-blocker-heading { display: flex; flex-wrap: wrap; align-items: start; justify-content: space-between; gap: 10px; }
+.journey-blocker-heading > span { border-radius: 999px; padding: 5px 8px; background: rgba(255, 255, 255, .72); color: var(--on-surface-variant); font-size: 11px; font-weight: 700; }
+.journey-blocker-medication { display: flex; flex-wrap: wrap; gap: 6px 10px; border-radius: 10px; padding: 11px 12px; background: rgba(255, 255, 255, .72); color: var(--on-surface-variant); font-size: 12px; }
+.journey-blocker-medication strong { color: var(--primary); }
+.journey-blocker-recovery { display: grid; gap: 8px; }
+.journey-command-failure { border-left: 3px solid var(--error); padding-left: 10px; color: var(--error) !important; font-weight: 700; outline-offset: 4px; }
+.journey-authority-banner { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; margin: 0 0 18px; border: 1px solid rgba(121, 82, 13, .24); border-left: 4px solid #79520d; border-radius: 12px; padding: 12px 14px; background: #fff0cf; color: #79520d; }
+.journey-authority-banner > span { display: grid; gap: 2px; font-size: 12px; }
+.journey-authority-banner strong { font-size: 13px; }
+.journey-authority-banner .care-button { width: fit-content; }

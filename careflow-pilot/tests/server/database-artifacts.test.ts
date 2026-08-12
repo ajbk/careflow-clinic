@@ -131,7 +131,7 @@ function copyMigrationsThrough0021(target: string): string {
   return oldPath;
 }
 
-const immutableMigrationHashesThrough0021 = {
+const immutableMigrationHashesThrough0022 = {
   "0000_platform.sql": "77dbb1cce19d455be9bb06d4dc5d64de0425b0435f9c70ac63a413fc4ce8c9e6",
   "0001_patient.sql": "55af6b78670f63296ab2e6da9cce84a04613dfd31e5c3cba8534eb5a52e7d96f",
   "0002_visit_intake.sql": "74ef1bbd67666b7666cf999823a646bf1ba0810a07c4ec35e9026113edaf4c20",
@@ -154,9 +154,10 @@ const immutableMigrationHashesThrough0021 = {
   "0019_post_close_reservation_guards.sql": "31c6be4917adbe0d0758ff615ecdbde680649137ae9da5031b9f16c330d0f5e1",
   "0020_post_close_replace_guards.sql": "d346745b4810751cbc8306ddcf424f61932e144f9e4576139ac3dd0ddb106128",
   "0021_protected_insert_conflict_guards.sql": "96155e3424b40627db36eb2b6bb280c4d87e1382af48581280065a4782c69395",
+  "0022_closed_visit_insert_guard.sql": "3b90a32c0b0d6870bbbd94deb0438423ca628f263c3de0f35d6341f6bd0c9691",
 } as const;
 
-const immutableMigrationSnapshotHashesThrough0021 = {
+const immutableMigrationSnapshotHashesThrough0022 = {
   "0000_snapshot.json": "61925e834bd4f002e75d36d2dfe8517c7ac30cfde5f43c1de874ac305559bed6",
   "0001_snapshot.json": "b8f94f95c24f38b16179369fd1b93475a9c0e925a08b5444f1e70dc7f379322c",
   "0002_snapshot.json": "b2387cf5b7f9e4334c2d7699004d867f52c13edb0ea21fa6fca5c6c00387269f",
@@ -178,6 +179,7 @@ const immutableMigrationSnapshotHashesThrough0021 = {
   "0019_snapshot.json": "35e76769c409004c834576039582ddebc134b688c5848a13fd44a9d5b245e19b",
   "0020_snapshot.json": "0751a33f012a9fb417ed1f51127fb19a03dae4979ef4272dd527b7ff8a09064d",
   "0021_snapshot.json": "53f896f144497ea735c9bd510d1fa97447323094909545a15f3bab106307a600",
+  "0022_snapshot.json": "260ea9613c7f75e94df6f854efa5919bf500a1ff593b50a6a7eeba491fc6fd82",
 } as const;
 
 const operationalConflictTables = new Set(["clinic_counters", "sessions"]);
@@ -1585,11 +1587,11 @@ it("keeps 0014 immutable and upgrades populated inventory rows with the additive
   }
 });
 
-it("keeps every 0000–0021 SQL and snapshot identity immutable while upgrading populated evidence through additive 0022", () => {
-  for (const [file, expectedHash] of Object.entries(immutableMigrationHashesThrough0021)) {
+it("keeps every 0000–0022 SQL and snapshot identity immutable while upgrading populated evidence", () => {
+  for (const [file, expectedHash] of Object.entries(immutableMigrationHashesThrough0022)) {
     expect(createHash("sha256").update(readFileSync(join(process.cwd(), "drizzle", file))).digest("hex")).toBe(expectedHash);
   }
-  for (const [file, expectedHash] of Object.entries(immutableMigrationSnapshotHashesThrough0021)) {
+  for (const [file, expectedHash] of Object.entries(immutableMigrationSnapshotHashesThrough0022)) {
     expect(createHash("sha256").update(readFileSync(join(process.cwd(), "drizzle", "meta", file))).digest("hex")).toBe(expectedHash);
   }
   const journal = JSON.parse(readFileSync(join(process.cwd(), "drizzle", "meta", "_journal.json"), "utf8")) as {
