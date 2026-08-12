@@ -33,10 +33,24 @@ npm start
 
 ### Windows 11 PowerShell
 
-Run PowerShell as the dedicated local UAT account from the repository root:
+Run PowerShell as the dedicated local UAT account from either the repository root or its `careflow-pilot` directory:
 
 ```powershell
-Set-Location careflow-pilot
+$startingDirectory = [System.IO.Path]::GetFullPath((Get-Location).Path)
+$pilotRoot = if ([System.IO.Path]::GetFileName($startingDirectory) -eq 'careflow-pilot') {
+  $startingDirectory
+} else {
+  [System.IO.Path]::GetFullPath((Join-Path $startingDirectory 'careflow-pilot'))
+}
+$pilotManifest = [System.IO.Path]::GetFullPath((Join-Path $pilotRoot 'package.json'))
+if (-not (Test-Path -LiteralPath $pilotManifest -PathType Leaf -ErrorAction Stop)) {
+  throw 'CareFlow pilot root not found; UAT is BLOCKED'
+}
+$pilotPackage = Get-Content -LiteralPath $pilotManifest -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+if ($pilotPackage.name -ne 'careflow-pilot') {
+  throw 'CareFlow pilot root is invalid; UAT is BLOCKED'
+}
+Set-Location -LiteralPath $pilotRoot -ErrorAction Stop
 npm ci --ignore-scripts
 npm run verify:native-runtime
 npm run build

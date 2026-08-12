@@ -17,6 +17,35 @@ function sectionBetween(source: string, startMarker: string, endMarker?: string)
   return source.slice(start, end);
 }
 
+const stablePilotRootBootstrap = [
+  "$startingDirectory = [System.IO.Path]::GetFullPath((Get-Location).Path)",
+  "$pilotRoot = if ([System.IO.Path]::GetFileName($startingDirectory) -eq 'careflow-pilot') {",
+  "$startingDirectory",
+  "} else {",
+  "[System.IO.Path]::GetFullPath((Join-Path $startingDirectory 'careflow-pilot'))",
+  "}",
+  "$pilotManifest = [System.IO.Path]::GetFullPath((Join-Path $pilotRoot 'package.json'))",
+  "if (-not (Test-Path -LiteralPath $pilotManifest -PathType Leaf -ErrorAction Stop)) {",
+  "throw 'CareFlow pilot root not found; UAT is BLOCKED'",
+  "}",
+  "$pilotPackage = Get-Content -LiteralPath $pilotManifest -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop",
+  "if ($pilotPackage.name -ne 'careflow-pilot') {",
+  "throw 'CareFlow pilot root is invalid; UAT is BLOCKED'",
+  "}",
+  "Set-Location -LiteralPath $pilotRoot -ErrorAction Stop",
+].join("\n");
+
+function normalizedMarkdown(source: string): string {
+  return source
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\n");
+}
+
+function countOccurrences(source: string, expected: string): number {
+  return source.split(expected).length - 1;
+}
+
 function expectFailClosedWindowsInspection(section: string, action: string): void {
   expect(section).not.toContain("-ErrorAction SilentlyContinue");
   expect(section).toContain(
@@ -196,7 +225,7 @@ describe("native Windows platform contract", () => {
     );
     const windowsProvisioning = sectionBetween(provisioning, "### Windows 11 PowerShell");
     const pathInitialization = windowsProvisioning.indexOf(
-      "$uatDb = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) 'data\\uat\\careflow-uat.sqlite'))",
+      "$uatDb = [System.IO.Path]::GetFullPath((Join-Path $pilotRoot 'data\\uat\\careflow-uat.sqlite'))",
     );
     const databaseEnvironment = windowsProvisioning.indexOf(
       "$env:CAREFLOW_DB_PATH = $uatDb",
@@ -244,5 +273,64 @@ describe("native Windows platform contract", () => {
     expect(windowsQuickStart).not.toContain("New-Item -ItemType Directory");
     expect(windowsQuickStart).toContain("complete the administrator runbook");
     expect(windowsQuickStart).toContain("exactly two interactive UAT accounts");
+  });
+
+  it("derives one validated absolute pilot root from either documented starting directory", () => {
+    const runbook = readRepositoryFile("docs/uat/careflow-pre-pilot/admin-runbook.md");
+    const readme = readRepositoryFile("careflow-pilot/README.md");
+    const preparation = sectionBetween(
+      runbook,
+      "## Windows 11 PowerShell",
+      "## Provision the only two UAT accounts before host startup",
+    );
+    const provisioning = sectionBetween(
+      sectionBetween(
+        runbook,
+        "## Provision the only two UAT accounts before host startup",
+        "## Mandatory-stop handling",
+      ),
+      "### Windows 11 PowerShell",
+    );
+    const restart = sectionBetween(
+      sectionBetween(
+        runbook,
+        "## Planned restart checkpoint",
+        "## Controlled Doctor session-expiry checkpoint",
+      ),
+      "### Windows 11 PowerShell",
+    );
+    const expiry = sectionBetween(
+      sectionBetween(
+        runbook,
+        "## Controlled Doctor session-expiry checkpoint",
+        "## Lock recovery is read-only until directed otherwise",
+      ),
+      "### Windows 11 PowerShell",
+    );
+    const readmeWindows = sectionBetween(
+      readme,
+      "### Windows 11 PowerShell",
+      "## Two-browser rehearsal",
+    );
+
+    const normalizedSections = [
+      [normalizedMarkdown(preparation), 1],
+      [normalizedMarkdown(provisioning), 2],
+      [normalizedMarkdown(restart), 1],
+      [normalizedMarkdown(expiry), 1],
+      [normalizedMarkdown(readmeWindows), 1],
+    ] as const;
+
+    for (const [section, expectedCount] of normalizedSections) {
+      expect(countOccurrences(section, stablePilotRootBootstrap)).toBe(expectedCount);
+      expect(section).not.toMatch(/Set-Location\s+careflow-pilot/);
+    }
+
+    for (const section of [preparation, provisioning, restart, expiry]) {
+      const location = section.indexOf("Set-Location -LiteralPath $pilotRoot -ErrorAction Stop");
+      const pathConsumer = section.indexOf("$uatDb = [System.IO.Path]::GetFullPath");
+      expect(location).toBeGreaterThan(-1);
+      expect(pathConsumer).toBeGreaterThan(location);
+    }
   });
 });

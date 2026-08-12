@@ -22,10 +22,24 @@ CAREFLOW_DB_PATH="$PWD/data/uat/careflow-uat.sqlite" npm run db:migrate -- "$PWD
 
 ## Windows 11 PowerShell
 
-Use a local NTFS checkout and sign in as the dedicated non-administrator UAT Windows account. Do not use OneDrive, a network drive, a shared profile, WSL, a symlink, or a junction. From the repository root:
+Use a local NTFS checkout and sign in as the dedicated non-administrator UAT Windows account. Do not use OneDrive, a network drive, a shared profile, WSL, a symlink, or a junction. Start from either the repository root or its `careflow-pilot` directory; the bootstrap below accepts only those two contexts and validates the absolute pilot root:
 
 ```powershell
-Set-Location careflow-pilot
+$startingDirectory = [System.IO.Path]::GetFullPath((Get-Location).Path)
+$pilotRoot = if ([System.IO.Path]::GetFileName($startingDirectory) -eq 'careflow-pilot') {
+  $startingDirectory
+} else {
+  [System.IO.Path]::GetFullPath((Join-Path $startingDirectory 'careflow-pilot'))
+}
+$pilotManifest = [System.IO.Path]::GetFullPath((Join-Path $pilotRoot 'package.json'))
+if (-not (Test-Path -LiteralPath $pilotManifest -PathType Leaf -ErrorAction Stop)) {
+  throw 'CareFlow pilot root not found; UAT is BLOCKED'
+}
+$pilotPackage = Get-Content -LiteralPath $pilotManifest -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+if ($pilotPackage.name -ne 'careflow-pilot') {
+  throw 'CareFlow pilot root is invalid; UAT is BLOCKED'
+}
+Set-Location -LiteralPath $pilotRoot -ErrorAction Stop
 npm ci --ignore-scripts
 npm run verify:native-runtime
 npm test
@@ -33,7 +47,7 @@ npm run lint
 npm run typecheck
 npm run build
 
-$uatDir = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) 'data\uat'))
+$uatDir = [System.IO.Path]::GetFullPath((Join-Path $pilotRoot 'data\uat'))
 $uatDb = [System.IO.Path]::GetFullPath((Join-Path $uatDir 'careflow-uat.sqlite'))
 $uatParent = [System.IO.Path]::GetDirectoryName($uatDir)
 New-Item -ItemType Directory -Path $uatParent -Force -ErrorAction Stop | Out-Null
@@ -122,8 +136,22 @@ curl -fsS http://127.0.0.1:3001/api/health
 ### Windows 11 PowerShell
 
 ```powershell
-Set-Location careflow-pilot
-$uatDb = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) 'data\uat\careflow-uat.sqlite'))
+$startingDirectory = [System.IO.Path]::GetFullPath((Get-Location).Path)
+$pilotRoot = if ([System.IO.Path]::GetFileName($startingDirectory) -eq 'careflow-pilot') {
+  $startingDirectory
+} else {
+  [System.IO.Path]::GetFullPath((Join-Path $startingDirectory 'careflow-pilot'))
+}
+$pilotManifest = [System.IO.Path]::GetFullPath((Join-Path $pilotRoot 'package.json'))
+if (-not (Test-Path -LiteralPath $pilotManifest -PathType Leaf -ErrorAction Stop)) {
+  throw 'CareFlow pilot root not found; UAT is BLOCKED'
+}
+$pilotPackage = Get-Content -LiteralPath $pilotManifest -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+if ($pilotPackage.name -ne 'careflow-pilot') {
+  throw 'CareFlow pilot root is invalid; UAT is BLOCKED'
+}
+Set-Location -LiteralPath $pilotRoot -ErrorAction Stop
+$uatDb = [System.IO.Path]::GetFullPath((Join-Path $pilotRoot 'data\uat\careflow-uat.sqlite'))
 $env:CAREFLOW_DB_PATH = $uatDb
 npm run users -- create --username uat-assistant --display-name Assistant --role assistant
 npm run users -- create --username uat-doctor --display-name Doctor --role doctor
@@ -136,8 +164,22 @@ npm start
 In every new PowerShell window, reconstruct the exact path and environment before running its command:
 
 ```powershell
-Set-Location careflow-pilot
-$uatDb = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) 'data\uat\careflow-uat.sqlite'))
+$startingDirectory = [System.IO.Path]::GetFullPath((Get-Location).Path)
+$pilotRoot = if ([System.IO.Path]::GetFileName($startingDirectory) -eq 'careflow-pilot') {
+  $startingDirectory
+} else {
+  [System.IO.Path]::GetFullPath((Join-Path $startingDirectory 'careflow-pilot'))
+}
+$pilotManifest = [System.IO.Path]::GetFullPath((Join-Path $pilotRoot 'package.json'))
+if (-not (Test-Path -LiteralPath $pilotManifest -PathType Leaf -ErrorAction Stop)) {
+  throw 'CareFlow pilot root not found; UAT is BLOCKED'
+}
+$pilotPackage = Get-Content -LiteralPath $pilotManifest -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+if ($pilotPackage.name -ne 'careflow-pilot') {
+  throw 'CareFlow pilot root is invalid; UAT is BLOCKED'
+}
+Set-Location -LiteralPath $pilotRoot -ErrorAction Stop
+$uatDb = [System.IO.Path]::GetFullPath((Join-Path $pilotRoot 'data\uat\careflow-uat.sqlite'))
 $env:CAREFLOW_DB_PATH = $uatDb
 $env:CAREFLOW_HOST = '127.0.0.1'
 $env:CAREFLOW_PORT = '3001'
@@ -193,8 +235,22 @@ Only use this for the planned restart steps in the guide and only when no mandat
 2. For every new PowerShell window, reconstruct the exact path and environment:
 
    ```powershell
-   Set-Location careflow-pilot
-   $uatDb = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) 'data\uat\careflow-uat.sqlite'))
+   $startingDirectory = [System.IO.Path]::GetFullPath((Get-Location).Path)
+   $pilotRoot = if ([System.IO.Path]::GetFileName($startingDirectory) -eq 'careflow-pilot') {
+     $startingDirectory
+   } else {
+     [System.IO.Path]::GetFullPath((Join-Path $startingDirectory 'careflow-pilot'))
+   }
+   $pilotManifest = [System.IO.Path]::GetFullPath((Join-Path $pilotRoot 'package.json'))
+   if (-not (Test-Path -LiteralPath $pilotManifest -PathType Leaf -ErrorAction Stop)) {
+     throw 'CareFlow pilot root not found; UAT is BLOCKED'
+   }
+   $pilotPackage = Get-Content -LiteralPath $pilotManifest -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+   if ($pilotPackage.name -ne 'careflow-pilot') {
+     throw 'CareFlow pilot root is invalid; UAT is BLOCKED'
+   }
+   Set-Location -LiteralPath $pilotRoot -ErrorAction Stop
+   $uatDb = [System.IO.Path]::GetFullPath((Join-Path $pilotRoot 'data\uat\careflow-uat.sqlite'))
    $env:CAREFLOW_DB_PATH = $uatDb
    $env:CAREFLOW_HOST = '127.0.0.1'
    $env:CAREFLOW_PORT = '3001'
@@ -256,8 +312,22 @@ Use this only with the host stopped and exactly one active `uat-doctor` session:
 3. In a new local PowerShell window, reconstruct the exact path and environment, then confirm the restart/maintenance precondition in the Windows planned restart checkpoint:
 
    ```powershell
-   Set-Location careflow-pilot
-   $uatDb = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) 'data\uat\careflow-uat.sqlite'))
+   $startingDirectory = [System.IO.Path]::GetFullPath((Get-Location).Path)
+   $pilotRoot = if ([System.IO.Path]::GetFileName($startingDirectory) -eq 'careflow-pilot') {
+     $startingDirectory
+   } else {
+     [System.IO.Path]::GetFullPath((Join-Path $startingDirectory 'careflow-pilot'))
+   }
+   $pilotManifest = [System.IO.Path]::GetFullPath((Join-Path $pilotRoot 'package.json'))
+   if (-not (Test-Path -LiteralPath $pilotManifest -PathType Leaf -ErrorAction Stop)) {
+     throw 'CareFlow pilot root not found; UAT is BLOCKED'
+   }
+   $pilotPackage = Get-Content -LiteralPath $pilotManifest -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+   if ($pilotPackage.name -ne 'careflow-pilot') {
+     throw 'CareFlow pilot root is invalid; UAT is BLOCKED'
+   }
+   Set-Location -LiteralPath $pilotRoot -ErrorAction Stop
+   $uatDb = [System.IO.Path]::GetFullPath((Join-Path $pilotRoot 'data\uat\careflow-uat.sqlite'))
    $env:CAREFLOW_DB_PATH = $uatDb
    $env:CAREFLOW_HOST = '127.0.0.1'
    $env:CAREFLOW_PORT = '3001'
