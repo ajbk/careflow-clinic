@@ -11,6 +11,19 @@
 - เข้าสู่ระบบด้วย `uat-doctor` ใน Browser Profile สำหรับแพทย์ได้
 - พร้อมเปิดคู่มือ UAT ทั้ง 5 Scenario โดยใช้ฐานข้อมูลเดิม
 
+## สารบัญย่อ
+
+1. Checkpoint 1 - ตรวจเครื่อง Windows
+2. Checkpoint 2 - เลือกโฟลเดอร์ภายในเครื่อง
+3. Checkpoint 3 - ดาวน์โหลด CareFlow จาก GitHub
+4. Checkpoint 4 - ติดตั้ง dependencies
+5. Checkpoint 5 - ตรวจ native runtime
+6. Checkpoint 6 - ทดสอบและ build
+7. Checkpoint 7 - สร้างพื้นที่ฐานข้อมูลที่จำกัดสิทธิ์
+8. Checkpoint 8 - สร้างโครงสร้างฐานข้อมูล
+9. Checkpoint 9 - สร้างสองบัญชี UAT
+10. Checkpoint 10 - เปิดระบบและเข้าสู่ระบบสองบทบาท
+
 ## คำศัพท์ก่อนเริ่ม
 
 - **PowerShell:** หน้าต่างที่ใช้วางคำสั่งบน Windows
@@ -22,48 +35,200 @@
 - **Browser Profile:** โปรไฟล์เบราว์เซอร์ที่แยก session ของผู้ช่วยและแพทย์
 - **UAT:** การทดลองใช้งานตาม Scenario ก่อน Pilot
 
-ใช้บัญชี Windows UAT เฉพาะที่ไม่ใช่ผู้ดูแล และเปิด PowerShell ปกติ ไม่เลือก Run as administrator. หากค่า RunningAsAdministrator เป็น True ให้หยุดและแจ้งผู้ดูแล
+ใช้บัญชี Windows UAT เฉพาะที่ไม่ใช่ผู้ดูแล เปิด PowerShell ปกติ ไม่เลือก Run as administrator และใช้หน้าต่าง PowerShell เดิมต่อเนื่องตั้งแต่ Checkpoint 1 ถึง Checkpoint 10
 
 ## Checkpoint 1 - ตรวจเครื่อง Windows
 
 ### เป้าหมาย
 
-ยืนยันว่าเป็น Windows 11 x64 พร้อม Node.js 22 และ Git
+ยืนยันจากค่าที่คำสั่งแสดงว่าเป็น Windows 11 แบบ 64-bit, PowerShell 5.1 ขึ้นไปที่ไม่ยกระดับสิทธิ์, Node.js 22, Git และตำแหน่งติดตั้งอยู่บน local fixed NTFS โดยไม่ผ่าน OneDrive, network/shared location, WSL, symlink หรือ junction
 
 ### ทำตามนี้
 
-ที่ Settings > System > About ตรวจ Windows 11 และ System type เป็น 64-bit; ตรวจบัญชีที่ Settings > Accounts > Your info แล้วใน PowerShell ปกติรัน:
+ใน PowerShell ปกติที่ไม่ได้เลือก Run as administrator ให้วาง block นี้ทั้ง block ตามตัวอักษร คำสั่งนี้ใช้ syntax ที่รองรับ Windows PowerShell 5.1 และจะหยุดแบบ fail-closed เมื่อยืนยันค่าใดไม่ได้:
 
 ~~~powershell
-node --version
-git --version
+$ErrorActionPreference = 'Stop'
+try {
+  $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+  $windows11 = $os.ProductType -eq 1 -and [int]$os.BuildNumber -ge 22000
+  $operatingSystem64Bit = [System.Environment]::Is64BitOperatingSystem
+  $powerShellProcess64Bit = [System.Environment]::Is64BitProcess
+  $powerShellVersion = $PSVersionTable.PSVersion
+  $powerShell51OrNewer = $PSVersionTable.PSVersion -ge [version]'5.1'
+
+  $windowsIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+  $windowsPrincipal = [System.Security.Principal.WindowsPrincipal]::new($windowsIdentity)
+  $runningAsAdministrator = $windowsPrincipal.IsInRole(
+    [System.Security.Principal.WindowsBuiltInRole]::Administrator
+  )
+
+  $nodeVersion = 'NOT FOUND'
+  $node22 = $false
+  try {
+    $nodeCommand = (Get-Command -Name node -CommandType Application -ErrorAction Stop).Source
+    $nodeOutput = & $nodeCommand --version 2>&1
+    $nodeExitCode = $LASTEXITCODE
+    $nodeVersion = ($nodeOutput | Out-String).Trim()
+    $node22 = $nodeExitCode -eq 0 -and $nodeVersion -match '^v22\.'
+  } catch {
+    $nodeVersion = 'NOT FOUND'
+    $node22 = $false
+  }
+
+  $gitVersion = 'NOT FOUND'
+  $gitAvailable = $false
+  try {
+    $gitCommand = (Get-Command -Name git -CommandType Application -ErrorAction Stop).Source
+    $gitOutput = & $gitCommand --version 2>&1
+    $gitExitCode = $LASTEXITCODE
+    $gitVersion = ($gitOutput | Out-String).Trim()
+    $gitAvailable = $gitExitCode -eq 0 -and $gitVersion -match '^git version '
+  } catch {
+    $gitVersion = 'NOT FOUND'
+    $gitAvailable = $false
+  }
+
+  if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+    throw 'LOCALAPPDATA is unavailable; UAT is BLOCKED'
+  }
+  $sourceParent = ([System.IO.Path]::GetFullPath($env:LOCALAPPDATA)).TrimEnd('\')
+  if (-not (Test-Path -LiteralPath $sourceParent -PathType Container -ErrorAction Stop)) {
+    throw 'The LOCALAPPDATA source parent does not exist; UAT is BLOCKED'
+  }
+  $validatedSourceRoot = [System.IO.Path]::GetFullPath(
+    (Join-Path $sourceParent 'CareFlow-UAT-Source')
+  )
+  $sourcePathRoot = [System.IO.Path]::GetPathRoot($sourceParent)
+  $sourceDrive = $sourcePathRoot.TrimEnd('\')
+
+  $sourceParentIsWsl = (
+    $sourceParent.StartsWith('\\wsl$\', [System.StringComparison]::OrdinalIgnoreCase) -or
+    $sourceParent.StartsWith('\\wsl.localhost\', [System.StringComparison]::OrdinalIgnoreCase)
+  )
+  $sourceParentIsNetworkOrShared = $sourcePathRoot.StartsWith('\\')
+
+  $volumeDriveType = [System.IO.DriveType]::Unknown
+  $volumeFileSystem = 'UNKNOWN'
+  if ($sourceDrive -match '^[A-Za-z]:$') {
+    $escapedSourceDrive = $sourceDrive.Replace("'", "''")
+    $logicalDisk = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID = '$escapedSourceDrive'" -ErrorAction Stop
+    if ($null -eq $logicalDisk) {
+      throw 'The source volume could not be identified; UAT is BLOCKED'
+    }
+    $volumeDriveType = [System.IO.DriveType][int]$logicalDisk.DriveType
+    $volumeFileSystem = [string]$logicalDisk.FileSystem
+  } else {
+    $sourceParentIsNetworkOrShared = $true
+  }
+  $sourceParentIsNetworkOrShared = (
+    $sourceParentIsNetworkOrShared -or
+    $volumeDriveType -eq [System.IO.DriveType]::Network
+  )
+
+  $sourceParentIsOneDrive = $sourceParent -match '(?i)(^|\\)OneDrive(?:[^\\]*)?(\\|$)'
+  foreach ($oneDriveCandidate in @(
+    $env:OneDrive,
+    $env:OneDriveCommercial,
+    $env:OneDriveConsumer
+  )) {
+    if (-not [string]::IsNullOrWhiteSpace($oneDriveCandidate)) {
+      $oneDriveRoot = ([System.IO.Path]::GetFullPath($oneDriveCandidate)).TrimEnd('\')
+      if (
+        $sourceParent.Equals($oneDriveRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $sourceParent.StartsWith($oneDriveRoot + '\', [System.StringComparison]::OrdinalIgnoreCase)
+      ) {
+        $sourceParentIsOneDrive = $true
+      }
+    }
+  }
+
+  $reparsePointPath = $null
+  $pathItem = Get-Item -LiteralPath $sourceParent -Force -ErrorAction Stop
+  while ($null -ne $pathItem) {
+    if (($pathItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+      $reparsePointPath = $pathItem.FullName
+      break
+    }
+    $pathItem = $pathItem.Parent
+  }
+  $sourceParentHasReparsePoint = $null -ne $reparsePointPath
+
+  Write-Output ("WindowsProductName = {0}" -f $os.Caption)
+  Write-Output ("WindowsBuildNumber = {0}" -f $os.BuildNumber)
+  Write-Output ("Windows11 = {0}" -f $windows11)
+  Write-Output ("OperatingSystem64Bit = {0}" -f $operatingSystem64Bit)
+  Write-Output ("PowerShellProcess64Bit = {0}" -f $powerShellProcess64Bit)
+  Write-Output ("PowerShellVersion = {0}" -f $powerShellVersion)
+  Write-Output ("PowerShell51OrNewer = {0}" -f $powerShell51OrNewer)
+  Write-Output ("RunningAsAdministrator = {0}" -f $runningAsAdministrator)
+  Write-Output ("NodeVersion = {0}" -f $nodeVersion)
+  Write-Output ("Node22 = {0}" -f $node22)
+  Write-Output ("GitVersion = {0}" -f $gitVersion)
+  Write-Output ("GitAvailable = {0}" -f $gitAvailable)
+  Write-Output ("SourceParent = {0}" -f $sourceParent)
+  Write-Output ("VolumeDriveType = {0}" -f $volumeDriveType)
+  Write-Output ("VolumeFileSystem = {0}" -f $volumeFileSystem)
+  Write-Output ("SourceParentIsOneDrive = {0}" -f $sourceParentIsOneDrive)
+  Write-Output ("SourceParentIsNetworkOrShared = {0}" -f $sourceParentIsNetworkOrShared)
+  Write-Output ("SourceParentIsWsl = {0}" -f $sourceParentIsWsl)
+  Write-Output ("SourceParentHasReparsePoint = {0}" -f $sourceParentHasReparsePoint)
+  Write-Output ("ValidatedSourceRoot = {0}" -f $validatedSourceRoot)
+
+  if (-not $windows11) { throw 'Windows 11 is required; UAT is BLOCKED' }
+  if (-not $operatingSystem64Bit -or -not $powerShellProcess64Bit) { throw '64-bit Windows and PowerShell are required; UAT is BLOCKED' }
+  if (-not $powerShell51OrNewer) { throw 'PowerShell 5.1 or newer is required; UAT is BLOCKED' }
+  if ($runningAsAdministrator) { throw 'PowerShell must not run as Administrator; UAT is BLOCKED' }
+  if (-not $node22) { throw 'Node.js 22 is required; UAT is BLOCKED' }
+  if (-not $gitAvailable) { throw 'Git is required; UAT is BLOCKED' }
+  if ($volumeDriveType -ne [System.IO.DriveType]::Fixed -or $volumeFileSystem -ne 'NTFS') { throw 'The source parent must be on a local fixed NTFS volume; UAT is BLOCKED' }
+  if ($sourceParentIsOneDrive) { throw 'The source parent must not be inside OneDrive; UAT is BLOCKED' }
+  if ($sourceParentIsNetworkOrShared) { throw 'The source parent must not be a network or shared location; UAT is BLOCKED' }
+  if ($sourceParentIsWsl) { throw 'The source parent must not be inside WSL; UAT is BLOCKED' }
+  if ($sourceParentHasReparsePoint) { throw 'The source parent must not use a symlink or junction; UAT is BLOCKED' }
+} catch {
+  if ($_.Exception.Message -like '*UAT is BLOCKED') { throw }
+  throw ("Preflight could not verify this machine: {0}; UAT is BLOCKED" -f $_.Exception.Message)
+}
 ~~~
 
 ### ผลที่ต้องเห็น
 
-เห็น Node.js 22, รุ่น Git และบัญชี non-administrator
+ต้องเห็นชื่อค่าทุกบรรทัดและค่าต่อไปนี้: `Windows11 = True`, `OperatingSystem64Bit = True`, `PowerShellProcess64Bit = True`, `PowerShell51OrNewer = True`, `RunningAsAdministrator = False`, `Node22 = True`, `GitAvailable = True`, `VolumeDriveType = Fixed`, `VolumeFileSystem = NTFS`, `SourceParentIsOneDrive = False`, `SourceParentIsNetworkOrShared = False`, `SourceParentIsWsl = False` และ `SourceParentHasReparsePoint = False`. บรรทัด `PowerShellVersion`, `NodeVersion`, `GitVersion`, `SourceParent` และ `ValidatedSourceRoot` ต้องมีค่าจริง โดย `ValidatedSourceRoot` ลงท้ายด้วย `CareFlow-UAT-Source`
 
 ### ถ้าไม่ตรงให้หยุด
 
-แจ้งผู้ดูแล ห้ามใช้บัญชีผู้ดูแล, WSL หรือ Docker.
+หาก block แสดง `UAT is BLOCKED`, ค่าใดหายไป หรือค่าใดไม่ตรงรายการข้างต้น ให้หยุดและส่งเฉพาะค่าที่แสดงแก่ผู้ดูแล ห้ามเปลี่ยนไปใช้บัญชีผู้ดูแล, WSL, Docker, path อื่น หรือข้าม guard
 
 ## Checkpoint 2 - เลือกโฟลเดอร์ภายในเครื่อง
 
 ### เป้าหมาย
 
-ใช้ local NTFS ที่ไม่ sync หรือแชร์
+รับช่วงตำแหน่ง local fixed NTFS ที่ผ่านการตรวจจาก Checkpoint 1 และยืนยันว่า source folder ใหม่ยังไม่มีอยู่
 
 ### ทำตามนี้
 
-ใช้ตำแหน่ง %LOCALAPPDATA%\CareFlow-UAT-Source เท่านั้น ต้องไม่อยู่ใน OneDrive, network drive, shared profile, WSL, symlink หรือ junction และต้องไม่มี source folder เดิม.
+ใช้ PowerShell หน้าต่างเดิมจาก Checkpoint 1 แล้ววาง block นี้:
+
+~~~powershell
+$sourceRoot = $validatedSourceRoot
+if ([string]::IsNullOrWhiteSpace($sourceRoot)) {
+  throw 'Validated source location is unavailable; UAT is BLOCKED'
+}
+if (Test-Path -LiteralPath $sourceRoot -PathType Any -ErrorAction Stop) {
+  throw 'CareFlow source folder already exists; installation is BLOCKED'
+}
+Write-Output ("SourceRoot = {0}" -f $sourceRoot)
+Write-Output 'SourceFolderAvailable = True'
+~~~
 
 ### ผลที่ต้องเห็น
 
-ยืนยันได้ว่าเป็น local NTFS และยังไม่มีโฟลเดอร์ CareFlow เดิม
+เห็น `SourceRoot` ตรงกับ `ValidatedSourceRoot` จาก Checkpoint 1 และเห็น `SourceFolderAvailable = True`
 
 ### ถ้าไม่ตรงให้หยุด
 
-ห้ามลบหรือย้ายของเดิม; แจ้งผู้ดูแล.
+หากตัวแปรหายไป, path เปลี่ยนไป, พบโฟลเดอร์เดิม หรือเห็น `UAT is BLOCKED` ให้หยุด ห้ามสร้าง ลบ หรือย้ายของเดิม และแจ้งผู้ดูแล
 
 ## Checkpoint 3 - ดาวน์โหลด CareFlow จาก GitHub
 
@@ -74,10 +239,6 @@ git --version
 ### ทำตามนี้
 
 ~~~powershell
-$sourceRoot = Join-Path $env:LOCALAPPDATA 'CareFlow-UAT-Source'
-if (Test-Path -LiteralPath $sourceRoot -PathType Any) {
-  throw 'CareFlow source folder already exists; installation is BLOCKED'
-}
 git clone https://github.com/ajbk/careflow-clinic.git "$sourceRoot"
 Set-Location -LiteralPath $sourceRoot -ErrorAction Stop
 git switch main
@@ -340,4 +501,4 @@ health check สำเร็จ และ browser เปิดเฉพาะ ht
 
 ## ขั้นถัดไป: เริ่ม UAT
 
-เมื่อทั้งสองบัญชีเข้าสู่ระบบได้ ให้ใช้ฐานข้อมูลเดิมและทำตาม [คู่มือ UAT Journey ทั้ง 5 Scenario](guide-th.md) พร้อมบันทึกผลใน [UAT checklist](checklist.md) หากต้อง restart, ตรวจ session expiry หรือแก้สถานะ `BLOCKED` ให้กลับไปใช้ [Administrator runbook](admin-runbook.md) เท่านั้น
+เมื่อทั้งสองบัญชีเข้าสู่ระบบได้ ให้ใช้ฐานข้อมูลเดิมและทำตาม [คู่มือ UAT Journey ทั้ง 5 Scenario](https://github.com/ajbk/careflow-clinic/blob/main/docs/uat/careflow-pre-pilot/guide-th.md) พร้อมบันทึกผลใน [UAT checklist](https://github.com/ajbk/careflow-clinic/blob/main/docs/uat/careflow-pre-pilot/checklist.md) หากต้อง restart, ตรวจ session expiry หรือแก้สถานะ `BLOCKED` ให้กลับไปใช้ [Administrator runbook](https://github.com/ajbk/careflow-clinic/blob/main/docs/uat/careflow-pre-pilot/admin-runbook.md) เท่านั้น

@@ -6,6 +6,27 @@ import serverVitestConfig, * as serverVitestConfigModule from "../../vitest.serv
 
 const repositoryRoot = resolve(process.cwd(), "..");
 const workflowPath = resolve(repositoryRoot, ".github/workflows/ci.yml");
+const beginnerGuidePath = "docs/uat/careflow-pre-pilot/windows-install-guide-th.md";
+const beginnerCheckpointTitles = [
+  "Checkpoint 1 - ตรวจเครื่อง Windows",
+  "Checkpoint 2 - เลือกโฟลเดอร์ภายในเครื่อง",
+  "Checkpoint 3 - ดาวน์โหลด CareFlow จาก GitHub",
+  "Checkpoint 4 - ติดตั้ง dependencies",
+  "Checkpoint 5 - ตรวจ native runtime",
+  "Checkpoint 6 - ทดสอบและ build",
+  "Checkpoint 7 - สร้างพื้นที่ฐานข้อมูลที่จำกัดสิทธิ์",
+  "Checkpoint 8 - สร้างโครงสร้างฐานข้อมูล",
+  "Checkpoint 9 - สร้างสองบัญชี UAT",
+  "Checkpoint 10 - เปิดระบบและเข้าสู่ระบบสองบทบาท",
+] as const;
+const beginnerHandoffUrls = {
+  journey:
+    "https://github.com/ajbk/careflow-clinic/blob/main/docs/uat/careflow-pre-pilot/guide-th.md",
+  checklist:
+    "https://github.com/ajbk/careflow-clinic/blob/main/docs/uat/careflow-pre-pilot/checklist.md",
+  runbook:
+    "https://github.com/ajbk/careflow-clinic/blob/main/docs/uat/careflow-pre-pilot/admin-runbook.md",
+} as const;
 const readRepositoryFile = (path: string): string =>
   readFileSync(resolve(repositoryRoot, path), "utf8");
 
@@ -393,25 +414,11 @@ describe("native Windows platform contract", () => {
   });
 
   it("publishes a beginner Windows installation guide without weakening UAT safety", () => {
-    const guidePath = "docs/uat/careflow-pre-pilot/windows-install-guide-th.md";
-    const guide = readRepositoryFile(guidePath);
+    const guide = readRepositoryFile(beginnerGuidePath);
     const runbook = readRepositoryFile("docs/uat/careflow-pre-pilot/admin-runbook.md");
     const readme = readRepositoryFile("careflow-pilot/README.md");
 
-    const checkpointTitles = [
-      "Checkpoint 1 - ตรวจเครื่อง Windows",
-      "Checkpoint 2 - เลือกโฟลเดอร์ภายในเครื่อง",
-      "Checkpoint 3 - ดาวน์โหลด CareFlow จาก GitHub",
-      "Checkpoint 4 - ติดตั้ง dependencies",
-      "Checkpoint 5 - ตรวจ native runtime",
-      "Checkpoint 6 - ทดสอบและ build",
-      "Checkpoint 7 - สร้างพื้นที่ฐานข้อมูลที่จำกัดสิทธิ์",
-      "Checkpoint 8 - สร้างโครงสร้างฐานข้อมูล",
-      "Checkpoint 9 - สร้างสองบัญชี UAT",
-      "Checkpoint 10 - เปิดระบบและเข้าสู่ระบบสองบทบาท",
-    ] as const;
-
-    for (const title of checkpointTitles) expect(guide).toContain(title);
+    for (const title of beginnerCheckpointTitles) expect(guide).toContain(title);
     for (const required of [
       "SYNTHETIC UAT ONLY",
       "RunningAsAdministrator",
@@ -429,7 +436,6 @@ describe("native Windows platform contract", () => {
       "$env:CAREFLOW_HOST = '127.0.0.1'",
       "Invoke-RestMethod -Uri 'http://127.0.0.1:3001/api/health'",
       "http://127.0.0.1:3001",
-      "guide-th.md",
     ]) {
       expect(guide).toContain(required);
     }
@@ -439,7 +445,9 @@ describe("native Windows platform contract", () => {
     expect(guide).toContain("ห้ามใช้ข้อมูลผู้ป่วยจริง");
     expect(guide).toContain("ห้ามใช้ข้อมูลการเงินจริง");
     expect(runbook).toContain("[คู่มือติดตั้ง Windows สำหรับผู้เริ่มต้น](windows-install-guide-th.md)");
-    expect(readme).toContain("[คู่มือติดตั้ง Windows สำหรับผู้เริ่มต้น]");
+    expect(readme).toContain(
+      "[คู่มือติดตั้ง Windows สำหรับผู้เริ่มต้น](../docs/uat/careflow-pre-pilot/windows-install-guide-th.md)",
+    );
 
     const firstLogin = sectionBetween(
       guide,
@@ -456,5 +464,177 @@ describe("native Windows platform contract", () => {
     expect(profilesIndex).toBeGreaterThan(-1);
     expect(loopbackNavigationIndex).toBeGreaterThan(profilesIndex);
     expect(roleSignInIndex).toBeGreaterThan(loopbackNavigationIndex);
+  });
+
+  it("orders the compact contents and all ten beginner checkpoints with four required sections", () => {
+    const guide = readRepositoryFile(beginnerGuidePath);
+    const checkpointHeadings = guide.match(/^## Checkpoint \d+ - .*$/gm) ?? [];
+
+    expect(checkpointHeadings).toEqual(
+      beginnerCheckpointTitles.map((title) => `## ${title}`),
+    );
+
+    for (const [index, title] of beginnerCheckpointTitles.entries()) {
+      const nextTitle = beginnerCheckpointTitles[index + 1];
+      const checkpoint = sectionBetween(
+        guide,
+        `## ${title}`,
+        nextTitle ? `## ${nextTitle}` : "## หยุด CareFlow อย่างปลอดภัย",
+      );
+      const sectionHeadings = checkpoint.match(/^### .*$/gm) ?? [];
+
+      expect(sectionHeadings).toEqual([
+        "### เป้าหมาย",
+        "### ทำตามนี้",
+        "### ผลที่ต้องเห็น",
+        "### ถ้าไม่ตรงให้หยุด",
+      ]);
+    }
+
+    const contents = sectionBetween(guide, "## สารบัญย่อ", "## คำศัพท์ก่อนเริ่ม");
+    expect(contents.match(/^\d+\. Checkpoint \d+ - .*$/gm) ?? []).toEqual(
+      beginnerCheckpointTitles.map((title, index) => `${index + 1}. ${title}`),
+    );
+  });
+
+  it("makes the beginner preflight observable and fail closed on every invariant", () => {
+    const guide = readRepositoryFile(beginnerGuidePath);
+    const checkpoint1 = sectionBetween(
+      guide,
+      `## ${beginnerCheckpointTitles[0]}`,
+      `## ${beginnerCheckpointTitles[1]}`,
+    );
+    const checkpoint2 = sectionBetween(
+      guide,
+      `## ${beginnerCheckpointTitles[1]}`,
+      `## ${beginnerCheckpointTitles[2]}`,
+    );
+
+    for (const required of [
+      "Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop",
+      "[System.Environment]::Is64BitOperatingSystem",
+      "[System.Environment]::Is64BitProcess",
+      "$PSVersionTable.PSVersion -ge [version]'5.1'",
+      "[System.Security.Principal.WindowsBuiltInRole]::Administrator",
+      "Get-Command -Name node -CommandType Application -ErrorAction Stop",
+      "Get-Command -Name git -CommandType Application -ErrorAction Stop",
+      "Get-CimInstance -ClassName Win32_LogicalDisk",
+      "[System.IO.DriveType]::Fixed",
+      "$env:OneDriveCommercial",
+      "$env:OneDriveConsumer",
+      "SourceParentIsNetworkOrShared",
+      "SourceParentIsWsl",
+      "[System.IO.FileAttributes]::ReparsePoint",
+      "throw (\"Preflight could not verify this machine: {0}; UAT is BLOCKED\" -f $_.Exception.Message)",
+    ]) {
+      expect(checkpoint1).toContain(required);
+    }
+
+    for (const outputName of [
+      "Windows11",
+      "OperatingSystem64Bit",
+      "PowerShellProcess64Bit",
+      "PowerShellVersion",
+      "PowerShell51OrNewer",
+      "RunningAsAdministrator",
+      "NodeVersion",
+      "Node22",
+      "GitVersion",
+      "GitAvailable",
+      "SourceParent",
+      "VolumeDriveType",
+      "VolumeFileSystem",
+      "SourceParentIsOneDrive",
+      "SourceParentIsNetworkOrShared",
+      "SourceParentIsWsl",
+      "SourceParentHasReparsePoint",
+      "ValidatedSourceRoot",
+    ]) {
+      expect(checkpoint1).toContain(`Write-Output ("${outputName} = {0}" -f`);
+    }
+
+    for (const guard of [
+      "if (-not $windows11) { throw 'Windows 11 is required; UAT is BLOCKED' }",
+      "if (-not $operatingSystem64Bit -or -not $powerShellProcess64Bit) { throw '64-bit Windows and PowerShell are required; UAT is BLOCKED' }",
+      "if (-not $powerShell51OrNewer) { throw 'PowerShell 5.1 or newer is required; UAT is BLOCKED' }",
+      "if ($runningAsAdministrator) { throw 'PowerShell must not run as Administrator; UAT is BLOCKED' }",
+      "if (-not $node22) { throw 'Node.js 22 is required; UAT is BLOCKED' }",
+      "if (-not $gitAvailable) { throw 'Git is required; UAT is BLOCKED' }",
+      "if ($volumeDriveType -ne [System.IO.DriveType]::Fixed -or $volumeFileSystem -ne 'NTFS') { throw 'The source parent must be on a local fixed NTFS volume; UAT is BLOCKED' }",
+      "if ($sourceParentIsOneDrive) { throw 'The source parent must not be inside OneDrive; UAT is BLOCKED' }",
+      "if ($sourceParentIsNetworkOrShared) { throw 'The source parent must not be a network or shared location; UAT is BLOCKED' }",
+      "if ($sourceParentIsWsl) { throw 'The source parent must not be inside WSL; UAT is BLOCKED' }",
+      "if ($sourceParentHasReparsePoint) { throw 'The source parent must not use a symlink or junction; UAT is BLOCKED' }",
+    ]) {
+      expect(checkpoint1).toContain(guard);
+    }
+
+    const firstOutput = checkpoint1.indexOf('Write-Output ("WindowsProductName = {0}"');
+    const lastOutput = checkpoint1.indexOf('Write-Output ("ValidatedSourceRoot = {0}"');
+    const firstGuard = checkpoint1.indexOf("if (-not $windows11) { throw");
+    const lastGuard = checkpoint1.indexOf("if ($sourceParentHasReparsePoint) { throw");
+    const failClosedCatch = checkpoint1.indexOf(
+      'throw ("Preflight could not verify this machine: {0}; UAT is BLOCKED"',
+    );
+
+    expect(firstOutput).toBeGreaterThan(-1);
+    expect(lastOutput).toBeGreaterThan(firstOutput);
+    expect(firstGuard).toBeGreaterThan(lastOutput);
+    expect(lastGuard).toBeGreaterThan(firstGuard);
+    expect(failClosedCatch).toBeGreaterThan(lastGuard);
+    expect(checkpoint1).not.toContain("-ErrorAction SilentlyContinue");
+    expect(checkpoint1).not.toMatch(/\?\?|\?\.|ForEach-Object\s+-Parallel|&&|\|\|/);
+    expect(checkpoint2).toContain("$sourceRoot = $validatedSourceRoot");
+    expect(guide).not.toContain("$sourceRoot = Join-Path $env:LOCALAPPDATA");
+    expect(countOccurrences(guide, "$sourceRoot = $validatedSourceRoot")).toBe(1);
+  });
+
+  it("creates only the approved accounts before loopback-only startup", () => {
+    const guide = readRepositoryFile(beginnerGuidePath);
+    const expectedUserCommands = [
+      "npm run users -- create --username uat-assistant --display-name Assistant --role assistant",
+      "npm run users -- create --username uat-doctor --display-name Doctor --role doctor",
+    ] as const;
+    const userCommands = guide.match(/^npm run users -- create .*$/gm) ?? [];
+    const hostBindings = guide.match(/^\$env:CAREFLOW_HOST\s*=.*$/gm) ?? [];
+    const startCommands = guide.match(/^npm start$/gm) ?? [];
+
+    expect(userCommands).toEqual(expectedUserCommands);
+    expect(hostBindings).toEqual([
+      "$env:CAREFLOW_HOST = '127.0.0.1'",
+      "$env:CAREFLOW_HOST = '127.0.0.1'",
+    ]);
+    expect(startCommands).toEqual(["npm start"]);
+    expect(guide.indexOf(expectedUserCommands[0])).toBeLessThan(
+      guide.indexOf(expectedUserCommands[1]),
+    );
+    expect(guide.indexOf(expectedUserCommands[1])).toBeLessThan(guide.indexOf("npm start"));
+    expect(guide).not.toMatch(
+      /^\$env:CAREFLOW_HOST\s*=\s*['"](?:0\.0\.0\.0|\*|\+|::|\[::\])['"]$/gim,
+    );
+    expect(guide).not.toMatch(/--host(?:=|\s)+(?:['"])?(?:\*|\+|::|\[::\])/i);
+  });
+
+  it("uses exact entry-point targets and absolute standalone handoff URLs", () => {
+    const guide = readRepositoryFile(beginnerGuidePath);
+    const runbook = readRepositoryFile("docs/uat/careflow-pre-pilot/admin-runbook.md");
+    const readme = readRepositoryFile("careflow-pilot/README.md");
+
+    expect(runbook).toContain(
+      "[คู่มือติดตั้ง Windows สำหรับผู้เริ่มต้น](windows-install-guide-th.md)",
+    );
+    expect(readme).toContain(
+      "[คู่มือติดตั้ง Windows สำหรับผู้เริ่มต้น](../docs/uat/careflow-pre-pilot/windows-install-guide-th.md)",
+    );
+
+    expect(guide).toContain(
+      `[คู่มือ UAT Journey ทั้ง 5 Scenario](${beginnerHandoffUrls.journey})`,
+    );
+    expect(guide).toContain(`[UAT checklist](${beginnerHandoffUrls.checklist})`);
+    expect(guide).toContain(`[Administrator runbook](${beginnerHandoffUrls.runbook})`);
+    for (const url of Object.values(beginnerHandoffUrls)) {
+      expect(countOccurrences(guide, url)).toBe(1);
+    }
+    expect(guide).not.toMatch(/\]\((?:guide-th|checklist|admin-runbook)\.md\)/);
   });
 });
