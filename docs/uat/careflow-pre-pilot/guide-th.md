@@ -4,14 +4,14 @@
 
 ## เตรียมบัญชี UAT ก่อนเปิด host
 
-หลัง migrate ฐานข้อมูล UAT ใหม่ และ **ก่อน** เปิด `npm start` ให้ผู้ดูแลอยู่ในไดเรกทอรี `careflow-pilot` และสร้างเพียงสองบัญชีนี้ครั้งละหนึ่งครั้ง:
+หลัง migrate ฐานข้อมูล UAT ใหม่ และ **ก่อน** เปิด `npm start`:
 
-```bash
-CAREFLOW_DB_PATH="$PWD/data/uat/careflow-uat.sqlite" npm run users -- create --username uat-assistant --display-name Assistant --role assistant
-CAREFLOW_DB_PATH="$PWD/data/uat/careflow-uat.sqlite" npm run users -- create --username uat-doctor --display-name Doctor --role doctor
-```
+ให้ผู้ดูแลเลือกคำสั่งตามเครื่อง host ใน [admin-runbook.md](admin-runbook.md):
 
-แต่ละคำสั่งจะให้พิมพ์ `SYNTHETIC-ONLY` แล้วรับรหัสผ่านใหม่และยืนยันรหัสผ่านผ่าน prompt แบบซ่อนอักขระ ต้องใช้ terminal แบบ interactive; ห้ามวาง ส่ง บันทึก หรือแสดงรหัสผ่านในเอกสาร, shell history, log, ticket, screenshot หรือ checklist. เมื่อสำเร็จต้องเห็นเพียง `User account command completed` โดยไม่มีรหัสผ่านอยู่ในผลลัพธ์. ไม่ต้องสร้างบัญชีอื่น และห้ามรันคำสั่งสร้างซ้ำ.
+- [macOS/Linux (POSIX)](admin-runbook.md#macoslinux-posix)
+- [Windows 11 PowerShell](admin-runbook.md#windows-11-powershell)
+
+ทั้งสองเส้นทางต้องสร้างเพียง `uat-assistant` และ `uat-doctor` ผ่าน hidden interactive prompt ก่อนเปิด host ห้ามบันทึกรหัสผ่านในเอกสาร, command argument, environment, log, screenshot หรือ checklist.
 
 ครั้งแรกที่เข้าสู่ระบบของ **ทั้งสอง** บัญชี ให้ยอมรับกติกา Pilot ก่อน แล้วเปลี่ยนรหัสผ่านตามหน้าจอ (12–128 ตัวอักษร). นี่เป็นพฤติกรรมบังคับ: บัญชีใหม่เริ่มด้วยสถานะต้องเปลี่ยนรหัสผ่านและยังไม่ยอมรับ Pilot. หลังจากนั้นเปิด browser profile/context แยกกันสำหรับ `uat-assistant` และ `uat-doctor`; ห้ามใช้ profile เดียวร่วมสองบัญชี. ดูรายละเอียดการเตรียมฐานข้อมูลและ host ใน [admin-runbook.md](admin-runbook.md).
 

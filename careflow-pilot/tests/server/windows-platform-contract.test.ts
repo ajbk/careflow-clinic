@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 
 const repositoryRoot = resolve(process.cwd(), "..");
 const workflowPath = resolve(repositoryRoot, ".github/workflows/ci.yml");
+const readRepositoryFile = (path: string): string =>
+  readFileSync(resolve(repositoryRoot, path), "utf8");
 
 function windowsJob(): string {
   const workflow = readFileSync(workflowPath, "utf8");
@@ -24,5 +26,38 @@ describe("native Windows platform contract", () => {
     expect(probeIndex).toBeGreaterThan(installIndex);
     expect(job).not.toContain("npm ci\n");
     expect(job).not.toMatch(/Visual Studio|node-gyp|WSL|Docker/i);
+  });
+
+  it("documents one complete PowerShell UAT lifecycle without credentials", () => {
+    const runbook = readRepositoryFile("docs/uat/careflow-pre-pilot/admin-runbook.md");
+    const guide = readRepositoryFile("docs/uat/careflow-pre-pilot/guide-th.md");
+    const checklist = readRepositoryFile("docs/uat/careflow-pre-pilot/checklist.md");
+    const readme = readRepositoryFile("careflow-pilot/README.md");
+
+    for (const required of [
+      "## Windows 11 PowerShell",
+      "npm ci --ignore-scripts",
+      "npm run verify:native-runtime",
+      "[System.IO.Path]::GetFullPath",
+      "icacls.exe",
+      "S-1-5-32-544",
+      "$env:CAREFLOW_DB_PATH = $uatDb",
+      "Invoke-RestMethod",
+      "Get-NetTCPConnection",
+      "Get-CimInstance Win32_Process",
+      "npm run expire:uat-doctor-session -- --database \"$uatDb\"",
+    ]) {
+      expect(runbook).toContain(required);
+    }
+
+    expect(guide).toContain("Windows 11 PowerShell");
+    expect(checklist).toContain("ระบบปฏิบัติการและ Node.js");
+    expect(checklist).toContain("ผลตรวจสิทธิ์ directory/ACL");
+    expect(readme).toContain("### Windows 11 PowerShell");
+
+    const credentialAssignment = /(?:password|รหัสผ่าน)\s*[=:]\s*\S+/i;
+    expect(runbook).not.toMatch(credentialAssignment);
+    expect(guide).not.toMatch(credentialAssignment);
+    expect(checklist).not.toMatch(credentialAssignment);
   });
 });

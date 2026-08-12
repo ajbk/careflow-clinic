@@ -11,6 +11,8 @@
 | ผู้ทดสอบแพทย์ | |
 | ผู้ดูแล host ในเครื่อง | |
 | เส้นทางฐานข้อมูล UAT ในเครื่อง | |
+| ระบบปฏิบัติการและ Node.js | |
+| ผลตรวจสิทธิ์ directory/ACL | |
 | วันที่/เวลาสิ้นสุด | |
 
 สำหรับแต่ละแถว ให้บันทึก HN สังเคราะห์, เวลา, สิ่งที่เห็นจริง และเลือก `[ ] PASS  [ ] FAIL  [ ] BLOCKED`.
@@ -19,6 +21,7 @@
 
 | ID | การกระทำที่เห็น | ผลที่ต้องยืนยันโดยไม่บันทึกรหัสผ่าน | ผล |
 | --- | --- | --- | --- |
+| B-00 | ตรวจ platform ตาม [admin-runbook.md](admin-runbook.md) ก่อน migrate | Windows บันทึกผล `npm run verify:native-runtime` และ restricted `icacls.exe` ACL; POSIX บันทึก private directory modes. หากผลใดล้มเหลวเป็น `BLOCKED` | [ ] PASS [ ] FAIL [ ] BLOCKED |
 | B-01 | migrate ฐานข้อมูล UAT ใหม่ แล้วรันคำสั่ง interactive ใน [admin-runbook.md](admin-runbook.md#provision-the-only-two-uat-accounts-before-host-startup) | สร้างเพียง `uat-assistant` (Assistant) และ `uat-doctor` (Doctor); terminal แสดง `User account command completed` สองครั้งโดยไม่มีรหัสผ่าน | [ ] PASS [ ] FAIL [ ] BLOCKED |
 | B-02 | เปิด host loopback แล้วเข้าสู่ระบบจาก browser profile แยกกัน | ทั้งสองบัญชียอมรับ Pilot และเปลี่ยนรหัสผ่านตามหน้าจอ; ได้ Assistant/Doctor workspace ถูกต้อง และไม่มี credential ใน checklist | [ ] PASS [ ] FAIL [ ] BLOCKED |
 

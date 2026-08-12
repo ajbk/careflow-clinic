@@ -8,6 +8,8 @@ Signing an `ORDER` moves the Visit to `รอจัดยา`; signing `NO_MEDIC
 
 ## Quick start (Node 22)
 
+### macOS/Linux
+
 ```bash
 cd careflow-pilot
 nvm use 22                         # or install Node >=22.13
@@ -28,6 +30,27 @@ npm start
 ```
 
 `CAREFLOW_DB_PATH` must name this pilot's absolute SQLite file in operations. Migration runs before the host listens. On restart, stop the process, start it again, and verify the same queue Visit and Consultation status are present; sessions and audit evidence persist in SQLite.
+
+### Windows 11 PowerShell
+
+Run PowerShell as the dedicated local UAT account from the repository root:
+
+```powershell
+Set-Location careflow-pilot
+npm ci --ignore-scripts
+npm run verify:native-runtime
+$uatDir = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) 'data\uat'))
+$uatDb = [System.IO.Path]::GetFullPath((Join-Path $uatDir 'careflow-uat.sqlite'))
+New-Item -ItemType Directory -Path $uatDir -Force | Out-Null
+$env:CAREFLOW_DB_PATH = $uatDb
+npm run db:migrate -- "$uatDb"
+npm run build
+npm start
+```
+
+Browse only to `http://127.0.0.1:3001`. Apply and verify the restricted Windows ACL, provision the two interactive UAT accounts, and run restart/session-expiry checks with the [administrator runbook](../docs/uat/careflow-pre-pilot/admin-runbook.md#windows-11-powershell) before starting the Thai Journey checklist.
+
+Deployment, Windows service installation, backup/restore, network exposure, and real-data use remain explicitly disabled.
 
 ## Two-browser rehearsal
 
