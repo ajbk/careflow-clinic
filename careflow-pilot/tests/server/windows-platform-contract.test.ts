@@ -440,5 +440,21 @@ describe("native Windows platform contract", () => {
     expect(guide).toContain("ห้ามใช้ข้อมูลการเงินจริง");
     expect(runbook).toContain("[คู่มือติดตั้ง Windows สำหรับผู้เริ่มต้น](windows-install-guide-th.md)");
     expect(readme).toContain("[คู่มือติดตั้ง Windows สำหรับผู้เริ่มต้น]");
+
+    const firstLogin = sectionBetween(
+      guide,
+      "#### เข้าสู่ระบบครั้งแรก",
+      "### ผลที่ต้องเห็น",
+    );
+    const profilesIndex = firstLogin.indexOf(
+      "2. เปิด Edge หรือ Chrome สอง Browser Profile ที่แยกกัน",
+    );
+    const loopbackNavigation = "3. ในแต่ละ Browser Profile ให้เปิด `http://127.0.0.1:3001`";
+    const loopbackNavigationIndex = firstLogin.indexOf(loopbackNavigation);
+    const roleSignInIndex = firstLogin.indexOf("uat-assistant");
+
+    expect(profilesIndex).toBeGreaterThan(-1);
+    expect(loopbackNavigationIndex).toBeGreaterThan(profilesIndex);
+    expect(roleSignInIndex).toBeGreaterThan(loopbackNavigationIndex);
   });
 });

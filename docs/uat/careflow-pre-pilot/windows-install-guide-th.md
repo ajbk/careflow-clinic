@@ -321,9 +321,10 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:3001/api/health' -Method Get
 
 1. ให้หน้าต่าง host PowerShell ที่กำลังรัน npm start เปิดอยู่
 2. เปิด Edge หรือ Chrome สอง Browser Profile ที่แยกกัน
-3. ลงชื่อเข้าใช้ครั้งเดียวด้วย uat-assistant และครั้งเดียวด้วย uat-doctor โดยไม่บันทึกข้อมูลลับ
-4. ยอมรับ Pilot acknowledgement และเปลี่ยน initial password ผ่าน first-login UI ที่แสดง
-5. ยืนยันว่า Assistant ไปยัง Assistant workspace และ Doctor ไปยัง Doctor workspace ที่ถูกต้อง
+3. ในแต่ละ Browser Profile ให้เปิด `http://127.0.0.1:3001`
+4. ลงชื่อเข้าใช้ครั้งเดียวด้วย uat-assistant และครั้งเดียวด้วย uat-doctor โดยไม่บันทึกข้อมูลลับ
+5. ยอมรับ Pilot acknowledgement และเปลี่ยน initial password ผ่าน first-login UI ที่แสดง
+6. ยืนยันว่า Assistant ไปยัง Assistant workspace และ Doctor ไปยัง Doctor workspace ที่ถูกต้อง
 
 ### ผลที่ต้องเห็น
 
