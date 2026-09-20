@@ -13,6 +13,8 @@
 
 อ่าน [แบบแผนหลัก Production Trial](../superpowers/specs/2026-09-20-careflow-clinic-production-trial-design.md) ก่อนทำงาน แบบยังรอทบทวนฉบับเขียน; อย่าตีความการเลือกใช้คู่ขนานว่าอนุมัติลงมือทุก subsystem หรืออนุมัติ go-live แล้ว
 
+คำสั่งล่าสุดคือให้ handoff, commit และ push เพื่อไปรับงานต่อบน Windows ไม่ใช่การอนุมัติแบบฉบับเขียน แผน implementation การนำเข้าฐานเก่า หรือการเปิด production
+
 ## 2. ต้องเปิดโครงการไหนและใช้รุ่นใด
 
 - พัฒนาต่อใน `careflow-pilot/`; `careflow-webapp/` เป็น prototype ที่หยุดพัฒนาแล้ว ไม่ใช่ระบบคลินิก
@@ -22,7 +24,21 @@
 - [Draft PR #2](https://github.com/ajbk/careflow-clinic/pull/2) เป็นคู่มือ synthetic UAT ไม่ใช่ production installer ห้ามนำคำสั่งในคู่มือเดิมมาใช้กับฐานจริงโดยเปลี่ยน path อย่างเดียว
 - ก่อนเผยแพร่ ต้องรวมงานที่อนุมัติและสร้าง release ระบุรุ่น ไม่ติดตั้งบนเครื่องคลินิกโดยดึง working branch ล่าสุดโดยไม่ตรวจ
 
-ไฟล์นี้อาจยังเป็น local commit บน Mac จนกว่าจะมีการ push ที่ยืนยันแล้ว หากหาไฟล์นี้บน GitHub/Windows ไม่พบ ให้ตรวจว่ารุ่นเอกสารถูกส่งขึ้น repository แล้วจริง ห้ามสรุปว่า push แล้วเพียงเพราะเอกสารระบุชื่อ repository
+สาขาส่งต่องานคือ `codex/uat-stability-fixes` เปิด [เอกสารนี้บน GitHub ของสาขาส่งต่อ](https://github.com/ajbk/careflow-clinic/blob/codex/uat-stability-fixes/docs/handoff/clinic-windows-start-here-th.md) ไม่ใช้หน้า `main` แทน ก่อนรับงานให้ตรวจว่า checkout ตรงกับ commit ที่ส่งต่อหรือสืบทอดจาก commit นั้นจริง
+
+### เริ่มต่อบน Windows
+
+1. เปิดลิงก์เอกสารสาขาส่งต่อด้านบน และให้ผู้พัฒนาบน Windows อ่านเอกสารนี้พร้อมแบบหลักที่ลิงก์ไว้
+2. หากมี checkout อยู่แล้ว ให้ตรวจ remote, branch และงานค้างก่อนเปลี่ยนสาขาหรืออัปเดต ห้าม reset/clean เพื่อให้ตรงกับ Mac; หากยังไม่มี ให้สร้าง checkout ใหม่ของ repository และสาขานี้ในโฟลเดอร์ใหม่ ไม่ทับโครงการเดิม
+3. ส่งข้อความรับงานด้านล่างให้ผู้ช่วยบน Windows ได้เลย การส่งโค้ดผ่าน GitHub ไม่ได้ย้ายบทสนทนาหรือฐานข้อมูลจาก Mac ตามไปด้วย
+
+```text
+รับช่วง CareFlow จาก https://github.com/ajbk/careflow-clinic สาขา codex/uat-stability-fixes
+อ่าน docs/handoff/clinic-windows-start-here-th.md และแบบ Production Trial ที่ลิงก์ไว้ก่อน
+ตรวจ checkout และงานค้างก่อนทำอะไรต่อ เราจะทดลองหลายเครื่องในคลินิกควบคู่ระบบเดิม
+ตอนนี้ส่งต่อเอกสารแล้ว แต่แบบหลักยังรอทบทวน และยังไม่อนุมัติให้ใช้ข้อมูลจริงหรือนำเข้าฐานเดิม
+เริ่มด้วยสรุปสถานะและจุดที่ต้องทบทวน ไม่ reset ฐาน ไม่เปิดพอร์ต และไม่ deploy จากคู่มือ UAT เดิม
+```
 
 ## 3. งานถัดไปสำหรับผู้พัฒนาที่รับต่อ
 
@@ -76,7 +92,7 @@
 
 ## 7. สถานะไฟล์บน Mac ที่ต้องรักษา
 
-ณ ตอนเริ่มเขียนเอกสาร มี README แก้ค้าง 8 บรรทัดเพื่อระบุ repository หลัก, `.DS_Store` และ `stitch_careflow_clinic_management_system/` เป็นไฟล์นอกชุดงานนี้ ต้องรักษาไว้ ไม่รวมโดยอัตโนมัติ ไม่ลบทิ้ง และไม่ย้ายไปปน release
+README ที่ระบุ repository หลักและทางเริ่มต่อบน Windows รวมอยู่ในชุดส่งต่อนี้ ส่วน `.DS_Store` และ `stitch_careflow_clinic_management_system/` เป็นไฟล์นอกชุดงาน ต้องรักษาไว้บน Mac ไม่รวมโดยอัตโนมัติ ไม่ลบทิ้ง และไม่ย้ายไปปน release
 
 ฐาน Mac ที่มีอยู่คือฐานทดลองเท่านั้น ไม่ต้องย้ายไปคลินิก และห้ามใช้ reset/การแก้ password/การ migrate กับฐานเดิมเป็นส่วนหนึ่งของงานเอกสาร การสร้างชุดคลินิกจะต้องแยกข้อมูลและผ่านแบบ/แผนที่อนุมัติ
 

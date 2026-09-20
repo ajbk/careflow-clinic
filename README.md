@@ -1,5 +1,17 @@
 # CareFlow Rural Clinic
 
+## Primary repository
+
+[ajbk/careflow-clinic](https://github.com/ajbk/careflow-clinic) is the primary repository for CareFlow. Use this same repository for development and handoff on both macOS and Windows; local checkouts should point `origin` to it.
+
+`main` contains merged work. Changes on a working branch are not part of `main` until they are merged. Keep local databases, patient data, passwords, and environment files out of Git.
+
+## Continue on Windows
+
+Start with the [Thai clinic Windows handoff](docs/handoff/clinic-windows-start-here-th.md) and its linked production-trial design. The handoff branch is `codex/uat-stability-fixes`, not `main`. This is a readiness/design handoff: real-patient use, deployment, and legacy-data import are not yet approved or implemented.
+
+## Project contents
+
 This repository contains two intentionally separate experiences:
 
 - [`careflow-webapp/`](careflow-webapp/README.md) is the frozen visual/demo prototype. It is useful for design review and remains byte-for-byte unchanged while the pilot is built.
