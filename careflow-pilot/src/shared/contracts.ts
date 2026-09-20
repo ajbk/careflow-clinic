@@ -175,7 +175,7 @@ export const chargeGrossTotalBahtSchema = z.number().int().safe().min(1).max(100
 
 export const checkoutLineSchema = z.strictObject({
   id: financeIdSchema.nullable(),
-  position: z.number().int().min(0).max(20),
+  position: z.number().int().safe().min(0),
   lineType: z.enum(["CONSULTATION", "MEDICATION"]),
   descriptionSnapshot: financeDescriptionSchema,
   quantity: z.number().int().min(1).max(999_999),
@@ -214,7 +214,7 @@ export const checkoutChargeSchema = z.strictObject({
   clinicPricingRevision: z.number().int().min(1),
   consultationFeeBahtSnapshot: consultationFeeBahtSchema,
   currency: z.literal("THB"),
-  lineCount: z.number().int().min(1).max(21),
+  lineCount: z.number().int().safe().min(1),
   finalizedBy: z.strictObject({ id: financeIdSchema, displayName: financeDisplayNameSchema }),
   finalizedAt: z.string().datetime(),
 });
@@ -278,7 +278,7 @@ export const checkoutDtoSchema = z.strictObject({
   clinicPricingRevision: z.number().int().safe().min(1),
   sourceKind: z.enum(["ORDER", "NO_MEDICATION"]),
   charge: checkoutChargeSchema.nullable(),
-  lines: z.array(checkoutLineSchema).min(1).max(21),
+  lines: z.array(checkoutLineSchema).min(1),
   grossTotalBaht: chargeGrossTotalBahtSchema,
   adjustmentTotalBaht: z.number().int().safe().min(-100_000_000).max(0),
   netDueBaht: z.number().int().safe().min(0).max(100_000_000),
@@ -1635,7 +1635,7 @@ const opdMedicationSchema = z.discriminatedUnion("kind", [
       directionsTh: z.string().trim().min(1).max(500),
       lotNumber: z.string().trim().min(1).max(100),
       expiryDate: z.iso.date(),
-    })).min(1).max(20),
+    })).min(1),
   }),
   z.strictObject({
     kind: z.literal("NO_MEDICATION"),
@@ -1668,7 +1668,7 @@ export const opdCardSchema = z.strictObject({
     id: financeIdSchema,
     sourceKind: z.enum(["ORDER", "NO_MEDICATION"]),
     currency: z.literal("THB"),
-    lines: z.array(checkoutLineSchema).min(1).max(21),
+    lines: z.array(checkoutLineSchema).min(1),
     grossTotalBaht: chargeGrossTotalBahtSchema,
     adjustmentTotalBaht: z.number().int().safe().min(-100_000_000).max(0),
     netDueBaht: z.number().int().safe().min(0).max(100_000_000),

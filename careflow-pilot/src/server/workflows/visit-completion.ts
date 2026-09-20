@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, notExists } from "drizzle-orm";
 import type {
   Actor,
   CloseVisitBody,
@@ -15,6 +15,7 @@ import {
   type FinanceService,
 } from "../modules/finance/index.js";
 import {
+  fulfillmentArtifactInvalidations,
   fulfillmentDispenseLines,
   fulfillmentDispenses,
   fulfillmentPreparations,
@@ -342,7 +343,16 @@ export function createVisitCompletionWorkflow(
       }
       const pendingPreparation = tx.select({ id: fulfillmentPreparations.id })
         .from(fulfillmentPreparations)
-        .where(and(eq(fulfillmentPreparations.visitId, visitId), eq(fulfillmentPreparations.status, "ACTIVE")))
+        .where(and(
+          eq(fulfillmentPreparations.visitId, visitId),
+          eq(fulfillmentPreparations.status, "ACTIVE"),
+          notExists(tx.select({ id: fulfillmentArtifactInvalidations.id })
+            .from(fulfillmentArtifactInvalidations)
+            .where(and(
+              eq(fulfillmentArtifactInvalidations.artifactType, "PREPARATION"),
+              eq(fulfillmentArtifactInvalidations.artifactId, fulfillmentPreparations.id),
+            ))),
+        ))
         .get();
       const activeReservation = tx.select({ id: inventoryReservations.id })
         .from(inventoryReservations)

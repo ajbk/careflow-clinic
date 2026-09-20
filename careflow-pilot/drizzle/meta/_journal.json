@@ -162,6 +162,13 @@
       "when": 1786301461005,
       "tag": "0022_closed_visit_insert_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1789883378516,
+      "tag": "0023_uat_stability",
+      "breakpoints": true
     }
   ]
 }

@@ -137,7 +137,7 @@ describe("auth boundary", () => {
     expect(window.localStorage.length).toBe(0);
     expect(window.sessionStorage.length).toBe(0);
 
-    await user.type(screen.getByLabelText("ชื่อผู้ใช้"), "doctor");
+    await user.type(await screen.findByLabelText("ชื่อผู้ใช้"), "doctor");
     await user.type(screen.getByLabelText("รหัสผ่าน"), "password");
     await user.click(screen.getByRole("button", { name: "เข้าสู่ระบบ" }));
 
@@ -192,7 +192,7 @@ describe("auth boundary", () => {
     resolveSession(new Response(JSON.stringify(session), { status: 200 }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
 
-    await user.type(screen.getByLabelText("ชื่อผู้ใช้"), "doctor");
+    await user.type(await screen.findByLabelText("ชื่อผู้ใช้"), "doctor");
     await user.type(screen.getByLabelText("รหัสผ่าน"), "password");
     await user.click(screen.getByRole("button", { name: "เข้าสู่ระบบ" }));
 
