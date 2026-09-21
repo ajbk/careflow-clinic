@@ -83,6 +83,7 @@ function assertNewPassword(input: {
 
 interface LoginAttemptBucket {
   failures: number[];
+  pending: number;
 }
 
 export function registerAuthRoutes(input: {
@@ -105,10 +106,10 @@ export function registerAuthRoutes(input: {
     const now = input.clock();
     const attemptKey = `${request.ip}\u0000${username}`;
     const cutoff = now.getTime() - 60_000;
-    const bucket = attempts.get(attemptKey) ?? { failures: [] };
+    const bucket = attempts.get(attemptKey) ?? { failures: [], pending: 0 };
     bucket.failures = bucket.failures.filter((timestamp) => timestamp > cutoff);
     attempts.set(attemptKey, bucket);
-    if (bucket.failures.length >= 5) {
+    if (bucket.failures.length + bucket.pending >= 5) {
       throw new ApiError({
         code: "RATE_LIMITED",
         messageTh: "มีการลองเข้าสู่ระบบมากเกินไป กรุณารอสักครู่",
@@ -116,23 +117,52 @@ export function registerAuthRoutes(input: {
       });
     }
 
-    const account = input.database.db
-      .select()
-      .from(staffAccounts)
-      .where(eq(staffAccounts.username, username))
-      .get();
-    const verified = await verify(account?.passwordHash ?? DUMMY_PASSWORD_HASH, body.password);
-    if (!account || !verified || account.active !== 1) {
-      bucket.failures.push(now.getTime());
-      if (account?.active !== 1 && account) input.sessionService.revokeAll(account.id);
-      throw authRequired();
+    bucket.pending += 1;
+    try {
+      const account = input.database.db
+        .select()
+        .from(staffAccounts)
+        .where(eq(staffAccounts.username, username))
+        .get();
+      const verified = await verify(account?.passwordHash ?? DUMMY_PASSWORD_HASH, body.password);
+      const issued = input.database.db.transaction(
+        (tx) => {
+          // Verification yields to other requests; recheck and issue under one write lock.
+          const currentAccount = account
+            ? tx.select().from(staffAccounts).where(eq(staffAccounts.id, account.id)).get()
+            : undefined;
+          if (
+            !account ||
+            !verified ||
+            account.active !== 1 ||
+            !currentAccount ||
+            currentAccount.active !== 1 ||
+            currentAccount.passwordHash !== account.passwordHash ||
+            currentAccount.revision !== account.revision
+          ) {
+            if (currentAccount && currentAccount.active !== 1) {
+              tx.delete(sessions).where(eq(sessions.staffId, currentAccount.id)).run();
+            }
+            return undefined;
+          }
+          return input.sessionService.issueInTransaction(tx, account.id, now);
+        },
+        { behavior: "immediate" },
+      );
+      if (!issued) {
+        bucket.failures.push(now.getTime());
+        throw authRequired();
+      }
+      const session = input.sessionService.authenticate(issued.token, now);
+      if (!session) throw new Error("Issued session unavailable");
+      bucket.failures = [];
+      setSessionCookie(reply, issued.token, input.config);
+      return { data: input.sessionService.dto(session) };
+    } finally {
+      bucket.pending -= 1;
+      // A successful login must not forget other requests still being verified.
+      if (bucket.pending === 0 && bucket.failures.length === 0) attempts.delete(attemptKey);
     }
-    attempts.delete(attemptKey);
-    const issued = input.sessionService.issue(account.id, now);
-    const session = input.sessionService.authenticate(issued.token, now);
-    if (!session) throw new Error("Issued session unavailable");
-    setSessionCookie(reply, issued.token, input.config);
-    return { data: input.sessionService.dto(session) };
   });
 
   input.app.get("/api/auth/session", async (request) => ({

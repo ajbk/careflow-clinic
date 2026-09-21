@@ -230,7 +230,9 @@ export function deriveChargeQuote(
   });
   const lines = [consultationLine, ...medicationLines];
   const grossTotalBaht = lines.reduce((total, line) => total + line.lineTotalBaht, 0);
-  if (lines.length > 21 || !assertQuoteInteger(grossTotalBaht, 1, 100_000_000)) {
+  // One medication may span many lots; each dispense line retains its own
+  // price/source evidence and is not subject to the 20 prescribed-item limit.
+  if (!assertQuoteInteger(grossTotalBaht, 1, 100_000_000)) {
     throw incompleteSource();
   }
 

@@ -1067,7 +1067,6 @@ export function createFinanceService(input: FinanceServiceOptions): FinanceServi
         quote.visitRevision !== visit.revision ||
         quote.clinicId !== visit.clinicId ||
         quote.lines.length < 1 ||
-        quote.lines.length > 21 ||
         !assertSafeBaht(quote.grossTotalBaht, 1, 100_000_000)
       ) {
         throw incompleteChargeSource();

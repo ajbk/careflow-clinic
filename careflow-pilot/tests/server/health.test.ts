@@ -36,7 +36,7 @@ describe("SQLite boundary", () => {
     ).toBe("careflow-pilot");
     expect(
       handle.sqlite.prepare("SELECT count(*) FROM __drizzle_migrations").pluck().get(),
-    ).toBe(23);
+    ).toBe(24);
     expect(handle.sqlite.prepare(`
       SELECT count(*) FROM sqlite_master
       WHERE type = 'trigger' AND name LIKE '%_protected_insert_conflict_guard'

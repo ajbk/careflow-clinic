@@ -372,6 +372,59 @@ describe("Doctor consultation authoring", () => {
     expect(screen.queryByRole("dialog", { name: "ยืนยันการลงนาม" })).not.toBeInTheDocument();
   });
 
+  it.each([
+    { action: "cancels with Enter on Cancel", target: "ยกเลิก", key: "{Enter}", signs: false },
+    { action: "cancels with Escape", target: "ยืนยันการลงนาม", key: "{Escape}", signs: false },
+    { action: "signs once with Enter on Confirm", target: "ยืนยันการลงนาม", key: "{Enter}", signs: true },
+    { action: "signs once with Enter on the initially focused dialog", target: null, key: "{Enter}", signs: true },
+  ])("$action", async ({ target, key, signs }) => {
+    // Break caught: a dialog-wide Enter handler must not sign when Cancel owns
+    // the keypress, or duplicate the focused Confirm button's native activation.
+    const user = userEvent.setup();
+    let signRequests = 0;
+    let signedBody: unknown;
+    const persistedWorkspace = {
+      ...workspace,
+      consultationDraft: {
+        note: {
+          id: "note-draft", visitId: visit.id, revision: 1,
+          subjective: "มีไข้", objective: "38.2 องศา", assessment: "ไข้หวัด", plan: "พักผ่อน", diagnoses: ["ไข้หวัด"],
+          updatedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, updatedAt: "2026-08-03T02:00:00.000Z",
+        },
+        medicationDecision: {
+          id: "med-draft", visitId: visit.id, revision: 1, kind: "NO_MEDICATION" as const,
+          noMedicationReason: "ดูแลตามอาการ", items: [],
+          updatedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, updatedAt: "2026-08-03T02:00:00.000Z",
+        },
+      },
+    };
+    server.use(
+      http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: persistedWorkspace })),
+      http.post("/api/visits/visit-42/finalize-consultation", async ({ request }) => {
+        signRequests += 1;
+        signedBody = await request.json();
+        return HttpResponse.json({ error: { code: "INTERNAL_ERROR", messageTh: "การลงนามทดสอบถูกหยุดไว้", requestId: "keyboard-sign" } }, { status: 500 });
+      }),
+    );
+    renderRoute();
+    const sign = await screen.findByRole("button", { name: "ลงนามและส่งต่อ" });
+    await waitFor(() => expect(sign).toBeEnabled());
+    await user.click(sign);
+    const dialog = await screen.findByRole("dialog", { name: "ยืนยันการลงนาม" });
+    if (target) within(dialog).getByRole("button", { name: target }).focus();
+    else expect(dialog).toHaveFocus();
+    await user.keyboard(key);
+
+    if (signs) {
+      expect(await screen.findByText("การลงนามทดสอบถูกหยุดไว้")).toBeInTheDocument();
+      expect(signRequests).toBe(1);
+      expect(signedBody).toEqual({ expectedRevisions: { visit: 8, patient: 3, noteDraft: 1, medicationDraft: 1 }, payload: {} });
+    } else {
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "ยืนยันการลงนาม" })).not.toBeInTheDocument());
+      expect(signRequests).toBe(0);
+    }
+  });
+
   it("keeps signing disabled when persisted note evidence is incomplete", async () => {
     const incompleteWorkspace = {
       ...workspace,
@@ -522,10 +575,13 @@ describe("Doctor consultation authoring", () => {
   });
 
   it("requires an explicit medication decision and saves a selected catalog order", async () => {
+    // Break caught: editing an order must retain its catalog label without
+    // leaking that display metadata into the strict draft request.
     const user = userEvent.setup(); let body: unknown;
+    const catalogMedication = { id: "DEMO-MED-001", displayName: "พาราเซตามอล", strengthText: "500 mg", dosageFormText: "tablet", canonicalUnit: "tablet", internalBarcode: "PARA-500", revision: 2 };
     server.use(
-      http.get("/api/medications", () => HttpResponse.json({ data: [{ id: "DEMO-MED-001", displayName: "พาราเซตามอล", strengthText: "500 mg", dosageFormText: "tablet", canonicalUnit: "tablet", internalBarcode: "PARA-500", revision: 2 }] })),
-      http.post("/api/visits/visit-42/consultation-draft", async ({ request }) => { body = await request.json(); return HttpResponse.json({ data: { note: { id: "note-draft", visitId: visit.id, revision: 1, subjective: "ไข้", objective: "38.2", assessment: "ไข้หวัด", plan: "พักผ่อน", diagnoses: ["ไข้หวัด"], updatedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, updatedAt: "2026-08-03T02:00:00.000Z" }, medicationDecision: { id: "med-draft", visitId: visit.id, revision: 1, kind: "ORDER", noMedicationReason: null, items: [{ medication: { id: "DEMO-MED-001", displayName: "พาราเซตามอล", strengthText: "500 mg", dosageFormText: "tablet", canonicalUnit: "tablet", revision: 2 }, quantity: 10, directionsTh: "รับประทานหลังอาหาร" }], updatedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, updatedAt: "2026-08-03T02:00:00.000Z" } }, replayed: false }); }),
+      http.get("/api/medications", () => HttpResponse.json({ data: [catalogMedication] })),
+      http.post("/api/visits/visit-42/consultation-draft", async ({ request }) => { body = await request.json(); return HttpResponse.json({ data: { note: { id: "note-draft", visitId: visit.id, revision: 1, subjective: "ไข้", objective: "38.2", assessment: "ไข้หวัด", plan: "พักผ่อน", diagnoses: ["ไข้หวัด"], updatedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, updatedAt: "2026-08-03T02:00:00.000Z" }, medicationDecision: { id: "med-draft", visitId: visit.id, revision: 1, kind: "ORDER", noMedicationReason: null, items: [{ medication: catalogMedication, quantity: 10, directionsTh: "รับประทานหลังอาหาร" }], updatedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, updatedAt: "2026-08-03T02:00:00.000Z" } }, replayed: false }); }),
     );
     renderRoute();
     await user.type(await screen.findByLabelText("Subjective (ข้อมูลจากผู้ป่วย)"), "ไข้");
@@ -536,9 +592,58 @@ describe("Doctor consultation authoring", () => {
     await user.type(screen.getByLabelText("ค้นหารายการยา"), "พารา");
     await user.click(await screen.findByRole("button", { name: /เลือก พาราเซตามอล/ }));
     await user.clear(screen.getByLabelText("จำนวน")); await user.type(screen.getByLabelText("จำนวน"), "10");
+    expect(screen.getByText("พาราเซตามอล")).toBeInTheDocument();
     await user.type(screen.getByLabelText("วิธีใช้ยา"), "รับประทานหลังอาหาร");
+    expect(screen.getByText("พาราเซตามอล")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "บันทึกร่าง" }));
-    await waitFor(() => expect(body).toMatchObject({ payload: { medicationDecision: { kind: "ORDER", items: [{ medicationId: "DEMO-MED-001", medicationRevision: 2, quantity: 10 }] } } }));
+    await waitFor(() => expect(body).toEqual({
+      expectedRevisions: { visit: 8, noteDraft: 0, medicationDraft: 0 },
+      payload: {
+        note: { subjective: "ไข้", objective: "", assessment: "ไข้หวัด", plan: "พักผ่อน", diagnoses: ["ไข้หวัด"] },
+        medicationDecision: { kind: "ORDER", items: [{ medicationId: "DEMO-MED-001", medicationRevision: 2, quantity: 10, directionsTh: "รับประทานหลังอาหาร" }] },
+      },
+    }));
+  });
+
+  it("keeps a restored draft medication name visible while editing and saving", async () => {
+    // Break caught: restoring only request fields loses the server's medication
+    // name before the user has searched the catalog in this editor.
+    const user = userEvent.setup();
+    let savedBody: unknown;
+    const medication = { id: "DEMO-MED-001", displayName: "พาราเซตามอล", strengthText: "500 mg", dosageFormText: "tablet", canonicalUnit: "tablet", internalBarcode: "PARA-500", revision: 2 };
+    server.use(
+      http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: {
+        ...workspace,
+        consultationDraft: {
+          note: null,
+          medicationDecision: {
+            id: "med-draft", visitId: visit.id, revision: 1, kind: "ORDER", noMedicationReason: null,
+            items: [{ medication, quantity: 10, directionsTh: "รับประทานหลังอาหาร" }],
+            updatedBy: { id: "doctor-1", displayName: "พญ. ทดสอบ" }, updatedAt: "2026-08-03T02:00:00.000Z",
+          },
+        },
+      } })),
+      http.post("/api/visits/visit-42/consultation-draft", async ({ request }) => {
+        savedBody = await request.json();
+        return HttpResponse.json({ error: { code: "INTERNAL_ERROR", messageTh: "การบันทึกทดสอบถูกหยุดไว้", requestId: "restored-draft" } }, { status: 500 });
+      }),
+    );
+    renderRoute();
+    const editor = await screen.findByRole("region", { name: "Medication decision" });
+    expect(await within(editor).findByText("พาราเซตามอล")).toBeInTheDocument();
+    await user.clear(within(editor).getByLabelText("จำนวน"));
+    await user.type(within(editor).getByLabelText("จำนวน"), "12");
+    await user.type(within(editor).getByLabelText("วิธีใช้ยา"), " ตามคำแนะนำ");
+    expect(within(editor).getByText("พาราเซตามอล")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "บันทึกร่าง" }));
+    expect(await screen.findByText("การบันทึกทดสอบถูกหยุดไว้")).toBeInTheDocument();
+    expect(savedBody).toEqual({
+      expectedRevisions: { visit: 8, noteDraft: 0, medicationDraft: 1 },
+      payload: {
+        note: { subjective: "", objective: "", assessment: "", plan: "", diagnoses: [] },
+        medicationDecision: { kind: "ORDER", items: [{ medicationId: "DEMO-MED-001", medicationRevision: 2, quantity: 12, directionsTh: "รับประทานหลังอาหาร ตามคำแนะนำ" }] },
+      },
+    });
   });
 
   it("maps server fieldErrors into the Note and medication editors", async () => {
@@ -569,7 +674,10 @@ describe("Doctor consultation authoring", () => {
   });
 
   it("offers an explicit catalog-backed ORDER revision for signed evidence", async () => {
+    // Break caught: the revision editor must retain the signed medication's
+    // readable name, but the revision command must contain only input fields.
     const user = userEvent.setup();
+    let revisionBody: unknown;
     const medication = { id: "DEMO-MED-001", displayName: "พาราเซตามอล", strengthText: "500 mg", dosageFormText: "tablet", canonicalUnit: "tablet", revision: 2 };
     const catalogMedication = { ...medication, internalBarcode: "PARA-500" };
     const signedWorkspace = {
@@ -582,6 +690,10 @@ describe("Doctor consultation authoring", () => {
     server.use(
       http.get("/api/visits/visit-42/workspace", () => HttpResponse.json({ data: signedWorkspace })),
       http.get("/api/medications", () => HttpResponse.json({ data: [catalogMedication] })),
+      http.post("/api/visits/visit-42/medication-decision-revisions", async ({ request }) => {
+        revisionBody = await request.json();
+        return HttpResponse.json({ error: { code: "INTERNAL_ERROR", messageTh: "การแก้ไขยาทดสอบถูกหยุดไว้", requestId: "revision-label" } }, { status: 500 });
+      }),
     );
     renderRoute(
       "/consultations/visit-42",
@@ -601,6 +713,22 @@ describe("Doctor consultation authoring", () => {
     await user.click(await screen.findByRole("button", { name: "แก้ไขการตัดสินใจยา" }));
     expect(screen.getByRole("button", { name: "สั่งยาจากรายการทดสอบ" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "ไม่สั่งยา" })).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "แก้ไขการตัดสินใจยา" });
+    expect(within(dialog).getByText("พาราเซตามอล")).toBeInTheDocument();
+    await user.clear(within(dialog).getByLabelText("จำนวน"));
+    await user.type(within(dialog).getByLabelText("จำนวน"), "12");
+    await user.type(within(dialog).getByLabelText("วิธีใช้ยา"), " ตามคำแนะนำ");
+    expect(within(dialog).getByText("พาราเซตามอล")).toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText("เหตุผล"), "ปรับจำนวน");
+    await user.click(within(dialog).getByRole("button", { name: "ลงนาม" }));
+    expect(await within(dialog).findByText("การแก้ไขยาทดสอบถูกหยุดไว้")).toBeInTheDocument();
+    expect(revisionBody).toEqual({
+      expectedRevisions: { visit: 9, patient: 3, medicationDecision: 1 },
+      payload: {
+        revisionReason: "ปรับจำนวน",
+        decision: { kind: "ORDER", items: [{ medicationId: "DEMO-MED-001", medicationRevision: 2, quantity: 12, directionsTh: "รับประทานหลังอาหาร ตามคำแนะนำ" }] },
+      },
+    });
   });
 
   it.each([

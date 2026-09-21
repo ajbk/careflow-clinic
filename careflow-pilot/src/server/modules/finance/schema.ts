@@ -89,7 +89,7 @@ export const financeCharges = sqliteTable(
     check("finance_charges_clinic_pricing_revision_check", sql`${table.clinicPricingRevision} >= 1`),
     check("finance_charges_consultation_fee_baht_snapshot_check", sql`typeof(${table.consultationFeeBahtSnapshot}) = 'integer' AND ${table.consultationFeeBahtSnapshot} BETWEEN 1 AND 1000000`),
     check("finance_charges_currency_check", sql`${table.currency} = 'THB'`),
-    check("finance_charges_line_count_check", sql`${table.lineCount} BETWEEN 1 AND 21`),
+    check("finance_charges_line_count_check", sql`typeof(${table.lineCount}) = 'integer' AND ${table.lineCount} BETWEEN 1 AND 9007199254740991`),
     check("finance_charges_finalized_by_display_name_check", sql`length(trim(${table.finalizedByDisplayName})) BETWEEN 1 AND 200`),
     check("finance_charges_content_hash_check", financeHashCheck(table.contentHash)),
     check(
@@ -121,7 +121,7 @@ export const financeChargeLines = sqliteTable(
     uniqueIndex("finance_charge_lines_one_consultation_per_charge")
       .on(table.chargeId)
       .where(sql`${table.lineType} = 'CONSULTATION'`),
-    check("finance_charge_lines_position_check", sql`${table.position} BETWEEN 0 AND 20`),
+    check("finance_charge_lines_position_check", sql`typeof(${table.position}) = 'integer' AND ${table.position} BETWEEN 0 AND 9007199254740991`),
     check("finance_charge_lines_line_type_check", sql`${table.lineType} IN ('CONSULTATION', 'MEDICATION')`),
     check("finance_charge_lines_description_snapshot_check", sql`length(trim(${table.descriptionSnapshot})) BETWEEN 1 AND 200`),
     check("finance_charge_lines_quantity_check", sql`typeof(${table.quantity}) = 'integer' AND ${table.quantity} BETWEEN 1 AND 999999`),
@@ -129,7 +129,7 @@ export const financeChargeLines = sqliteTable(
     check("finance_charge_lines_line_total_baht_check", sql`typeof(${table.lineTotalBaht}) = 'integer' AND ${table.lineTotalBaht} BETWEEN 0 AND 100000000 AND ${table.lineTotalBaht} = ${table.quantity} * ${table.unitPriceBaht}`),
     check(
       "finance_charge_lines_source_shape_check",
-      sql`(${table.lineType} = 'CONSULTATION' AND ${table.position} = 0 AND ${table.quantity} = 1 AND ${table.medicationOrderItemId} IS NULL AND ${table.fulfillmentDispenseLineId} IS NULL) OR (${table.lineType} = 'MEDICATION' AND ${table.position} BETWEEN 1 AND 20 AND ${table.medicationOrderItemId} IS NOT NULL AND ${table.fulfillmentDispenseLineId} IS NOT NULL)`,
+      sql`(${table.lineType} = 'CONSULTATION' AND ${table.position} = 0 AND ${table.quantity} = 1 AND ${table.medicationOrderItemId} IS NULL AND ${table.fulfillmentDispenseLineId} IS NULL) OR (${table.lineType} = 'MEDICATION' AND ${table.position} >= 1 AND ${table.medicationOrderItemId} IS NOT NULL AND ${table.fulfillmentDispenseLineId} IS NOT NULL)`,
     ),
   ],
 );
