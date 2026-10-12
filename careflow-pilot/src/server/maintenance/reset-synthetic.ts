@@ -35,6 +35,10 @@ const syntheticAuditPredicate = [
 const expectedTables = new Set([
   "__drizzle_migrations",
   "audit_events",
+  "auth_rate_limits",
+  "security_events",
+  "command_cancellations",
+  "backup_verifications",
   "clinical_note_amendments",
   "clinical_note_diagnoses",
   "clinical_note_draft_diagnoses",
@@ -260,6 +264,7 @@ function assertCanonicalSchema(sqlite: Database.Database): void {
 }
 
 function assertPilotIdentity(sqlite: Database.Database): void {
+  if (sqlite.prepare("SELECT value FROM platform_metadata WHERE key='environment_id'").get()) fail("Cloud databases require the cloud maintenance workflow; synthetic reset is disabled");
   assertKnownPilotDatabase(sqlite);
   assertCanonicalSchema(sqlite);
   const tables = listApplicationTables(sqlite);
@@ -360,7 +365,7 @@ function verifyReset(sqlite: Database.Database): void {
     .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%_block_%' AND name NOT LIKE '%_after_closure_block_%' AND name <> 'audit_events_block_update' AND name <> 'audit_events_block_delete' ORDER BY name")
     .pluck()
     .all() as string[];
-  if (clinicalTriggerNamesAfterReset.join(",") !== [...clinicalTriggerNames, "fulfillment_preparations_block_delete"].sort().join(",")) {
+  if (clinicalTriggerNamesAfterReset.join(",") !== [...clinicalTriggerNames, "fulfillment_preparations_block_delete", ...["security_events", "command_cancellations", "backup_verifications"].flatMap((table) => [`${table}_block_update`, `${table}_block_delete`])].sort().join(",")) {
     fail("Clinical append-only triggers were not restored");
   }
   const clinicalAuditCount = sqlite

@@ -6,7 +6,13 @@ import type { ApiErrorBody } from "../shared/contracts.js";
 import type { AppConfig } from "./config.js";
 import type { DatabaseHandle } from "./db/client.js";
 import { ApiError, errorMessages } from "./errors.js";
-import { registerAuthHooks } from "./auth/hooks.js";
+import { registerAuthHooks, requireActor } from "./auth/hooks.js";
+import { registerCloudBoundary, registerCloudCsrf, sessionCookieName } from "./auth/security.js";
+import { registerSecurityAudit } from "./auth/security-audit.js";
+import { assertGeneration, registerOperationRoutes } from "./modules/platform/operations.js";
+import { operationalHealth } from "./maintenance/health.js";
+import { createEncryptedBackup, type BackupStore } from "./maintenance/backup.js";
+import { createBackupCoordinator, type OperationalAlert } from "./maintenance/backup-coordinator.js";
 import {
   registerAuthRoutes,
   type PasswordHasher,
@@ -50,6 +56,8 @@ export interface BuildAppOptions {
   visitCloseFailureInjector?: (stage: VisitCloseWriteStage) => void;
   /** Test-only failure injection at each atomic Intake write boundary. */
   intakeFailureInjector?: (stage: IntakeWriteStage) => void;
+  /** Enabled only after choosing/configuring a storage adapter and alert destination. No private key. */
+  backupSchedule?: { publicKey: string; stagingDirectory: string; store: BackupStore; releaseId: string; intervalSeconds: number; alert: (event: OperationalAlert) => Promise<void> };
 }
 
 function zodFieldErrors(error: ZodError): Record<string, string> {
@@ -60,6 +68,7 @@ function zodFieldErrors(error: ZodError): Record<string, string> {
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({
+    ...(options.config.cloud ? { bodyLimit: 256 * 1024, requestTimeout: 30_000, connectionTimeout: 15_000 } : {}),
     logController: new LogController({ disableRequestLogging: true }),
     genReqId: () => options.idFactory(),
     logger: {
@@ -91,6 +100,15 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   await app.register(helmet);
   await app.register(cookie);
+  registerCloudBoundary(app, options.config);
+  if (options.config.cloud) registerSecurityAudit(app, options.db, options.clock);
+  if (options.backupSchedule) {
+    const backup = options.backupSchedule;
+    const coordinator = createBackupCoordinator({ database: options.db, intervalSeconds: backup.intervalSeconds, alert: backup.alert,
+      run: () => createEncryptedBackup({ ...backup, database: options.db }) });
+    app.addHook("onReady", async () => { coordinator.start(); });
+    app.addHook("onClose", async () => { await coordinator.stop(); });
+  }
 
   const clientAssets = options.serveStatic
     ? await registerClientAssets(app, {
@@ -103,8 +121,23 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     idleMinutes: options.config.sessionIdleMinutes,
     absoluteHours: options.config.sessionAbsoluteHours,
     tokenFactory: options.sessionTokenFactory,
+    cloud: Boolean(options.config.cloud),
   });
-  registerAuthHooks({ app, sessions: sessionService, clock: options.clock });
+  registerAuthHooks({ app, sessions: sessionService, clock: options.clock, cookieName: sessionCookieName(options.config) });
+  registerCloudCsrf(app, options.config);
+  const health = () => operationalHealth(options.db, { cloud: Boolean(options.config.cloud), backupMaxAgeSeconds: options.config.cloud?.backupMaxAgeSeconds }, options.clock());
+  app.addHook("preHandler", async (request) => {
+    const route = request.routeOptions.url ?? "";
+    if (!["GET", "HEAD", "OPTIONS"].includes(request.method) && route.startsWith("/api/") && !route.startsWith("/api/auth/") &&
+        options.db.sqlite.prepare("SELECT value FROM platform_metadata WHERE key='recovery_mode'").pluck().get() !== "normal") {
+      throw new ApiError({ code: "RECOVERY_REQUIRED", messageTh: "ระบบอยู่ระหว่างตรวจสอบข้อมูลหลังการกู้คืน" });
+    }
+    if (options.config.cloud && !["GET", "HEAD", "OPTIONS"].includes(request.method) && route.startsWith("/api/") && !route.startsWith("/api/auth/") && !health().writeAllowed) {
+      throw new ApiError({ code: "OPERATIONAL_HOLD", messageTh: "ระบบพักการบันทึกข้อมูล กรุณาให้ผู้ดูแลตรวจสอบสถานะดิสก์และข้อมูลสำรอง" });
+    }
+    if (options.config.cloud && request.headers["idempotency-key"] !== undefined) assertGeneration(options.db, request.headers["x-careflow-generation"]);
+  });
+  registerOperationRoutes(app, options.db);
   registerAuthRoutes({
     app,
     database: options.db,
@@ -209,6 +242,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     options.db.sqlite.prepare("SELECT 1").get();
     return { status: "ok", database: "ready" };
   });
+  app.get("/api/live", async () => ({ status: "alive" }));
+  app.get("/api/ready", async (_request, reply) => {
+    const report = health(); return reply.code(report.ready ? 200 : 503).send({ status: report.ready ? "ready" : "not-ready" });
+  });
+  app.get("/api/operations/health", async (request) => { requireActor(request, "clinical:sign"); return { data: health() }; });
 
   app.setNotFoundHandler(async (request, reply) => {
     if (

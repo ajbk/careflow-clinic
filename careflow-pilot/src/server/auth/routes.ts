@@ -10,10 +10,12 @@ import type { AppConfig } from "../config.js";
 import type { DatabaseHandle } from "../db/client.js";
 import { ApiError } from "../errors.js";
 import { requireAuthenticatedSession } from "./hooks.js";
+import { sessionCookieName } from "./security.js";
+import { createPasswordLimiter } from "./throttle.js";
+import { recordSecurityEvent } from "./security-audit.js";
 import {
   appendAuditEvent,
   runAuditedTransaction,
-  SESSION_COOKIE_NAME,
   SESSION_MAX_AGE_SECONDS,
   sessions,
   staffAccounts,
@@ -43,7 +45,7 @@ function authRequired(): ApiError {
 }
 
 function setSessionCookie(reply: FastifyReply, token: string, config: AppConfig): void {
-  reply.setCookie(SESSION_COOKIE_NAME, token, {
+  reply.setCookie(sessionCookieName(config), token, {
     httpOnly: true,
     sameSite: "strict",
     path: "/",
@@ -53,7 +55,7 @@ function setSessionCookie(reply: FastifyReply, token: string, config: AppConfig)
 }
 
 function clearSessionCookie(reply: FastifyReply, config: AppConfig): void {
-  reply.clearCookie(SESSION_COOKIE_NAME, {
+  reply.clearCookie(sessionCookieName(config), {
     httpOnly: true,
     sameSite: "strict",
     path: "/",
@@ -99,17 +101,27 @@ export function registerAuthRoutes(input: {
   const verify = input.passwordVerifier ?? ((hash, password) => argon2.verify(hash, password));
   const hash = input.passwordHasher ?? ((password) => argon2.hash(password, PASSWORD_HASH_OPTIONS));
   const attempts = new Map<string, LoginAttemptBucket>();
+  const limiter = createPasswordLimiter(input.database, () => input.clock().getTime());
 
   input.app.post("/api/auth/login", async (request, reply) => {
     const body = loginBodySchema.parse(request.body);
     const username = normalizeUsername(body.username);
+    const releaseAdmission = input.config.cloud ? limiter.admit(username, request.securityClientIp ?? request.ip) : undefined;
     const now = input.clock();
     const attemptKey = `${request.ip}\u0000${username}`;
     const cutoff = now.getTime() - 60_000;
+    for (const [key, value] of attempts) {
+      if (value.pending === 0 && value.failures.every((timestamp) => timestamp <= cutoff)) attempts.delete(key);
+    }
+    if (!attempts.has(attemptKey) && attempts.size >= 1024) {
+      releaseAdmission?.();
+      throw new ApiError({ code: "RATE_LIMITED", messageTh: "กรุณารอสักครู่แล้วลองใหม่", retryAfterSeconds: 60 });
+    }
     const bucket = attempts.get(attemptKey) ?? { failures: [], pending: 0 };
     bucket.failures = bucket.failures.filter((timestamp) => timestamp > cutoff);
     attempts.set(attemptKey, bucket);
     if (bucket.failures.length + bucket.pending >= 5) {
+      releaseAdmission?.();
       throw new ApiError({
         code: "RATE_LIMITED",
         messageTh: "มีการลองเข้าสู่ระบบมากเกินไป กรุณารอสักครู่",
@@ -145,7 +157,9 @@ export function registerAuthRoutes(input: {
             }
             return undefined;
           }
-          return input.sessionService.issueInTransaction(tx, account.id, now);
+          const issued = input.sessionService.issueInTransaction(tx, account.id, now);
+          if (input.config.cloud) recordSecurityEvent(input.database, { action: "login.succeeded", actorId: account.id, route: "/api/auth/login", status: 200, now });
+          return issued;
         },
         { behavior: "immediate" },
       );
@@ -159,6 +173,7 @@ export function registerAuthRoutes(input: {
       setSessionCookie(reply, issued.token, input.config);
       return { data: input.sessionService.dto(session) };
     } finally {
+      releaseAdmission?.();
       bucket.pending -= 1;
       // A successful login must not forget other requests still being verified.
       if (bucket.pending === 0 && bucket.failures.length === 0) attempts.delete(attemptKey);
@@ -211,6 +226,8 @@ export function registerAuthRoutes(input: {
   input.app.post("/api/auth/change-password", async (request, reply) => {
     const body = changePasswordBodySchema.parse(request.body);
     const session = requireAuthenticatedSession(request);
+    const releaseAdmission = input.config.cloud ? limiter.admit(session.account.username, request.securityClientIp ?? request.ip) : undefined;
+    try {
     const account = input.database.db
       .select()
       .from(staffAccounts)
@@ -275,10 +292,12 @@ export function registerAuthRoutes(input: {
           occurredAt: now.toISOString(),
         });
         replacementToken = input.sessionService.issueInTransaction(tx, account.id, now).token;
+        if (input.config.cloud) recordSecurityEvent(input.database, { action: "password.changed", actorId: account.id, route: "/api/auth/change-password", status: 204, now });
       },
     });
     setSessionCookie(reply, replacementToken, input.config);
     return reply.code(204).send();
+    } finally { releaseAdmission?.(); }
   });
 
   input.app.post("/api/auth/activity", async (request, reply) => {
@@ -288,8 +307,11 @@ export function registerAuthRoutes(input: {
   });
 
   input.app.post("/api/auth/logout", async (request, reply) => {
-    requireAuthenticatedSession(request);
-    input.sessionService.revoke(request.cookies[SESSION_COOKIE_NAME]);
+    const session = requireAuthenticatedSession(request);
+    input.database.sqlite.transaction(() => {
+      input.sessionService.revoke(request.cookies[sessionCookieName(input.config)]);
+      if (input.config.cloud) recordSecurityEvent(input.database, { action: "logout", actorId: session.actor.id, route: "/api/auth/logout", status: 204, now: input.clock() });
+    }).immediate();
     clearSessionCookie(reply, input.config);
     return reply.code(204).send();
   });

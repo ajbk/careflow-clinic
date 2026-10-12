@@ -13,6 +13,7 @@ import { Link, useLocation } from "react-router-dom";
 import { roleWorkspaceFor, type WorkspaceNavIcon } from "../../app/role-workspace";
 import { useAuth } from "../../auth/AuthProvider";
 import { SessionReturnNotice } from "./SessionReturnNotice";
+import { CommandRecoveryNotice } from "./CommandRecoveryNotice";
 
 const icons: Record<WorkspaceNavIcon, typeof LayoutDashboard> = {
   dashboard: LayoutDashboard,
@@ -76,6 +77,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         >
           <p className="pilot-banner" role="status">PILOT — ข้อมูลสังเคราะห์เท่านั้น ห้ามกรอกข้อมูลผู้ป่วยจริง</p>
           <SessionReturnNotice key={sessionReturnLocationKey} />
+          <CommandRecoveryNotice />
           {children}
         </main>
       </div>
@@ -119,6 +121,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main id="main-content" className="app-main">
           <p className="pilot-banner" role="status">PILOT — ข้อมูลสังเคราะห์เท่านั้น ห้ามกรอกข้อมูลผู้ป่วยจริง</p>
           <SessionReturnNotice key={sessionReturnLocationKey} />
+          <CommandRecoveryNotice />
           {children}
         </main>
       </div>

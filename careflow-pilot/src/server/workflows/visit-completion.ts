@@ -12,6 +12,8 @@ import type { DatabaseHandle } from "../db/client.js";
 import { ApiError } from "../errors.js";
 import {
   financeChargeLines,
+  createFinanceService,
+  deriveChargeQuote,
   type FinanceService,
 } from "../modules/finance/index.js";
 import {
@@ -127,6 +129,22 @@ function closureHashInput(closure: Pick<ClosureRow,
 
 function closureHash(closure: Parameters<typeof closureHashInput>[0]): string {
   return hashEvidence({ visitClosure: closureHashInput(closure) });
+}
+
+/** Read-only recovery validation reuses the same closure hash and financial evidence as OPD. */
+export function assertVisitClosureIntegrity(database: DatabaseHandle): void {
+  const finance = createFinanceService({ database, pricing: { deriveChargeQuote } });
+  for (const closure of database.db.select().from(visitClosures).all()) {
+    const visit = database.db.select().from(visits).where(eq(visits.id, closure.visitId)).get();
+    if (!visit || closure.contentHash !== closureHash(closure) || closure.visitRevision + 1 !== visit.revision || closure.clinicId !== visit.clinicId || closure.patientIdSnapshot !== visit.patientId) throw new Error("Visit Closure evidence is invalid");
+    toClosureDto(closure, visit);
+    const result = finance.getCloseEvidence(database.db, closure.visitId);
+    if (result.kind !== "VALID" || result.evidence.charge.id !== closure.chargeId) throw new Error("Visit Closure charge is invalid");
+    const { payment, adjustment } = result.evidence;
+    if (closure.paymentId !== null
+      ? !payment || Boolean(adjustment) || payment.id !== closure.paymentId
+      : !adjustment || Boolean(payment) || adjustment.id !== closure.waiverAdjustmentId) throw new Error("Visit Closure resolution is invalid");
+  }
 }
 
 function toClosureDto(

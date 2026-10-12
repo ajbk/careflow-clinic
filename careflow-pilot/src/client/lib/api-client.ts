@@ -1,6 +1,9 @@
 import type { ZodType } from "zod";
 import { ApiError, parseApiErrorResponse, responseContractError, serverUnavailableError } from "./api-error";
-import type { CommandAttempt } from "./idempotency";
+import { setCommandGeneration, type CommandAttempt } from "./idempotency";
+import type { SessionDto } from "../../shared/contracts";
+import { operationForPath } from "../../shared/operations";
+import { notifyCommandRecovery, operationStatusResponse, pendingOutcomeError, readBreadcrumbs, storeBreadcrumbs, type CommandBreadcrumb } from "./command-recovery";
 
 export interface ApiClientOptions {
   fetchImpl?: typeof fetch;
@@ -26,6 +29,44 @@ function retryAfterHeader(response: Response): string | null {
 export class ApiClient {
   private readonly fetchImpl?: typeof fetch;
   private readonly onUnauthorized?: (error: ApiError) => void;
+  private security?: SessionDto["security"];
+  private principalId?: string;
+  private contextVersion = 0;
+  private readonly retries = new Map<string, () => Promise<unknown>>();
+  private readonly activeCommands = new Set<string>();
+
+  setSecurity(security: SessionDto["security"], principalId?: string): void {
+    if (this.principalId !== principalId || this.security?.generation !== security?.generation) { this.retries.clear(); this.contextVersion++; }
+    this.security = security; this.principalId = principalId;
+    setCommandGeneration(security?.generation, principalId);
+  }
+
+  pendingCommands(): CommandBreadcrumb[] {
+    return this.security ? readBreadcrumbs().filter((row) => row.owner === this.principalId && !this.activeCommands.has(row.key)) : [];
+  }
+  canRetryCommand(key: string): boolean { return this.retries.has(key); }
+  async retryCommand(key: string): Promise<void> {
+    const retry = this.retries.get(key);
+    if (!retry) throw pendingOutcomeError();
+    await retry();
+  }
+  async resolveCommand(key: string, cancel: boolean): Promise<"UNKNOWN" | "COMMITTED" | "CANCELLED"> {
+    const contextVersion = this.contextVersion;
+    const owner = this.principalId;
+    const row = this.pendingCommands().find((item) => item.key === key);
+    if (!row) throw pendingOutcomeError();
+    const path = `/api/operations/${encodeURIComponent(key)}`;
+    const result = cancel
+      ? await this.json("POST", `${path}/cancel`, { operation: row.operation, generation: row.generation }, operationStatusResponse)
+      : await this.get(`${path}?generation=${encodeURIComponent(row.generation)}`, operationStatusResponse);
+    if (this.contextVersion !== contextVersion || result.data.generation !== row.generation) throw pendingOutcomeError();
+    if (result.data.status !== "UNKNOWN") this.forgetCommand(key, owner);
+    return result.data.status;
+  }
+  private forgetCommand(key: string, owner = this.principalId): void {
+    storeBreadcrumbs(readBreadcrumbs().filter((row) => row.owner !== owner || row.key !== key));
+    this.retries.delete(key); notifyCommandRecovery();
+  }
 
   constructor(options: ApiClientOptions | typeof fetch = {}) {
     if (typeof options === "function") {
@@ -60,20 +101,54 @@ export class ApiClient {
     return this.requestVoid(method, path, body, signal);
   }
 
-  command<TPayload, TRevisions extends Record<string, number>, TResult>(
+  async command<TPayload, TRevisions extends Record<string, number>, TResult>(
     path: string,
     attempt: CommandAttempt<TPayload, TRevisions>,
     schema: ZodType<TResult>,
     signal?: AbortSignal,
   ): Promise<TResult> {
-    return this.request(
+    const cloud = this.security;
+    const owner = this.principalId;
+    const contextVersion = this.contextVersion;
+    let wasUnresolved = false;
+    if (cloud) {
+      if (attempt.owner !== owner) throw new ApiError({ code: "FORBIDDEN", status: 403, messageTh: "บัญชีผู้ใช้งานเปลี่ยนแล้ว กรุณาตรวจสอบข้อมูลใหม่ก่อนสร้างคำสั่ง" });
+      if (attempt.generation !== cloud.generation) throw new ApiError({ code: "GENERATION_CHANGED", status: 409, messageTh: "ระบบผ่านการกู้คืนข้อมูล กรุณาตรวจสอบรายการเดิมก่อนสร้างคำสั่งใหม่" });
+      const operation = operationForPath(path);
+      if (!operation || !this.principalId) throw pendingOutcomeError();
+      const rows = readBreadcrumbs();
+      wasUnresolved = rows.some((row) => row.owner === this.principalId && row.key === attempt.idempotencyKey);
+      if (rows.some((row) => row.owner === this.principalId && row.key !== attempt.idempotencyKey)) throw pendingOutcomeError();
+      if (this.activeCommands.has(attempt.idempotencyKey)) throw pendingOutcomeError();
+      if (!rows.some((row) => row.owner === this.principalId && row.key === attempt.idempotencyKey)) {
+        storeBreadcrumbs([...rows, { key: attempt.idempotencyKey, owner: this.principalId, generation: cloud.generation, operation }]);
+      }
+      this.retries.set(attempt.idempotencyKey, () => this.command(path, attempt, schema));
+      this.activeCommands.add(attempt.idempotencyKey);
+    }
+    try {
+    const result = await this.request(
       "POST",
       path,
       { expectedRevisions: attempt.expectedRevisions, payload: attempt.payload },
       schema,
       signal,
-      { "Idempotency-Key": attempt.idempotencyKey },
+      { "Idempotency-Key": attempt.idempotencyKey, ...(attempt.generation ? { "X-Careflow-Generation": attempt.generation } : {}) },
     );
+    if (cloud) {
+      if (this.contextVersion !== contextVersion) throw pendingOutcomeError();
+      this.forgetCommand(attempt.idempotencyKey, owner);
+    }
+    return result;
+    } catch (error) {
+      // A validated business rejection proves no effect for this immutable request.
+      if (cloud && this.contextVersion === contextVersion && !wasUnresolved && error instanceof ApiError && [409, 422, 429].includes(error.status) &&
+          !["GENERATION_CHANGED", "COMMAND_OUTCOME_UNKNOWN", "RESPONSE_CONTRACT_INVALID"].includes(error.code)) this.forgetCommand(attempt.idempotencyKey, owner);
+      throw error;
+    } finally {
+      this.activeCommands.delete(attempt.idempotencyKey);
+      if (cloud) notifyCommandRecovery();
+    }
   }
 
   private getFetch(): typeof fetch {
@@ -126,6 +201,7 @@ export class ApiClient {
   ): Promise<Response> {
     assertSameOriginPath(path);
     const headers: Record<string, string> = { Accept: "application/json", ...extraHeaders };
+    if (method !== "GET" && this.security) headers["X-CSRF-Token"] = this.security.csrfToken;
     const hasBody = body !== undefined;
     if (hasBody) headers["Content-Type"] = "application/json";
     try {

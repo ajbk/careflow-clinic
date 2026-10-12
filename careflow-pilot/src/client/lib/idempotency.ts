@@ -2,7 +2,13 @@ export interface CommandAttempt<TPayload, TRevisions extends Record<string, numb
   readonly idempotencyKey: string;
   readonly expectedRevisions: TRevisions;
   readonly payload: TPayload;
+  readonly generation?: string;
+  readonly owner?: string;
 }
+
+let currentGeneration: string | undefined;
+let currentOwner: string | undefined;
+export function setCommandGeneration(generation: string | undefined, owner?: string): void { currentGeneration = generation; currentOwner = owner; }
 
 function freezeValue<T>(value: T, seen = new Set<object>()): T {
   if (typeof value !== "object" || value === null || seen.has(value)) return value;
@@ -21,6 +27,7 @@ export function createCommandAttempt<
     idempotencyKey: globalThis.crypto.randomUUID(),
     expectedRevisions: freezeValue(expectedRevisions),
     payload: freezeValue(payload),
+    ...(currentGeneration ? { generation: currentGeneration, owner: currentOwner } : {}),
   } as CommandAttempt<TPayload, TRevisions>;
   return Object.freeze(attempt);
 }

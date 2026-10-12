@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import argon2 from "argon2";
@@ -6,6 +6,9 @@ import type { FastifyInstance } from "fastify";
 import type { Page } from "@playwright/test";
 import { buildApp } from "../../src/server/app.js";
 import { openDatabase, type DatabaseHandle } from "../../src/server/db/client.js";
+import { initializeCloudDatabase } from "../../src/server/maintenance/deployment.js";
+import { createCloudTestProxy } from "./cloud-proxy.js";
+import type { AppConfig } from "../../src/server/config.js";
 
 export const E2E_PASSWORD = "careflow-pilot-e2e-password";
 
@@ -19,17 +22,19 @@ interface PilotServer {
   close: () => Promise<void>;
 }
 
-export async function startPilotServer(): Promise<PilotServer> {
+export async function startPilotServer(options: { cloud?: boolean } = { cloud: process.env.CAREFLOW_E2E_CLOUD === "true" }): Promise<PilotServer> {
   const directory = mkdtempSync(join(tmpdir(), "careflow-e2e-"));
   const databasePath = join(directory, "careflow.sqlite");
-  const clientDistPath = join(directory, "client");
-  const builtClientPath = resolve(process.cwd(), "dist/client");
-  if (!existsSync(builtClientPath)) {
+  // E2E never mutates built assets. Share this immutable build instead of making
+  // a native recursive copy per case (macOS fcopyfile can stall before startup).
+  const clientDistPath = resolve(process.cwd(), "dist/client");
+  if (!existsSync(clientDistPath)) {
     rmSync(directory, { recursive: true, force: true });
     throw new Error("CareFlow E2E requires a built client; run npm run build first");
   }
-  cpSync(builtClientPath, clientDistPath, { recursive: true });
-  const database = openDatabase(databasePath);
+  const proxy = options.cloud ? await createCloudTestProxy(directory) : undefined;
+  if (proxy) initializeCloudDatabase(databasePath, "synthetic-e2e");
+  const database = openDatabase(databasePath, { environmentId: proxy ? "synthetic-e2e" : undefined });
   const now = new Date().toISOString();
   const passwordHash = await argon2.hash(E2E_PASSWORD, {
     type: argon2.argon2id,
@@ -48,14 +53,15 @@ export async function startPilotServer(): Promise<PilotServer> {
   insertAccount.run("assistant-e2e-001", "assistant", "ผู้ช่วย E2E", "assistant", passwordHash, now, now, now);
   insertAccount.run("doctor-e2e-001", "doctor", "พญ. E2E", "doctor", passwordHash, now, now, now);
 
-  const config = {
+  const config: AppConfig = {
       host: "127.0.0.1",
       port: 0,
       databasePath,
-      cookieSecure: false,
+      cookieSecure: Boolean(proxy),
       sessionIdleMinutes: 15,
       sessionAbsoluteHours: 8,
       clientDistPath,
+      ...(proxy ? { cloud: { publicOrigin: proxy.origin, trustedProxies: ["127.0.0.1"], environmentId: "synthetic-e2e" } } : {}),
   };
   let requestIndex = 0;
   const idFactory = () => `e2e-${++requestIndex}`;
@@ -70,11 +76,12 @@ export async function startPilotServer(): Promise<PilotServer> {
   let activeDatabase = database;
   let activeApp = await nextApp(activeDatabase);
   let activeBaseURL = await activeApp.listen({ host: "127.0.0.1", port: 0 });
+  proxy?.setUpstream(activeBaseURL);
   const server: PilotServer = {
     get app() { return activeApp; },
     get database() { return activeDatabase; },
     directory,
-    get baseURL() { return activeBaseURL; },
+    get baseURL() { return proxy?.origin ?? activeBaseURL; },
     expireSessionsForStaff: (staffId) => {
       activeDatabase.sqlite.prepare("UPDATE sessions SET last_seen_at = ? WHERE staff_id = ?")
         .run(new Date(Date.now() - 16 * 60_000).toISOString(), staffId);
@@ -82,13 +89,15 @@ export async function startPilotServer(): Promise<PilotServer> {
     restart: async () => {
       await activeApp.close();
       activeDatabase.close();
-      activeDatabase = openDatabase(databasePath);
+      activeDatabase = openDatabase(databasePath, { environmentId: proxy ? "synthetic-e2e" : undefined });
       activeApp = await nextApp(activeDatabase);
       activeBaseURL = await activeApp.listen({ host: "127.0.0.1", port: 0 });
+      proxy?.setUpstream(activeBaseURL);
     },
     close: async () => {
       await activeApp.close();
       activeDatabase.close();
+      await proxy?.close();
       rmSync(directory, { recursive: true, force: true });
     },
   };

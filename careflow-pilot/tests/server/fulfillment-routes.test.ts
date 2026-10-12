@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { assertFulfillmentIntegrity } from "../../src/server/modules/fulfillment/integrity.js";
 import { eq } from "drizzle-orm";
 import { medicationOrderPriceSnapshots } from "../../src/server/modules/finance/index.js";
 import { medicationDecisions, medicationOrderItems, medications } from "../../src/server/modules/medication/index.js";
@@ -387,6 +388,11 @@ describe("authenticated fulfillment reservation routes", () => {
     const doctorCollision = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/release", headers: { cookie: test.doctorCookie, "idempotency-key": "release-doctor" }, payload: { ...releaseBody, payload: { ...releaseBody.payload, decisionVersion: 2 } } });
     expect(doctorCollision.statusCode).toBe(409);
     expect(doctorCollision.json().error.code).toBe("IDEMPOTENCY_CONFLICT");
+    expect(() => assertFulfillmentIntegrity(test.database.sqlite)).not.toThrow();
+    const releaseTrigger = test.database.sqlite.prepare("SELECT sql FROM sqlite_master WHERE name='fulfillment_releases_block_update'").pluck().get() as string;
+    test.database.sqlite.exec("DROP TRIGGER fulfillment_releases_block_update; UPDATE fulfillment_releases SET medication_decision_version=2");
+    test.database.sqlite.exec(releaseTrigger);
+    expect(() => assertFulfillmentIntegrity(test.database.sqlite)).toThrow(/fulfillment/i);
     const releaseAuditRows = test.database.db.select().from(auditEvents).all();
     const releaseAudit = releaseAuditRows.find((event) => event.action === "medication.release-created");
     expect(JSON.parse(releaseAudit?.metadataJson ?? "{}")).toMatchObject({ visitId: "visit-route-001", decisionId: started.medicationDecision.id, decisionVersion: 1, labelVersionId: started.label.id, labelPrintEventId: printedData.preparation.latestPrintEventId, preparationId: preparation.id, reservationId: started.reservation.id, previousStatus: "AWAITING_RELEASE", nextStatus: "AWAITING_HANDOFF", allocations: [{ allocationId: started.reservation.allocations[0].id, lotId: "lot-route-001", lotNumberSnapshot: "LOT-ROUTE-001", quantity: 3, unit: "เม็ด" }] });
@@ -428,6 +434,7 @@ describe("authenticated fulfillment reservation routes", () => {
     await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/complete-preparation", headers: { cookie: test.assistantCookie, "idempotency-key": "reject-new-complete" }, payload: { expectedRevisions: { visit: 7, preparation: nextPreparation.revision }, payload: { preparationId: nextPreparation.id, reservationId: next.reservation.id } } });
     const oldPrintRelease = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/release", headers: { cookie: test.doctorCookie, "idempotency-key": "reject-old-print" }, payload: { expectedRevisions: { visit: 8, preparation: 2 }, payload: { decisionId: next.medicationDecision.id, decisionVersion: next.medicationDecision.version, labelVersionId: next.label.id, labelPrintEventId: printedData.preparation.latestPrintEventId, preparationId: nextPreparation.id, reservationId: next.reservation.id } } });
     expect(oldPrintRelease.statusCode).toBe(409);
+    expect(() => assertFulfillmentIntegrity(test.database.sqlite)).not.toThrow();
   });
 
   it("hands off a released reservation atomically as one dispense movement per allocation", async () => {
@@ -495,6 +502,29 @@ describe("authenticated fulfillment reservation routes", () => {
     const handoffReplay = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/handoff", headers: { cookie: test.assistantCookie, "idempotency-key": "handoff-ok" }, payload: { expectedRevisions: { visit: 6 }, payload: handoffPayload } });
     expect(handoffReplay.statusCode).toBe(200);
     expect(handoffReplay.json()).toMatchObject({ data: handoff.json().data, replayed: true });
+    expect(() => assertFulfillmentIntegrity(test.database.sqlite)).not.toThrow();
+    // Each corruption retains the exact schema/triggers and valid foreign keys.
+    for (const [table, change] of [
+      ["fulfillment_label_items", "UPDATE fulfillment_label_items SET quantity=quantity+1"],
+      ["inventory_reservations", "UPDATE inventory_reservations SET medication_decision_version=2"],
+      ["inventory_reservation_allocations", "UPDATE inventory_reservation_allocations SET quantity=quantity+1"],
+      ["fulfillment_preparations", "UPDATE fulfillment_preparations SET medication_decision_version=2"],
+      ["fulfillment_preparation_confirmations", "UPDATE fulfillment_preparation_confirmations SET quantity=quantity+1"],
+      ["fulfillment_releases", "UPDATE fulfillment_releases SET medication_decision_version=2"],
+      ["fulfillment_dispenses", "UPDATE fulfillment_dispenses SET medication_decision_version=2"],
+      ["fulfillment_dispense_lines", "UPDATE fulfillment_dispense_lines SET directions_th_snapshot='corrupt synthetic directions'"],
+      ["fulfillment_preparation_confirmations", "DELETE FROM fulfillment_preparation_confirmations"],
+    ]) {
+      test.database.sqlite.exec("SAVEPOINT corruption");
+      try {
+        const triggers = test.database.sqlite.prepare("SELECT name, sql FROM sqlite_master WHERE type='trigger' AND tbl_name=?").all(table) as { name: string; sql: string }[];
+        for (const trigger of triggers) test.database.sqlite.exec(`DROP TRIGGER ${trigger.name}`);
+        test.database.sqlite.exec(change);
+        for (const trigger of triggers) test.database.sqlite.exec(trigger.sql);
+        expect(test.database.sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+        expect(() => assertFulfillmentIntegrity(test.database.sqlite), change).toThrow(/fulfillment/i);
+      } finally { test.database.sqlite.exec("ROLLBACK TO corruption; RELEASE corruption"); }
+    }
     const duplicate = await test.app.inject({ method: "POST", url: "/api/dispensing/visit-route-001/handoff", headers: { cookie: test.assistantCookie, "idempotency-key": "handoff-new-key" }, payload: { expectedRevisions: { visit: 7 }, payload: handoffPayload } });
     expect(duplicate.statusCode).toBe(409);
   });

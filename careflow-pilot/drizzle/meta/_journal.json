@@ -169,6 +169,27 @@
       "when": 1789883378516,
       "tag": "0023_uat_stability",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1791504000000,
+      "tag": "0024_cloud_security",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1791504000001,
+      "tag": "0025_command_recovery",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1791504000002,
+      "tag": "0026_backup_verifications",
+      "breakpoints": true
     }
   ]
 }

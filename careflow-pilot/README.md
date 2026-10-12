@@ -58,7 +58,7 @@ npm run build
 
 Before creating the UAT directory or database, complete the administrator runbook using its [Windows 11 PowerShell instructions](../docs/uat/careflow-pre-pilot/admin-runbook.md#windows-11-powershell). It establishes and verifies the exact restricted ACL, migrates the database, provisions exactly two interactive UAT accounts, and only then starts the loopback host. Browse only to `http://127.0.0.1:3001`, and use that runbook for every restart/session-expiry check before starting the Thai Journey checklist.
 
-Deployment, Windows service installation, backup/restore, network exposure, and real-data use remain explicitly disabled.
+A provider-independent cloud foundation and synthetic backup/restore maintenance CLI are available; follow the [cloud operations runbook](../docs/operations/cloud-foundation.md). Deployment, provider installation, public network exposure, Windows service installation and real-data use still require their separate gates.
 
 ## Two-browser rehearsal
 
@@ -106,4 +106,4 @@ The E2E fixture creates a temporary synthetic-only SQLite file and two isolated 
 
 ## Milestone 4 and explicit limits
 
-Synthetic Milestone 4 is complete: immutable pricing snapshots, Charge collection, full waiver, Visit close, and the Doctor-only A4 OPD Card are enabled only for this synthetic local pilot. Backup/restore, deployment, HTTPS/Caddy, external integrations, analytics, receipts/tax, QR/bank integration, partial collection, price-management UI, and all real-data use are **disabled**. The database reset command is a synthetic-data maintenance tool, not a backup or deployment mechanism. Never enter real Patient data, and do not treat this pilot as a clinical, billing, backup, or deployment system.
+Synthetic Milestone 4 is complete: immutable pricing snapshots, Charge collection, full waiver, Visit close, and the Doctor-only A4 OPD Card are enabled only for this synthetic local pilot. The cloud profile includes HTTPS proxy enforcement, command recovery and synthetic encrypted backup/restore tooling. Actual cloud deployment and remote storage, external integrations, analytics, receipts/tax, QR/bank integration, partial collection, price-management UI, and all real-data use remain **gated**. The database reset command is a synthetic-data maintenance tool, not a backup or deployment mechanism. Never enter real Patient data. Synthetic checks do not establish clinical or production readiness; the local backup fixture does not protect against app-host loss.

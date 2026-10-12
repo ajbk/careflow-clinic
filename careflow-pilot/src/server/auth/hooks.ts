@@ -18,6 +18,8 @@ declare module "fastify" {
 
 const gateBypassPaths = new Set([
   "/api/health",
+  "/api/live",
+  "/api/ready",
   "/api/auth/login",
   "/api/auth/session",
   "/api/auth/acknowledge-pilot",
@@ -53,12 +55,13 @@ export function registerAuthHooks(input: {
   app: FastifyInstance;
   sessions: SessionService;
   clock: () => Date;
+  cookieName?: string;
 }): void {
   input.app.addHook("onRequest", async (request) => {
     const pathname = request.url.split("?", 1)[0];
     if (!pathname?.startsWith("/api/")) return;
 
-    const token = request.cookies[SESSION_COOKIE_NAME];
+    const token = request.cookies[input.cookieName ?? SESSION_COOKIE_NAME];
     const now = input.clock();
     request.sessionExpired = input.sessions.isExpired(token, now);
     request.authenticatedSession = input.sessions.authenticate(token, now);

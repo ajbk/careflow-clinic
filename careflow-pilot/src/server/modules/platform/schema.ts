@@ -3,6 +3,7 @@ import {
   check,
   customType,
   integer,
+  index,
   primaryKey,
   sqliteTable,
   text,
@@ -39,6 +40,32 @@ export const platformMetadata = sqliteTable("platform_metadata", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
 });
+
+export const authRateLimits = sqliteTable("auth_rate_limits", {
+  bucket: text("bucket").primaryKey(),
+  attempts: integer("attempts").notNull(),
+  expiresAt: integer("expires_at").notNull(),
+}, (table) => [
+  check("auth_rate_limits_bucket_check", sql`length(${table.bucket}) = 64`),
+  check("auth_rate_limits_attempts_check", sql`${table.attempts} >= 1`),
+  index("auth_rate_limits_expiry").on(table.expiresAt),
+]);
+
+export const backupVerifications = sqliteTable("backup_verifications", {
+  id: text("id").primaryKey(), receiptJson: text("receipt_json").notNull(), verifiedAt: text("verified_at").notNull(),
+}, (table) => [check("backup_verifications_receipt_json_check", sql`json_valid(${table.receiptJson})`)]);
+
+export const securityEvents = sqliteTable("security_events", {
+  id: text("id").primaryKey(),
+  actorId: text("actor_id").references(() => staffAccounts.id),
+  action: text("action").notNull(),
+  route: text("route").notNull(),
+  status: integer("status").notNull(),
+  occurredAt: text("occurred_at").notNull(),
+}, (table) => [
+  check("security_events_action_check", sql`${table.action} IN ('login.succeeded','login.failed','logout','request.denied','record.read','password.changed')`),
+  check("security_events_status_check", sql`${table.status} BETWEEN 100 AND 599`),
+]);
 
 export const clinicCounters = sqliteTable(
   "clinic_counters",
@@ -127,6 +154,7 @@ export const idempotencyRecords = sqliteTable(
       .references(() => staffAccounts.id),
     key: text("key").notNull(),
     requestHash: text("request_hash").notNull(),
+    operation: text("operation").notNull().default("legacy"),
     responseStatus: integer("response_status").notNull(),
     responseJson: text("response_json").notNull(),
     createdAt: text("created_at").notNull(),
@@ -137,3 +165,11 @@ export const idempotencyRecords = sqliteTable(
     check("idempotency_records_response_json_check", sql`json_valid(${table.responseJson})`),
   ],
 );
+
+export const commandCancellations = sqliteTable("command_cancellations", {
+  actorId: text("actor_id").notNull().references(() => staffAccounts.id),
+  key: text("key").notNull(),
+  operation: text("operation").notNull(),
+  generation: text("generation").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => [primaryKey({ columns: [table.actorId, table.key] }), check("command_cancellations_key_check", sql`length(${table.key}) BETWEEN 8 AND 128`)]);

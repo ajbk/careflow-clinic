@@ -515,7 +515,7 @@ describe("guarded synthetic reset", () => {
       expect(database.prepare(`
         SELECT count(*) FROM sqlite_master
         WHERE type = 'trigger' AND name LIKE '%_protected_insert_conflict_guard'
-      `).pluck().get()).toBe(46);
+      `).pluck().get()).toBe(49);
       expect(database.prepare(
         "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'visits_closed_insert_guard'",
       ).get()).toEqual({ name: "visits_closed_insert_guard" });

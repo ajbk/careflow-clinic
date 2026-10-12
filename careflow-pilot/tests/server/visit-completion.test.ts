@@ -1,3 +1,4 @@
+import { assertVisitClosureIntegrity } from "../../src/server/workflows/visit-completion.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { cookieFrom, login, seedAccount } from "./helpers/auth.js";
 import { createTestApp } from "./helpers/database.js";
@@ -307,6 +308,16 @@ function seedReleasedReservationEvidence(test: CompletionFixture): void {
 }
 
 describe("Visit completion evidence, privacy, and freeze", () => {
+  it("rejects a logically corrupt closure even when SQLite structure and migration history are intact", async () => {
+    const test = await fixture(); await close(test);
+    expect(() => assertVisitClosureIntegrity(test.database)).not.toThrow();
+    const trigger = test.database.sqlite.prepare("SELECT sql FROM sqlite_master WHERE name='visit_closures_block_update'").pluck().get() as string;
+    test.database.sqlite.exec("DROP TRIGGER visit_closures_block_update");
+    test.database.sqlite.prepare("UPDATE visit_closures SET content_hash=?").run("0".repeat(64));
+    test.database.sqlite.exec(trigger);
+    expect(() => assertVisitClosureIntegrity(test.database)).toThrow(/Closure/i);
+  });
+
   it("keeps Checkout free of clinical prose, diagnoses, plans, and hashes for Assistant finance reads", async () => {
     const test = await fixture();
     await close(test);

@@ -1,6 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { CheckoutDto, VisitJourneyDto } from "../../src/shared/contracts.js";
 import { E2E_PASSWORD, loginAndAcknowledge, startPilotServer } from "./fixtures.js";
+import { verifyCompletedClinicRestore } from "./restore-drill.js";
+import { assertDatabaseIntegrity } from "../../src/server/maintenance/integrity.js";
 
 type PilotServer = Awaited<ReturnType<typeof startPilotServer>>;
 
@@ -10,6 +12,7 @@ type ControlledPilotServer = PilotServer & {
 
 type QueuedPatient = { hn: string; visitId: string };
 type DemoMedication = { id: string; optionName: RegExp; selectionName: RegExp };
+test.use({ ignoreHTTPSErrors: process.env.CAREFLOW_E2E_CLOUD === "true" });
 
 const demoMedicationA: DemoMedication = {
   id: "DEMO-MED-001",
@@ -135,6 +138,27 @@ async function createQueuedPresentAllergyPatient(page: Page, baseURL: string, co
   return { hn: hn as string, visitId: visitId as string };
 }
 
+async function loseCommittedResponse(page: Page, path: string): Promise<() => Promise<void>> {
+  if (process.env.CAREFLOW_E2E_CLOUD !== "true") return async () => undefined;
+  let posts = 0;
+  await page.route(`**${path}`, async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    posts++;
+    const response = await route.fetch();
+    expect(response.ok()).toBe(true);
+    await route.abort("failed");
+  });
+  return async () => {
+    await expect(page.getByRole("alert", { name: "ตรวจสอบผลคำสั่งค้าง" })).toBeVisible();
+    await page.unroute(`**${path}`);
+    await page.reload();
+    await page.getByRole("button", { name: "ตรวจสอบผลคำสั่ง", exact: true }).click();
+    await expect(page.getByText(/ระบบบันทึกคำสั่งเดิมแล้ว/)).toBeVisible();
+    expect(posts).toBe(1);
+    await page.getByRole("button", { name: "รับทราบและตรวจสอบข้อมูลล่าสุด" }).click();
+  };
+}
+
 async function receiveSyntheticLot(
   page: Page,
   baseURL: string,
@@ -151,6 +175,8 @@ async function receiveSyntheticLot(
   await page.getByLabel("เลขที่ล็อต").fill(input.lotNumber);
   await page.getByLabel("วันหมดอายุ").fill("2033-12-31");
   await page.getByRole("button", { name: "ยืนยันการรับยา" }).click();
+  // Wait for the browser to consume the committed response before intentionally navigating.
+  await expect(page).toHaveURL(new RegExp("/inventory$"));
 }
 
 function medicationReadiness(server: PilotServer, medicationId: string): { onHand: number; reserved: number; available: number } {
@@ -294,7 +320,9 @@ test("guides two roles through ORDER stock recovery, fulfillment, cash, Closure,
 
     await assistant.goto(`${server.baseURL}/dispensing/${patient.visitId}`);
     await expect(assistant.getByRole("button", { name: "ยืนยันส่งมอบยา" })).toBeVisible();
+    const resolveHandoff = await loseCommittedResponse(assistant, `/api/dispensing/${patient.visitId}/handoff`);
     await assistant.getByRole("button", { name: "ยืนยันส่งมอบยา" }).click();
+    await resolveHandoff();
     await expect(assistant.getByText("AWAITING_CHARGE", { exact: true })).toBeVisible();
     expect(server.database.sqlite.prepare("SELECT count(*) FROM fulfillment_dispenses WHERE visit_id = ?").pluck().get(patient.visitId)).toBe(1);
     expect(server.database.sqlite.prepare(`
@@ -325,7 +353,10 @@ test("guides two roles through ORDER stock recovery, fulfillment, cash, Closure,
 
     await assistant.goto(`${server.baseURL}/checkout/${patient.visitId}`);
     await expect(assistant.getByRole("button", { name: "ยืนยันรับเงินสด 115 บาท" })).toBeVisible();
+    const resolvePayment = await loseCommittedResponse(assistant, `/api/checkout/${patient.visitId}/payments/cash`);
     await assistant.getByRole("button", { name: "ยืนยันรับเงินสด 115 บาท" }).click();
+    await resolvePayment();
+    expect(server.database.sqlite.prepare("SELECT count(*) FROM finance_payments").pluck().get()).toBe(1);
     await expect(assistant.getByText("รับชำระแล้ว รอแพทย์ปิด Visit", { exact: true })).toBeVisible();
     await expect(assistant.getByRole("button", { name: "ปิด Visit" })).toHaveCount(0);
 
@@ -390,6 +421,8 @@ test("guides two roles through ORDER stock recovery, fulfillment, cash, Closure,
       opd: (await (await doctor.request.get(`${server.baseURL}/api/visits/${patient.visitId}/opd-card`)).json()).data,
     };
     expect(durableAfterRestart).toEqual(durableBeforeRestart);
+    assertDatabaseIntegrity(server.database.sqlite);
+    if (process.env.CAREFLOW_E2E_CLOUD === "true") await verifyCompletedClinicRestore(server.database);
   } finally {
     await assistantContext.close();
     await doctorContext.close();
@@ -493,6 +526,7 @@ test("skips dispensing for NO_MEDICATION, completes Doctor full waiver, and clos
     expect(server.database.sqlite.prepare("SELECT count(*) FROM inventory_reservations WHERE visit_id = ?").pluck().get(patient.visitId)).toBe(0);
     expect(server.database.sqlite.prepare("SELECT count(*) FROM fulfillment_dispenses WHERE visit_id = ?").pluck().get(patient.visitId)).toBe(0);
     expect(server.database.sqlite.prepare("SELECT count(*) FROM visit_closures WHERE visit_id = ?").pluck().get(patient.visitId)).toBe(1);
+    assertDatabaseIntegrity(server.database.sqlite);
   } finally {
     await assistantContext.close();
     await doctorContext.close();

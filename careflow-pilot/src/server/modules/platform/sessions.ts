@@ -4,6 +4,8 @@ import type { Actor, SessionDto } from "../../../shared/contracts.js";
 import type { DatabaseHandle } from "../../db/client.js";
 import { permissionsByRole } from "./permissions.js";
 import { clinicConfig, sessions } from "./schema.js";
+import { csrfForSession } from "../../auth/security.js";
+import { currentGeneration } from "./operations.js";
 
 export const SESSION_COOKIE_NAME = "careflow_session";
 export const SESSION_MAX_AGE_SECONDS = 28_800;
@@ -58,6 +60,7 @@ export function createSessionService(input: {
   idleMinutes: number;
   absoluteHours: number;
   tokenFactory?: () => string;
+  cloud?: boolean;
 }): SessionService {
   const tokenFactory = input.tokenFactory ?? (() => randomBytes(32).toString("base64url"));
   const idleMilliseconds = input.idleMinutes * 60_000;
@@ -220,6 +223,7 @@ export function createSessionService(input: {
         pilotAcknowledgedAt: session.account.pilotAcknowledgedAt,
         mustChangePassword: session.account.mustChangePassword,
         idleExpiresAt,
+        ...(input.cloud ? { security: { csrfToken: csrfForSession(session.tokenHash), generation: currentGeneration(input.database) } } : {}),
       };
     },
     hashToken,

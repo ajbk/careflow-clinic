@@ -87,6 +87,7 @@ export const sessionDtoSchema = z.strictObject({
   pilotAcknowledgedAt: z.string().datetime().nullable(),
   mustChangePassword: z.boolean(),
   idleExpiresAt: z.string().datetime(),
+  security: z.strictObject({ csrfToken: z.string().regex(/^[a-f0-9]{64}$/), generation: z.string().min(1).max(80) }).optional(),
 });
 export type SessionDto = z.infer<typeof sessionDtoSchema>;
 
@@ -1724,6 +1725,11 @@ export const apiErrorCodeSchema = z.enum([
   "HANDOFF_ALREADY_CONFIRMED",
   "REVISION_CONFLICT",
   "IDEMPOTENCY_CONFLICT",
+  "COMMAND_CANCELLED",
+  "GENERATION_CHANGED",
+  "RECOVERY_REQUIRED",
+  "OPERATIONAL_HOLD",
+  "COMMAND_OUTCOME_UNKNOWN",
   "ACTIVE_VISIT_EXISTS",
   "SYNTHETIC_ID_EXHAUSTED",
   "FINANCE_NOT_READY",

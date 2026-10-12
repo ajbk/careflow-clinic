@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactElement, ReactNode } from "react";
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { SessionDto } from "../../shared/contracts";
 import { sessionResponseSchema } from "../../shared/contracts";
@@ -83,6 +83,8 @@ export function AuthProvider({
   const lastActivityAt = useRef<number>(Number.NEGATIVE_INFINITY);
   const expiryTimer = useRef<number | undefined>(undefined);
   const establishedSession = useRef(false);
+  const lastBoundary = useRef<string | null>(null);
+  const identityOf = (value: SessionDto) => JSON.stringify([value.user.id, value.user.role, value.security?.generation]);
   const [unauthorizedReason, setUnauthorizedReason] = useState<AuthRequiredReason | null>(null);
 
   const sessionQuery = useQuery({
@@ -91,6 +93,14 @@ export function AuthProvider({
     queryFn: async ({ signal }): Promise<SessionDto | null> => {
       try {
         const current = (await apiClient.get("/api/auth/session", sessionResponseSchema, signal)).data;
+        const boundary = identityOf(current);
+        if (lastBoundary.current !== null && lastBoundary.current !== boundary) {
+          apiClient.setSecurity(undefined);
+          await queryClient.cancelQueries({ predicate: (query) => query.queryKey[0] !== queryKeys.session[0] });
+          queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== queryKeys.session[0] });
+          queryClient.getMutationCache().clear();
+        }
+        lastBoundary.current = boundary;
         establishedSession.current = true;
         setUnauthorizedReason(null);
         return current;
@@ -111,12 +121,15 @@ export function AuthProvider({
     refetchOnWindowFocus: true,
   });
   const session = sessionQuery.data ?? null;
+  const boundaryKey = session ? identityOf(session) : "anonymous";
+  useLayoutEffect(() => { apiClient.setSecurity(session?.security, session?.user.id); }, [apiClient, session]);
 
   const clearProtectedQueries = useCallback(() => {
     queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== queryKeys.session[0] });
   }, [queryClient]);
 
   const goToLogin = useCallback((reason: AuthRequiredReason = "AUTH_REQUIRED") => {
+    apiClient.setSecurity(undefined);
     const sessionExpired = reason === "SESSION_EXPIRED" || establishedSession.current;
     setUnauthorizedReason(sessionExpired ? "SESSION_EXPIRED" : reason);
     clearProtectedQueries();
@@ -128,7 +141,7 @@ export function AuthProvider({
         : `?returnTo=${encodeURIComponent(returnTo)}`;
       navigate(`/login${search}`, { replace: true });
     }
-  }, [clearProtectedQueries, location.pathname, location.search, navigate, queryClient]);
+  }, [apiClient, clearProtectedQueries, location.pathname, location.search, navigate, queryClient]);
 
   useEffect(() => {
     const listener = (event: Event) => {
@@ -179,6 +192,8 @@ export function AuthProvider({
   const login = useCallback(
     async (input: { username: string; password: string }): Promise<SessionDto> => {
       const result = await apiClient.json("POST", "/api/auth/login", input, sessionResponseSchema);
+      apiClient.setSecurity(result.data.security, result.data.user.id);
+      lastBoundary.current = identityOf(result.data);
       establishedSession.current = true;
       setUnauthorizedReason(null);
       clearProtectedQueries();
@@ -207,6 +222,7 @@ export function AuthProvider({
     } catch {
       // A failed logout cannot keep protected data visible in this browser.
     } finally {
+      apiClient.setSecurity(undefined);
       establishedSession.current = false;
       setUnauthorizedReason(null);
       clearProtectedQueries();
@@ -236,5 +252,5 @@ export function AuthProvider({
     [acknowledgePilot, apiClient, changePassword, error, location.pathname, login, logout, recordActivity, session, sessionQuery.isPending, unauthorizedReason],
   );
 
-  return <AuthContext.Provider value={contextValue}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider key={boundaryKey} value={contextValue}>{children}</AuthContext.Provider>;
 }

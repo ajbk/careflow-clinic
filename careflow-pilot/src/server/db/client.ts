@@ -7,6 +7,8 @@ import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import { acquireHostLock } from "../host-lock.js";
 import * as schema from "./schema.js";
+import { assertDeploymentIdentity } from "./deployment-identity.js";
+import { assertDatabaseIntegrity } from "../maintenance/integrity.js";
 
 const CAREFLOW_APPLICATION_ID = 0x43464c57;
 const CAREFLOW_PRODUCT_ID = "careflow-pilot";
@@ -31,6 +33,7 @@ export function migrationFolder(): string {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
   const candidates = [
     resolve(process.cwd(), "drizzle"),
+    resolve(moduleDirectory, "../drizzle"),
     resolve(moduleDirectory, "../../../drizzle"),
     resolve(moduleDirectory, "../../drizzle"),
   ];
@@ -81,11 +84,13 @@ export function assertKnownPilotDatabase(
   assertKnownIdentity(sqlite, migrationFolder(), allowPendingMigrations);
 }
 
-function validateExistingFileReadOnly(databasePath: string, migrationsPath: string): void {
+function validateExistingFileReadOnly(databasePath: string, migrationsPath: string, environmentId?: string): void {
   let readonlyDatabase: Database.Database | undefined;
   try {
     readonlyDatabase = new Database(databasePath, { readonly: true, fileMustExist: true });
-    assertKnownIdentity(readonlyDatabase, migrationsPath, true);
+    assertKnownIdentity(readonlyDatabase, migrationsPath, !environmentId);
+    if (environmentId) { assertDeploymentIdentity(databasePath, readonlyDatabase, environmentId); assertDatabaseIntegrity(readonlyDatabase); }
+    else if (readonlyDatabase.prepare("SELECT value FROM platform_metadata WHERE key = 'environment_id'").get()) throw new Error("Cloud database requires explicit environment identity");
   } catch {
     throw new Error("Existing database is not a CareFlow Pilot database");
   } finally {
@@ -116,14 +121,15 @@ function secureDatabaseArtifacts(databasePath: string): void {
   }
 }
 
-export function openDatabase(inputPath: string): DatabaseHandle {
+export function openDatabase(inputPath: string, options: { environmentId?: string } = {}): DatabaseHandle {
+  if (options.environmentId && (!existsSync(inputPath) || !statSync(inputPath).isFile() || statSync(inputPath).size === 0)) throw new Error("Cloud database is missing; initialization is a separate operation");
   const lock = acquireHostLock(inputPath);
   const migrationsPath = migrationFolder();
   const existingNonEmpty = existsSync(lock.databasePath) && statSync(lock.databasePath).size > 0;
   let sqlite: Database.Database | undefined;
 
   try {
-    if (existingNonEmpty) validateExistingFileReadOnly(lock.databasePath, migrationsPath);
+    if (existingNonEmpty) validateExistingFileReadOnly(lock.databasePath, migrationsPath, options.environmentId);
 
     secureDatabaseArtifacts(lock.databasePath);
     sqlite = new Database(lock.databasePath);
@@ -134,7 +140,7 @@ export function openDatabase(inputPath: string): DatabaseHandle {
     sqlite.pragma("busy_timeout = 5000");
 
     const db = drizzle(sqlite, { schema });
-    migrate(db, { migrationsFolder: migrationsPath });
+    if (!options.environmentId) migrate(db, { migrationsFolder: migrationsPath });
     assertKnownIdentity(sqlite, migrationsPath, false);
     secureDatabaseArtifacts(lock.databasePath);
 
@@ -146,9 +152,10 @@ export function openDatabase(inputPath: string): DatabaseHandle {
         if (closed) return;
         try {
           checkpointWal({ sqlite: sqlite as Database.Database, db, close: () => undefined });
+        } finally {
+          // Never release the single-writer lock while a failed checkpoint leaves a live handle.
           sqlite?.close();
           secureDatabaseArtifacts(lock.databasePath);
-        } finally {
           lock.release();
           closed = true;
         }

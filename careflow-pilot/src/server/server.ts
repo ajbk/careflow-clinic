@@ -7,7 +7,7 @@ import { shouldServeStatic, startupErrorMessage } from "./runtime.js";
 
 async function main(): Promise<void> {
   const config = loadConfig(process.env);
-  const database = openDatabase(config.databasePath);
+  const database = openDatabase(config.databasePath, { environmentId: config.cloud?.environmentId });
   await runClinicHost({
     database,
     config,

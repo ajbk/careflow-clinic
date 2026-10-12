@@ -940,6 +940,13 @@ function assertPersistedFinalization(
   }
 }
 
+/** Reuses the same immutable evidence validation as collection and close. */
+export function assertFinanceEvidenceIntegrity(database: DatabaseHandle): void {
+  for (const row of database.db.select({ id: financeCharges.id }).from(financeCharges).all()) {
+    readChargeEvidence(database.db, { chargeId: row.id });
+  }
+}
+
 export function createFinanceService(input: FinanceServiceOptions): FinanceService {
   const clock = input.clock ?? (() => new Date());
   const idFactory = input.idFactory ?? randomUUID;

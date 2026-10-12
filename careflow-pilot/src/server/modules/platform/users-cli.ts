@@ -96,7 +96,7 @@ export async function runUsersCli(deps: UsersCliDependencies): Promise<number> {
       }
     }
 
-    database = openDatabase(databasePath);
+    database = openDatabase(databasePath, { environmentId: deps.env.CAREFLOW_PROFILE === "cloud" ? deps.env.CAREFLOW_ENVIRONMENT_ID : undefined });
     const now = new Date().toISOString();
     if (command === "create") {
       const accountId = randomUUID();

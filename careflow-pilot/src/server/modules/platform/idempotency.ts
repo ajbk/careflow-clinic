@@ -14,7 +14,7 @@ import {
   type AppDatabase,
   type AuditedTransaction,
 } from "./audit.js";
-import { idempotencyRecords } from "./schema.js";
+import { commandCancellations, idempotencyRecords, platformMetadata } from "./schema.js";
 
 const IDEMPOTENCY_KEY_PATTERN = /^[!-~]{8,128}$/;
 
@@ -109,6 +109,12 @@ export function executeIdempotent<T, TReference = never>(input: {
     db: input.db,
     actor: input.actor,
     work: (tx) => {
+      if (tx.select().from(platformMetadata).where(eq(platformMetadata.key, "recovery_mode")).get()?.value !== "normal") {
+        throw new ApiError({ code: "RECOVERY_REQUIRED", messageTh: "ระบบอยู่ระหว่างตรวจสอบข้อมูลหลังการกู้คืน" });
+      }
+      if (tx.select().from(commandCancellations).where(and(eq(commandCancellations.actorId, input.actor.id), eq(commandCancellations.key, input.key))).get()) {
+        throw new ApiError({ code: "COMMAND_CANCELLED", messageTh: "คำสั่งนี้ถูกยกเลิกแล้ว กรุณาโหลดข้อมูลล่าสุด" });
+      }
       const existing = tx
         .select()
         .from(idempotencyRecords)
@@ -171,6 +177,7 @@ export function executeIdempotent<T, TReference = never>(input: {
           actorId: input.actor.id,
           key: input.key,
           requestHash: hash,
+          operation: input.operation,
           responseStatus: result.statusCode,
           responseJson: stableStringify(storedResponse),
           createdAt: new Date().toISOString(),
